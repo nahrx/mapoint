@@ -5,18 +5,15 @@ services:
     restart: unless-stopped
     ports:
       - "8082:8082"
-    env_file:
-      # Copy example.env to .env and fill in real values before starting.
-      - .env
+    environment:
+      - HOST=${HOST}
+      - PORT=${PORT}
+      - DATABASE=${DATABASE}
+      - USERNAME=${USERNAME}
+      - PASSWORD=${PASSWORD}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8082/healthz"]
       interval: 30s
       timeout: 5s
       start_period: 15s
       retries: 3
-    # ClickHouse (HOST in .env) lives outside this compose file, reachable
-    # over the LAN. Docker's default bridge network can usually reach it
-    # fine; if it can't (e.g. firewall rules scoped to the host's own IP),
-    # uncomment the line below (Linux only — no effect on Docker Desktop
-    # for Windows/Mac, where "ports:" above is what actually matters).
-    # network_mode: host
