@@ -30,9 +30,9 @@ COPY --from=builder /out/se2026-titik-maps ./se2026-titik-maps
 RUN adduser -D -H -u 10001 appuser
 USER appuser
 
-EXPOSE 8080
+EXPOSE 8082
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
+  CMD wget -qO- http://127.0.0.1:8082/healthz || exit 1
 
 ENTRYPOINT ["./se2026-titik-maps"]

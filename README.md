@@ -106,7 +106,7 @@ Opsional, tambahkan di `.env` (lihat `example.env` untuk contoh lengkap
 berkomentar):
 - `CH_PROTOCOL=native` (default) atau `http` — pilih protokol koneksi ke
   ClickHouse. Native pakai `PORT=9000`, HTTP biasanya `PORT=8123`.
-- `HTTP_ADDR=:8080` — alamat listen web server (default `:8080`).
+- `HTTP_ADDR=:8082` — alamat listen web server (default kalau tidak diset: `:8080`; project ini pakai `:8082`, lihat `example.env`).
 
 ### Lewat Docker Compose (direkomendasikan untuk deploy)
 
@@ -115,7 +115,7 @@ cp example.env .env   # isi dengan nilai asli
 docker compose up -d --build
 ```
 
-Peta jalan di `http://localhost:8080`. Ini build multi-stage (`Dockerfile`):
+Peta jalan di `http://localhost:8082`. Ini build multi-stage (`Dockerfile`):
 compile binary Go statis, lalu jalankan di image Alpine minimal sebagai
 user non-root, dengan healthcheck bawaan yang mem-ping `/healthz`. Frontend
 sudah ter-embed di binary saat build, jadi tidak ada file terpisah yang
@@ -152,7 +152,7 @@ go build -o bin/se2026-titik-maps.exe .
 ./bin/se2026-titik-maps.exe
 ```
 
-Lalu buka `http://localhost:8080` di browser.
+Lalu buka `http://localhost:8082` di browser (dari `HTTP_ADDR=:8082` di `.env`; kalau `HTTP_ADDR` tidak diset sama sekali, defaultnya `:8080`).
 
 ## Endpoint
 
