@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -60,9 +61,30 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /api/list", s.handleList)
 	mux.HandleFunc("GET /api/list/pdf", s.handleListPDF)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	// The Daftar menu has its own URL (see nav.js's use of history.pushState)
+	// so it survives a refresh or a direct link — but it's still the same
+	// single-page app, so just serve the same index.html the SPA's router
+	// (nav.js) uses to pick the right view on load.
+	mux.HandleFunc("GET /daftar", s.serveIndex(staticFS))
 	mux.Handle("/", http.FileServer(staticFS))
 
 	return withLogging(s.log, mux)
+}
+
+func (s *Server) serveIndex(staticFS http.FileSystem) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		f, err := staticFS.Open("index.html")
+		if err != nil {
+			s.log.Error("open index.html failed", "err", err)
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		defer f.Close()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if _, err := io.Copy(w, f); err != nil {
+			s.log.Error("write index.html failed", "err", err)
+		}
+	}
 }
 
 func (s *Server) handlePoints(w http.ResponseWriter, r *http.Request) {
