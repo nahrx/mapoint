@@ -12,7 +12,7 @@ COPY . .
 # below. The frontend (web/static) is embedded into the binary at build
 # time via go:embed, so nothing else needs to be copied into the runtime
 # image.
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/se2026-titik-maps .
+RUN CGO_ENABLED=0 GOOS=linux go build -o /out/mapoint .
 
 # --- runtime stage -----------------------------------------------------------
 FROM alpine:3.20
@@ -24,7 +24,7 @@ FROM alpine:3.20
 RUN apk add --no-cache ca-certificates wget tzdata
 
 WORKDIR /app
-COPY --from=builder /out/se2026-titik-maps ./se2026-titik-maps
+COPY --from=builder /out/mapoint ./mapoint
 
 # Runs as an unprivileged user.
 RUN adduser -D -H -u 10001 appuser
@@ -35,4 +35,4 @@ EXPOSE 8082
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget -qO- http://127.0.0.1:8082/healthz || exit 1
 
-ENTRYPOINT ["./se2026-titik-maps"]
+ENTRYPOINT ["./mapoint"]
