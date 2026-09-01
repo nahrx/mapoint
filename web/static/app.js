@@ -3,6 +3,8 @@
 
   const statsEl = document.getElementById("stats");
   const loadingEl = document.getElementById("loading");
+  const panelEl = document.getElementById("panel");
+  const panelToggleBtn = document.getElementById("panel-toggle");
   const kabkotaSelect = document.getElementById("kabkota-select");
   const kecamatanSelect = document.getElementById("kecamatan-select");
   const desaSelect = document.getElementById("desa-select");
@@ -16,6 +18,16 @@
   // size on its own, so nav.js dispatches this event right after showing
   // the view again.
   document.addEventListener("view:peta-shown", () => map.invalidateSize());
+
+  // Collapse the filter panel down to just its title bar so it doesn't
+  // cover the map on small screens or when the user just wants to look
+  // around — the map itself is a fixed absolute layer underneath, so this
+  // doesn't need an invalidateSize() call.
+  panelToggleBtn.addEventListener("click", () => {
+    const collapsed = panelEl.classList.toggle("collapsed");
+    panelToggleBtn.setAttribute("aria-expanded", String(!collapsed));
+    panelToggleBtn.title = collapsed ? "Tampilkan filter" : "Sembunyikan filter";
+  });
 
   const osmLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
@@ -51,6 +63,70 @@
 
   const canvasRenderer = L.canvas({ padding: 0.5 });
   const layer = L.layerGroup().addTo(map);
+
+  // The map is preferCanvas:true (for the point markers/clusters), so a
+  // vector layer with no explicit renderer — like the SubSLS polygon below
+  // — would default to canvas too. That's a problem for a purely
+  // decorative overlay: a canvas is one opaque DOM element covering the
+  // whole viewport, so `interactive: false` stops *Leaflet* from reacting
+  // to it, but the element itself still physically sits on top and blocks
+  // every mouse event (hover included) from ever reaching the point
+  // markers underneath, regardless of that flag. SVG doesn't have this
+  // problem — each shape is its own element, and a non-interactive one
+  // gets `pointer-events: none` from Leaflet's own CSS, so events fall
+  // straight through to whatever's beneath it. Shared/reused across
+  // reloads the same way canvasRenderer is, so old polygon loads don't
+  // leak renderer instances onto the map.
+  const polygonRenderer = L.svg({ padding: 0.5 });
+
+  // --- SubSLS boundary polygon --------------------------------------------
+  // Only meaningful once the filter is pinned all the way down to one
+  // SubSLS (same rule as the Daftar menu's PDF download) — a wilayah any
+  // wider than that has no single boundary to draw. The backend serves
+  // this from an optional PostGIS database; if it's not configured there,
+  // the endpoint 503s and this just silently leaves the map without a
+  // polygon rather than showing an error over something cosmetic.
+  let polygonLayer = null;
+  let polygonSeq = 0;
+
+  function clearPolygon() {
+    if (polygonLayer) {
+      map.removeLayer(polygonLayer);
+      polygonLayer = null;
+    }
+  }
+
+  async function loadSubSlsPolygon() {
+    const seq = ++polygonSeq;
+    clearPolygon();
+    if (!(selectedKabkota && selectedKecamatan && selectedDesa && selectedSls && selectedSubsls)) {
+      return;
+    }
+    const params = new URLSearchParams({
+      kabkota: selectedKabkota, kecamatan: selectedKecamatan, desa: selectedDesa,
+      sls: selectedSls, subsls: selectedSubsls,
+    });
+    try {
+      const geojson = await fetchWithRetry(`/api/subsls-polygon?${params}`, undefined);
+      if (seq !== polygonSeq) return; // filter changed again while this was in flight
+      if (!geojson.features || geojson.features.length === 0) return;
+      polygonLayer = L.geoJSON(geojson, {
+        style: { color: "#e63946", weight: 2, fillColor: "#e63946", fillOpacity: 0.08 },
+        // Purely a visual boundary, not a clickable/hoverable shape — and
+        // rendered via polygonRenderer (plain SVG) rather than the map's
+        // default canvas, so it doesn't block mouse events meant for the
+        // point markers underneath. See polygonRenderer above for why both
+        // of these matter together.
+        interactive: false,
+        renderer: polygonRenderer,
+      }).addTo(map);
+    } catch (err) {
+      if (seq !== polygonSeq) return;
+      // Optional overlay — log and move on rather than surfacing an error
+      // for something that isn't configured on every deployment.
+      console.error("failed to load SubSLS polygon", err);
+    }
+  }
 
   let datasetTotal = null;
   let datasetBounds = null; // [[minLat,minLon],[maxLat,maxLon]], for the "Semua Kabupaten/Kota" refit
@@ -290,6 +366,7 @@
     // fitBounds triggers moveend -> scheduleLoad already; force an
     // immediate reload too in case the view didn't actually move.
     scheduleLoad();
+    loadSubSlsPolygon();
   });
 
   kecamatanSelect.addEventListener("change", async () => {
@@ -309,6 +386,7 @@
 
     fitTo(boundsOf(kecamatanByCode.get(selectedKecamatan)) || boundsOf(kabkotaByCode.get(selectedKabkota)) || datasetBounds);
     scheduleLoad();
+    loadSubSlsPolygon();
   });
 
   desaSelect.addEventListener("change", async () => {
@@ -325,6 +403,7 @@
 
     fitTo(boundsOf(desaByCode.get(selectedDesa)) || ancestorBounds().find(Boolean) || datasetBounds);
     scheduleLoad();
+    loadSubSlsPolygon();
   });
 
   slsSelect.addEventListener("change", async () => {
@@ -339,6 +418,7 @@
     const fallbacks = [boundsOf(desaByCode.get(selectedDesa)), ...ancestorBounds()];
     fitTo(boundsOf(slsByCode.get(selectedSls)) || fallbacks.find(Boolean) || datasetBounds);
     scheduleLoad();
+    loadSubSlsPolygon();
   });
 
   subslsSelect.addEventListener("change", () => {
@@ -346,6 +426,7 @@
     const fallbacks = [boundsOf(slsByCode.get(selectedSls)), boundsOf(desaByCode.get(selectedDesa)), ...ancestorBounds()];
     fitTo(boundsOf(subslsByCode.get(selectedSubsls)) || fallbacks.find(Boolean) || datasetBounds);
     scheduleLoad();
+    loadSubSlsPolygon();
   });
 
   async function boot() {

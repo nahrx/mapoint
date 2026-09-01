@@ -38,16 +38,19 @@ membatasi semua query berikutnya (`GET /api/points?...&kabkota=6472`).
 
 Dropdown "Kecamatan" di sebelahnya mengikuti (cascading): nonaktif sampai
 sebuah kabupaten/kota dipilih, lalu terisi otomatis dari 3 digit berikutnya
-di `level_6_full_code` (`GET /api/kecamatan?kabkota=6472`). Tidak ada tabel
-referensi nama kecamatan di database, jadi labelnya berupa kode ("Kec.
-061") apa adanya — tidak ditebak-tebak namanya. Kecamatan tanpa
-kabupaten/kota ditolak backend (400) karena kodenya hanya unik di dalam satu
-kabupaten/kota.
+di `level_6_full_code` (`GET /api/kecamatan?kabkota=6472`). ClickHouse
+sendiri tidak punya tabel referensi nama kecamatan, tapi kalau database
+PostGIS opsional (`MAP_*`, lihat bagian "Polygon batas SubSLS & nama
+kecamatan/desa" di bawah) tersedia, server melengkapi labelnya dengan nama
+asli (mis. "Kec. Sungai Pinang") — kalau tidak, tetap jadi kode apa adanya
+("Kec. 061"). Kecamatan tanpa kabupaten/kota ditolak backend (400) karena
+kodenya hanya unik di dalam satu kabupaten/kota.
 
 Dropdown "Desa/Kelurahan" mengikuti pola yang sama satu tingkat lagi:
 nonaktif sampai kecamatan dipilih, terisi dari 3 digit berikutnya
-(`GET /api/desa?kabkota=6472&kecamatan=061`), label berupa kode ("Desa/Kel.
-003"), dan ditolak backend (400) kalau dikirim tanpa kecamatan.
+(`GET /api/desa?kabkota=6472&kecamatan=061`), label juga dilengkapi nama
+dari PostGIS kalau tersedia (kalau tidak, "Desa/Kel. 003"), dan ditolak
+backend (400) kalau dikirim tanpa kecamatan.
 
 Dropdown "Kode SLS" satu tingkat lagi: nonaktif sampai desa/kelurahan
 dipilih, terisi dari 4 digit berikutnya
@@ -82,15 +85,55 @@ Kalau nanti perlu sumber lain:
 - **Mapbox Satellite** — kualitas tinggi, tapi butuh signup + API key
   (gratis sampai ~50.000 pemuatan peta/bulan, berbayar di atas itu).
 
+### Polygon batas SubSLS & nama kecamatan/desa (PostGIS, opsional)
+
+Begitu filter wilayah di menu Peta didrill sampai Kode SubSLS, peta
+menggambar garis batas (poligon) area SubSLS itu (merah, semi-transparan)
+di atas titik-titiknya — otomatis hilang lagi kalau filter naik ke level
+manapun di atasnya. Filter Kecamatan dan Desa/Kelurahan (di menu Peta
+maupun Daftar) juga menampilkan **nama wilayahnya**, bukan cuma kodenya
+(mis. "Kec. Sungai Pinang" alih-alih "Kec. 061") — ClickHouse sendiri tidak
+punya tabel nama untuk kedua level ini, sama seperti dulu, jadi dilengkapi
+dari sumber yang sama.
+
+Datanya bukan dari ClickHouse, tapi dari database **PostgreSQL/PostGIS
+terpisah**, dikonfigurasi lewat variabel `MAP_*` di `.env` (lihat
+`example.env`). Fitur ini **opsional** — kalau `MAP_HOST` kosong/tidak
+diisi, atau Postgres-nya tidak bisa dihubungi saat startup, server tetap
+jalan normal tanpa polygon dan dropdown kecamatan/desa kembali menampilkan
+kode saja (cuma di-log sebagai warning, tidak menghentikan server — lihat
+`run()` di `main.go`). Tabel sumbernya `peta_sls_6400_rev`: `idsubsls`
+formatnya persis sama dengan `level_6_full_code` di ClickHouse (16 digit),
+`wkb_geometry` geometrinya (SRID 4326 / WGS84, langsung dipakai Leaflet
+tanpa reproyeksi), `kdkec`/`nmkec` dan `kddesa`/`nmdesa` sumber nama
+kecamatan/desa. Lihat `internal/mapdb/`.
+
 ### Menu Daftar
 
 Selain menu "Peta", ada menu "Daftar" (nav di paling atas) yang menampilkan
 isi tabel `se2026_titik` sebagai daftar biasa — bukan tampilan peta:
 
-- **Sort by nama** (`ORDER BY nama_assignment`), klik header kolom "Nama"
-  untuk membalik arah (naik/turun). Baris dengan nama kosong ikut tampil
-  apa adanya (muncul duluan saat urutan naik) — bukan disembunyikan,
-  karena ini daftar data mentah, bukan cuma titik yang siap dipetakan.
+- **Sort by kolom apa saja** — klik header kolom mana pun (Nama, Alamat, ID
+  SUBSLS, Jenis Prelist, Keberadaan Usaha, Keberadaan Keluarga, Status,
+  Assignment ID) untuk mengurutkan tabel berdasarkan kolom itu; klik lagi
+  kolom yang sama untuk membalik arah (naik/turun), klik kolom lain untuk
+  pindah kolom urut (default naik). Panah kecil di header cuma muncul di
+  kolom yang sedang aktif. Nama kolom di query string (`sortBy=nama`,
+  `sortBy=status`, dst.) divalidasi terhadap whitelist
+  `listSortColumns` di `internal/points/points.go` sebelum dipakai jadi SQL
+  — nilai yang tidak dikenal jatuh balik ke default (`nama`), bukan error.
+  Baris dengan nilai kosong di kolom yang diurutkan ikut tampil apa adanya
+  (bukan disembunyikan), karena ini daftar data mentah, bukan cuma titik
+  yang siap dipetakan.
+- **Cari nama** — kotak teks di atas filter wilayah, mencari substring
+  (tidak case-sensitive) di kolom `nama_assignment`, digabung dengan filter
+  lain lewat `AND` (semuanya harus cocok). Ketikan di-debounce 350ms supaya
+  tidak mengirim query tiap huruf. Berbeda dari filter lain di menu ini,
+  teks pencarian adalah input bebas dari pengguna — jadi tidak divalidasi
+  terhadap whitelist, tapi dikirim ke ClickHouse lewat parameter binding
+  (`?` placeholder, lihat `Filter.clause()` di
+  `internal/points/points.go`), bukan digabung langsung ke teks SQL, supaya
+  aman dari SQL injection tanpa perlu escaping manual.
 - **Paginasi** lewat `LIMIT`/`OFFSET` di ClickHouse — bukan infinite
   scroll, supaya jumlah data yang ditransfer & di-render tiap saat tetap
   kecil. Ukuran halaman bisa dipilih 25/50/100/200 baris.
@@ -98,20 +141,34 @@ isi tabel `se2026_titik` sebagai daftar biasa — bukan tampilan peta:
   SubSLS, cascading persis seperti di menu Peta, tapi state-nya independen
   (pilih filter di satu menu tidak mengubah filter di menu lainnya) dan
   tidak ada auto-zoom (karena tidak ada peta di sini).
+- **Filter atribut** — Jenis Prelist, Keberadaan Keluarga, Status: tiga
+  dropdown independen (tidak nge-cascade dan tidak saling bergantung, juga
+  tidak bergantung pada filter wilayah). Pilihannya adalah enum tertutup
+  dari `internal/points/points.go` (`jenisPrelistValues` dkk.), diserve ke
+  frontend lewat `GET /api/filter-options` — jadi frontend tidak perlu
+  hardcode daftar nilainya sendiri. Ada opsi "(Kosong)" di tiap dropdown
+  untuk memfilter baris yang kolomnya benar-benar kosong (`__EMPTY__` di
+  query string — beda dari filter tidak diisi sama sekali, lihat
+  `points.EmptyValue`).
 - **Tidak difilter oleh validitas koordinat** — beda dari menu Peta, daftar
-  ini menampilkan semua baris yang cocok filter wilayah, termasuk yang
+  ini menampilkan semua baris yang cocok filter, termasuk yang
   `latitude_ppl`/`longitude_ppl`-nya `0` atau kosong, karena tujuannya
   menelusuri data, bukan memetakannya.
-- **Unduh PDF** — tombol di sebelah filter, aktif hanya kalau filter sudah
-  lengkap sampai Kode SubSLS (di titik itu `level_6_full_code` sudah pas
-  16 digit / satu wilayah spesifik, cocok jadi satu laporan). PDF berjudul
-  "Daftar Hasil Pendataan", berisi keterangan wilayah (nama kab/kota +
-  kode tiap level + kode wilayah 16 digit) lalu tabel semua baris di SubSLS
-  itu (bukan cuma satu halaman tabel — lihat `ListAll` di
-  `internal/points/points.go`, dibatasi `ReportMaxRows=5000` sebagai jaring
-  pengaman). Kolom `assignment_id` sengaja tidak disertakan (bukan info
-  yang relevan untuk dicetak), begitu juga kolom ID SUBSLS per baris —
-  karena nilainya sama persis untuk semua baris dalam satu SubSLS, itu
+- **Unduh PDF** — tombol di sebelah filter, aktif hanya kalau filter
+  wilayah sudah lengkap sampai Kode SubSLS (di titik itu
+  `level_6_full_code` sudah pas 16 digit / satu wilayah spesifik, cocok
+  jadi satu laporan) — filter atribut dan cari nama boleh diisi atau tidak,
+  tidak mempengaruhi aktif/tidaknya tombol, tapi tetap ikut mempersempit
+  isi PDF kalau diisi, dan urutan barisnya ikut sort kolom yang sedang
+  aktif di tabel. PDF berjudul "Daftar Hasil Pendataan", berisi keterangan
+  wilayah (nama kab/kota + kode tiap level + kode wilayah 16 digit),
+  bagian "Filter Tambahan" kalau ada filter atribut atau cari nama yang
+  aktif, lalu tabel
+  semua baris yang cocok (bukan cuma satu halaman tabel — lihat `ListAll`
+  di `internal/points/points.go`, dibatasi `ReportMaxRows=5000` sebagai
+  jaring pengaman). Kolom `assignment_id` sengaja tidak disertakan (bukan
+  info yang relevan untuk dicetak), begitu juga kolom ID SUBSLS per baris
+  — karena nilainya sama persis untuk semua baris dalam satu SubSLS, itu
   cukup ditulis sekali di keterangan wilayah. PDF digenerate di server
   pakai `github.com/go-pdf/fpdf` (pure Go, tanpa Chrome/wkhtmltopdf) lewat
   `internal/pdfreport/`.
@@ -208,12 +265,14 @@ Lalu buka `http://localhost:8082` di browser (dari `HTTP_ADDR=:8082` di `.env`; 
 - `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=` — data titik/cluster untuk satu viewport (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
 - `GET /api/bounds` — extent geografis + total baris valid di seluruh dataset
 - `GET /api/kabkota` — daftar kabupaten/kota yang ada di data, dengan jumlah titik & bounding box masing-masing
-- `GET /api/kecamatan?kabkota=` — daftar kecamatan di dalam satu kabupaten/kota (parameter wajib)
-- `GET /api/desa?kabkota=&kecamatan=` — daftar desa/kelurahan di dalam satu kecamatan (kedua parameter wajib)
+- `GET /api/kecamatan?kabkota=` — daftar kecamatan di dalam satu kabupaten/kota (parameter wajib); `name` diisi dari PostGIS kalau `MAP_*` dikonfigurasi, kosong kalau tidak
+- `GET /api/desa?kabkota=&kecamatan=` — daftar desa/kelurahan di dalam satu kecamatan (kedua parameter wajib); `name` sama seperti di atas
 - `GET /api/sls?kabkota=&kecamatan=&desa=` — daftar Kode SLS di dalam satu desa/kelurahan (ketiga parameter wajib)
 - `GET /api/subsls?kabkota=&kecamatan=&desa=&sls=` — daftar Kode SubSLS di dalam satu SLS (keempat parameter wajib)
-- `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&page=&pageSize=&dir=` — satu halaman tabel untuk menu Daftar, urut nama (`dir=asc` default atau `desc`), `pageSize` maks 200
-- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&dir=` — PDF "Daftar Hasil Pendataan" untuk satu SubSLS (kelima parameter wajib)
+- `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — GeoJSON batas SubSLS untuk overlay di peta (kelima parameter wajib); 503 kalau PostGIS tidak dikonfigurasi/tidak terhubung — lihat `internal/mapdb/`
+- `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `keberadaan_usaha`, `keberadaan_keluarga`, `status`, `assignment_id` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`) semuanya opsional dan independen dari filter wilayah maupun satu sama lain — nilainya divalidasi terhadap enum tetap di `internal/points/points.go`, pakai `__EMPTY__` untuk memfilter kolom yang kosong
+- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan" untuk satu SubSLS (kelima parameter wilayah wajib); filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
+- `GET /api/filter-options` — daftar nilai enum untuk dropdown filter Jenis Prelist, Keberadaan Keluarga, dan Status (statis, bukan query ke ClickHouse)
 - `GET /healthz` — health check (ping ClickHouse)
 
 ## Catatan kualitas data
@@ -230,6 +289,7 @@ sumber, bukan disembunyikan oleh peta ini.
 main.go                    entry point, wiring, graceful shutdown, refresher
 internal/config/           parsing .env
 internal/chdb/             koneksi & pool ClickHouse
+internal/mapdb/            koneksi PostGIS opsional + query polygon batas SubSLS
 internal/points/           query viewport → individual points / clusters
 internal/pdfreport/        generate PDF "Daftar Hasil Pendataan" (pakai go-pdf/fpdf)
 internal/api/              HTTP handlers + logging middleware

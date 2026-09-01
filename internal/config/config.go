@@ -21,6 +21,23 @@ type Config struct {
 
 	// HTTPAddr is the address the web server listens on, e.g. ":8080".
 	HTTPAddr string
+
+	// MapHost etc. configure an optional PostgreSQL/PostGIS connection
+	// used only for SubSLS boundary polygons on the Peta map. Unlike the
+	// ClickHouse settings above, this is not required — MapHost is "" when
+	// unset, and the server simply serves the map without polygons (see
+	// internal/mapdb) rather than failing to start.
+	MapHost     string
+	MapPort     int
+	MapDatabase string
+	MapUsername string
+	MapPassword string
+}
+
+// MapEnabled reports whether enough PostgreSQL connection info was
+// supplied to attempt serving SubSLS polygons.
+func (c *Config) MapEnabled() bool {
+	return c.MapHost != ""
 }
 
 // Load reads envPath into a Config. Values from the .env file take
@@ -65,6 +82,19 @@ func Load(envPath string) (*Config, error) {
 		return nil, fmt.Errorf("config: invalid PORT %q: %w", portStr, err)
 	}
 	cfg.CHPort = port
+
+	cfg.MapHost = get("MAP_HOST", "")
+	cfg.MapDatabase = get("MAP_DATABASE", "")
+	cfg.MapUsername = get("MAP_USERNAME", "")
+	cfg.MapPassword = get("MAP_PASSWORD", "")
+	if cfg.MapHost != "" {
+		mapPortStr := get("MAP_PORT", "5432")
+		mapPort, err := strconv.Atoi(strings.TrimSpace(mapPortStr))
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid MAP_PORT %q: %w", mapPortStr, err)
+		}
+		cfg.MapPort = mapPort
+	}
 
 	if cfg.CHHost == "" {
 		return nil, fmt.Errorf("config: HOST is required")

@@ -16,9 +16,13 @@ import (
 	"se2026-titik-maps/internal/points"
 )
 
-// Region describes the wilayah a report is scoped to. All fields are
-// expected to be already-validated codes (see points.Parse*) — this
-// package only formats them, it doesn't validate.
+// Region describes the wilayah — and, optionally, the extra attribute
+// filters — a report is scoped to. All fields are expected to be
+// already-validated (see points.Parse*) — this package only formats them,
+// it doesn't validate. JenisPrelist, KeberadaanKeluarga and Status are ""
+// when that filter wasn't applied; a set filter's raw value (including
+// points.EmptyValue for "filter for a blank column") is rendered via
+// attrLabel. Search is "" when no name search was applied.
 type Region struct {
 	KabKotaCode string
 	KabKotaName string
@@ -26,6 +30,11 @@ type Region struct {
 	Desa        string
 	SLS         string
 	SubSLS      string
+
+	JenisPrelist       string
+	KeberadaanKeluarga string
+	Status             string
+	Search             string
 }
 
 // FullCode reconstructs the 16-digit level_6_full_code these five codes
@@ -141,6 +150,31 @@ func writeHeader(pdf *fpdf.Fpdf, tr func(string) string, region Region, total in
 		pdf.CellFormat(50, 5.5, tr(kv[0]), "", 0, "L", false, 0, "")
 		pdf.CellFormat(0, 5.5, tr(": "+kv[1]), "", 1, "L", false, 0, "")
 	}
+
+	var extra [][2]string
+	if region.JenisPrelist != "" {
+		extra = append(extra, [2]string{"Jenis Prelist", attrLabel(region.JenisPrelist)})
+	}
+	if region.KeberadaanKeluarga != "" {
+		extra = append(extra, [2]string{"Keberadaan Keluarga", attrLabel(region.KeberadaanKeluarga)})
+	}
+	if region.Status != "" {
+		extra = append(extra, [2]string{"Status", attrLabel(region.Status)})
+	}
+	if region.Search != "" {
+		extra = append(extra, [2]string{"Cari Nama", region.Search})
+	}
+	if len(extra) > 0 {
+		pdf.Ln(2)
+		pdf.SetFont("Arial", "B", 10)
+		pdf.CellFormat(0, 6, tr("Filter Tambahan"), "", 1, "L", false, 0, "")
+		pdf.SetFont("Arial", "", 10)
+		for _, kv := range extra {
+			pdf.CellFormat(50, 5.5, tr(kv[0]), "", 0, "L", false, 0, "")
+			pdf.CellFormat(0, 5.5, tr(": "+kv[1]), "", 1, "L", false, 0, "")
+		}
+	}
+
 	if truncated {
 		pdf.SetFont("Arial", "I", 9)
 		pdf.SetTextColor(180, 60, 30)
@@ -223,4 +257,14 @@ func dashIfEmpty(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// attrLabel renders an attribute filter's raw value for display, turning
+// points.EmptyValue (the sentinel for "filter for a blank column") into a
+// human-readable label instead of the literal sentinel string.
+func attrLabel(val string) string {
+	if val == points.EmptyValue {
+		return "(Kosong)"
+	}
+	return val
 }

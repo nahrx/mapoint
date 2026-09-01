@@ -1,6 +1,7 @@
 // Package api wires up the HTTP handlers: static frontend, /api/points,
 // /api/bounds, /api/kabkota, /api/kecamatan, /api/desa, /api/sls,
-// /api/subsls, /api/list, /api/list/pdf and /healthz.
+// /api/subsls, /api/list, /api/list/pdf, /api/subsls-polygon and
+// /healthz.
 package api
 
 import (
@@ -12,11 +13,14 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/jackc/pgx/v5/pgxpool"
 
+	"se2026-titik-maps/internal/mapdb"
 	"se2026-titik-maps/internal/pdfreport"
 	"se2026-titik-maps/internal/points"
 )
@@ -27,10 +31,15 @@ type Server struct {
 	bounds  atomic.Pointer[points.Bounds]
 	kabkota atomic.Pointer[[]points.KabKotaInfo]
 	log     *slog.Logger
+
+	// mapPool is nil when config.Config.MapEnabled() is false — the SubSLS
+	// polygon feature is optional, and handleSubSLSPolygon degrades to a
+	// clear "not configured" response rather than a nil-pointer panic.
+	mapPool *pgxpool.Pool
 }
 
-func NewServer(svc *points.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, log *slog.Logger) *Server {
-	s := &Server{svc: svc, conn: conn, log: log}
+func NewServer(svc *points.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, mapPool *pgxpool.Pool, log *slog.Logger) *Server {
+	s := &Server{svc: svc, conn: conn, mapPool: mapPool, log: log}
 	s.bounds.Store(&bounds)
 	s.kabkota.Store(&kabkota)
 	return s
@@ -60,6 +69,8 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /api/subsls", s.handleSubSLS)
 	mux.HandleFunc("GET /api/list", s.handleList)
 	mux.HandleFunc("GET /api/list/pdf", s.handleListPDF)
+	mux.HandleFunc("GET /api/filter-options", s.handleFilterOptions)
+	mux.HandleFunc("GET /api/subsls-polygon", s.handleSubSLSPolygon)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	// The Daftar menu has its own URL (see nav.js's use of history.pushState)
 	// so it survives a refresh or a direct link — but it's still the same
@@ -149,6 +160,14 @@ func (s *Server) handleKabKota(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// handleFilterOptions serves the fixed dropdown choices for the Daftar
+// menu's attribute filters (jenis prelist, keberadaan keluarga, status) —
+// a static, closed set (see points.GetFilterOptions), not a database
+// query, so there's nothing to cache or scope by wilayah here.
+func (s *Server) handleFilterOptions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, points.GetFilterOptions())
+}
+
 func (s *Server) handleKecamatan(w http.ResponseWriter, r *http.Request) {
 	kabkota, err := points.ParseKabKota(r.URL.Query().Get("kabkota"))
 	if err != nil {
@@ -170,14 +189,30 @@ func (s *Server) handleKecamatan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	names := s.kecamatanNames(r.Context(), kabkota)
 	out := make([]points.KecamatanInfoJSON, len(list))
 	for i, k := range list {
 		out[i] = points.KecamatanInfoJSON{
-			Code: k.Code, Total: k.Total,
+			Code: k.Code, Name: names[k.Code], Total: k.Total,
 			MinLat: k.MinLat, MaxLat: k.MaxLat, MinLon: k.MinLon, MaxLon: k.MaxLon,
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// kecamatanNames looks up code->name from the optional PostGIS database,
+// returning a nil map (safe to index — Go just yields "") when it isn't
+// configured or the query fails, so callers never need a nil check.
+func (s *Server) kecamatanNames(ctx context.Context, kabkota string) map[string]string {
+	if s.mapPool == nil {
+		return nil
+	}
+	names, err := mapdb.KecamatanNames(ctx, s.mapPool, kabkota)
+	if err != nil {
+		s.log.Warn("kecamatan name lookup failed", "err", err)
+		return nil
+	}
+	return names
 }
 
 func (s *Server) handleDesa(w http.ResponseWriter, r *http.Request) {
@@ -207,14 +242,29 @@ func (s *Server) handleDesa(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	names := s.desaNames(r.Context(), kabkota, kecamatan)
 	out := make([]points.DesaInfoJSON, len(list))
 	for i, d := range list {
 		out[i] = points.DesaInfoJSON{
-			Code: d.Code, Total: d.Total,
+			Code: d.Code, Name: names[d.Code], Total: d.Total,
 			MinLat: d.MinLat, MaxLat: d.MaxLat, MinLon: d.MinLon, MaxLon: d.MaxLon,
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// desaNames is kecamatanNames's counterpart for desa/kelurahan — see
+// kecamatanNames for the nil-map-is-fine contract.
+func (s *Server) desaNames(ctx context.Context, kabkota, kecamatan string) map[string]string {
+	if s.mapPool == nil {
+		return nil
+	}
+	names, err := mapdb.DesaNames(ctx, s.mapPool, kabkota, kecamatan)
+	if err != nil {
+		s.log.Warn("desa name lookup failed", "err", err)
+		return nil
+	}
+	return names
 }
 
 func (s *Server) handleSLS(w http.ResponseWriter, r *http.Request) {
@@ -259,6 +309,11 @@ func (s *Server) handleSLS(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// maxSearchLen bounds the free-text ?search= param — generous for any
+// real name, just enough to reject pathological input before it reaches
+// ClickHouse.
+const maxSearchLen = 200
+
 // parseFilter reads the kabkota/kecamatan/desa/sls/subsls wilayah filter
 // shared by /api/points and /api/list, and checks that each level is only
 // set when its parent is too.
@@ -283,7 +338,27 @@ func parseFilter(q url.Values) (points.Filter, error) {
 	if err != nil {
 		return points.Filter{}, err
 	}
-	filter := points.Filter{KabKota: kabkota, Kecamatan: kecamatan, Desa: desa, SLS: sls, SubSLS: subsls}
+	jenisPrelist, err := points.ParseJenisPrelist(q.Get("jenisPrelist"))
+	if err != nil {
+		return points.Filter{}, err
+	}
+	keberadaanKeluarga, err := points.ParseKeberadaanKeluarga(q.Get("keberadaanKeluarga"))
+	if err != nil {
+		return points.Filter{}, err
+	}
+	status, err := points.ParseStatus(q.Get("status"))
+	if err != nil {
+		return points.Filter{}, err
+	}
+	search := strings.TrimSpace(q.Get("search"))
+	if len(search) > maxSearchLen {
+		return points.Filter{}, fmt.Errorf("search term is too long (max %d characters)", maxSearchLen)
+	}
+	filter := points.Filter{
+		KabKota: kabkota, Kecamatan: kecamatan, Desa: desa, SLS: sls, SubSLS: subsls,
+		JenisPrelist: jenisPrelist, KeberadaanKeluarga: keberadaanKeluarga, Status: status,
+		Search: search,
+	}
 	if err := filter.Validate(); err != nil {
 		return points.Filter{}, err
 	}
@@ -365,9 +440,10 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		pageSize = parsed
 	}
 
+	sortBy := points.ParseSortColumn(q.Get("sortBy"))
 	dir := points.ParseSortDir(q.Get("dir"))
 
-	resp, err := s.svc.List(r.Context(), filter, page, pageSize, dir)
+	resp, err := s.svc.List(r.Context(), filter, page, pageSize, sortBy, dir)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
@@ -398,9 +474,10 @@ func (s *Server) handleListPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sortBy := points.ParseSortColumn(q.Get("sortBy"))
 	dir := points.ParseSortDir(q.Get("dir"))
 
-	items, err := s.svc.ListAll(r.Context(), filter, dir)
+	items, err := s.svc.ListAll(r.Context(), filter, sortBy, dir)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
@@ -417,6 +494,11 @@ func (s *Server) handleListPDF(w http.ResponseWriter, r *http.Request) {
 		Desa:        filter.Desa,
 		SLS:         filter.SLS,
 		SubSLS:      filter.SubSLS,
+
+		JenisPrelist:       filter.JenisPrelist,
+		KeberadaanKeluarga: filter.KeberadaanKeluarga,
+		Status:             filter.Status,
+		Search:             filter.Search,
 	}
 	truncated := len(items) >= points.ReportMaxRows
 
@@ -432,6 +514,41 @@ func (s *Server) handleListPDF(w http.ResponseWriter, r *http.Request) {
 		// writeError's JSON body — the client just gets a truncated/broken
 		// download, which is at least visible rather than silently wrong.
 	}
+}
+
+// handleSubSLSPolygon serves the SubSLS boundary as GeoJSON for the Peta
+// map to draw once a filter is pinned all the way down to one SubSLS —
+// same all-five-levels-required rule as the PDF download, since a
+// boundary polygon is only meaningful for one specific SubSLS.
+func (s *Server) handleSubSLSPolygon(w http.ResponseWriter, r *http.Request) {
+	if s.mapPool == nil {
+		writeError(w, http.StatusServiceUnavailable, "SubSLS polygon layer is not configured on this server")
+		return
+	}
+
+	q := r.URL.Query()
+	filter, err := parseFilter(q)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if filter.KabKota == "" || filter.Kecamatan == "" || filter.Desa == "" || filter.SLS == "" || filter.SubSLS == "" {
+		writeError(w, http.StatusBadRequest, "polygon lookup requires filtering all the way down to Kode SubSLS")
+		return
+	}
+
+	geojson, err := mapdb.SubSLSPolygonGeoJSON(r.Context(), s.mapPool, filter.FullCode())
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		s.log.Error("subsls polygon query failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/geo+json")
+	w.Write(geojson)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {

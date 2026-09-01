@@ -45,7 +45,11 @@ window.App = (() => {
           byCode.set(item.code, item);
           const opt = document.createElement("option");
           opt.value = item.code;
-          opt.textContent = `${labelPrefix}${item.code} (${item.total.toLocaleString("id-ID")} titik)`;
+          // item.name comes from an optional PostGIS lookup on the server
+          // (kecamatan/desa only, for now) — fall back to the bare code
+          // when it isn't set, same label as before this existed.
+          const label = item.name ? item.name : item.code;
+          opt.textContent = `${labelPrefix}${label} (${item.total.toLocaleString("id-ID")} titik)`;
           selectEl.appendChild(opt);
         }
       } catch (err) {

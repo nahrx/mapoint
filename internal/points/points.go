@@ -136,17 +136,125 @@ func ParseSubSLS(code string) (string, error) {
 	return code, nil
 }
 
-// Filter narrows a query down to a wilayah. All five fields come from
-// level_6_full_code: KabKota is characters 1-4, Kecamatan is characters
-// 5-7, Desa is characters 8-10, SLS is characters 11-14, SubSLS is
-// characters 15-16 (its last two). Each is meaningless without the one
-// above it — see Validate.
+// jenisPrelistValues, keberadaanKeluargaValues and statusValues are the
+// closed sets of values jenis_prelist_root, keberadaan_keluarga and
+// assignment_status_alias actually hold. They double as the dropdown
+// choices served by GET /api/filter-options and the server-side whitelist
+// a raw filter value is checked against in parseEnumFilter — so an
+// attribute filter can only ever become a value that column can genuinely
+// hold, never arbitrary text dropped into SQL.
+var (
+	jenisPrelistValues = []string{
+		"keluarga", "UMKM", "OSS Perorangan", "OSS Badan Usaha",
+		"bangunan_lain", "UB", "dummy", "KEK-KI",
+	}
+	keberadaanKeluargaValues = []string{
+		"0. Tidak Ditemukan (STOP)", "1. Ditemukan", "2. Baru", "3. Meninggal",
+		"4. Tidak Eligible", "5. Tidak dapat ditemui sampai akhir pendataan",
+		"6. Keluarga Khusus",
+	}
+	statusValues = []string{
+		"OPEN", "DRAFT", "SUBMITTED BY Pencacah", "APPROVED BY Pengawas",
+		"REJECTED BY Pengawas", "REVOKED BY Pengawas", "SUBMITTED RESPONDENT",
+		"EDITED BY Pengawas", "REJECTED BY Admin Kabupaten",
+		"EDITED BY Admin Kabupaten", "COMPLETED BY Admin Kabupaten",
+		"REVOKED BY Admin Kabupaten",
+	}
+)
+
+// FilterOptions is the payload for GET /api/filter-options: the fixed
+// dropdown choices for the Daftar menu's attribute filters, so the
+// frontend never has to hardcode (and risk drifting from) these lists.
+type FilterOptions struct {
+	JenisPrelist       []string `json:"jenis_prelist"`
+	KeberadaanKeluarga []string `json:"keberadaan_keluarga"`
+	Status             []string `json:"status"`
+}
+
+// GetFilterOptions returns the attribute filter dropdown choices.
+func GetFilterOptions() FilterOptions {
+	return FilterOptions{
+		JenisPrelist:       jenisPrelistValues,
+		KeberadaanKeluarga: keberadaanKeluargaValues,
+		Status:             statusValues,
+	}
+}
+
+// EmptyValue is the sentinel a caller passes to explicitly filter for rows
+// where the column itself is blank, as distinct from leaving the filter
+// unset entirely. Parse*'s zero value ("") already means "no filter", so
+// plain "" can't also stand for "the column is blank" — this sentinel
+// disambiguates the two states over the wire (e.g. ?jenisPrelist=__EMPTY__).
+const EmptyValue = "__EMPTY__"
+
+// parseEnumFilter validates raw against allowed, the closed set of values
+// its target column can hold. Empty input means "no filter"; EmptyValue
+// means "filter for a blank column"; anything else must match allowed
+// exactly, since only whitelisted strings ever reach the SQL WHERE clause
+// this feeds — see (Filter).clause.
+func parseEnumFilter(raw string, allowed []string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	if raw == EmptyValue {
+		return EmptyValue, nil
+	}
+	for _, v := range allowed {
+		if raw == v {
+			return raw, nil
+		}
+	}
+	return "", fmt.Errorf("invalid filter value %q", raw)
+}
+
+// ParseJenisPrelist validates a Jenis Prelist filter value.
+func ParseJenisPrelist(raw string) (string, error) {
+	return parseEnumFilter(raw, jenisPrelistValues)
+}
+
+// ParseKeberadaanKeluarga validates a Keberadaan Keluarga filter value.
+func ParseKeberadaanKeluarga(raw string) (string, error) {
+	return parseEnumFilter(raw, keberadaanKeluargaValues)
+}
+
+// ParseStatus validates a Status filter value.
+func ParseStatus(raw string) (string, error) {
+	return parseEnumFilter(raw, statusValues)
+}
+
+// Filter narrows a query down to a wilayah and, optionally, a handful of
+// row attributes. The five wilayah fields come from level_6_full_code:
+// KabKota is characters 1-4, Kecamatan is characters 5-7, Desa is
+// characters 8-10, SLS is characters 11-14, SubSLS is characters 15-16
+// (its last two). Each is meaningless without the one above it — see
+// Validate. JenisPrelist, KeberadaanKeluarga and Status are independent of
+// wilayah and of each other: "" (unset), EmptyValue (blank column), or one
+// of that column's known values (see the Parse* functions above).
 type Filter struct {
 	KabKota   string
 	Kecamatan string
 	Desa      string
 	SLS       string
 	SubSLS    string
+
+	JenisPrelist       string
+	KeberadaanKeluarga string
+	Status             string
+
+	// Search is free-text user input matched against nama_assignment
+	// (see clause). Unlike every other field above, it is never validated
+	// against a whitelist — it's bound as a query parameter instead of
+	// being interpolated into the SQL text, so it's safe as-is.
+	Search string
+}
+
+// FullCode reconstructs the 16-digit level_6_full_code the five wilayah
+// fields pin exactly (4+3+3+4+2 digits) when all of them are set — meant
+// for callers that need a single SubSLS pinned down, like the PDF report
+// or the SubSLS boundary polygon lookup. Meaningless (and not guaranteed
+// to be 16 characters) unless every level down to SubSLS is set.
+func (f Filter) FullCode() string {
+	return f.KabKota + f.Kecamatan + f.Desa + f.SLS + f.SubSLS
 }
 
 // Validate reports an error if a narrower field is set without its parent,
@@ -167,8 +275,16 @@ func (f Filter) Validate() error {
 	return nil
 }
 
-func (f Filter) clause() string {
-	parts := make([]string, 0, 5)
+// clause builds the WHERE fragment for filter, plus any bind arguments it
+// needs. Every field except Search is either a regex-validated digit
+// string or matched against a closed whitelist (see Parse* above), so it's
+// safe to interpolate directly into the SQL text. Search is genuine
+// free-text user input, so it's never interpolated — it's passed back as a
+// bind arg for the ? placeholder in the search fragment, and the caller
+// must forward args to conn.Query/QueryRow alongside the query text.
+func (f Filter) clause() (string, []any) {
+	parts := make([]string, 0, 9)
+	var args []any
 	if f.KabKota != "" {
 		parts = append(parts, fmt.Sprintf("substring(level_6_full_code, 1, 4) = '%s'", f.KabKota))
 	}
@@ -184,10 +300,38 @@ func (f Filter) clause() string {
 	if f.SubSLS != "" {
 		parts = append(parts, fmt.Sprintf("substring(level_6_full_code, 15, 2) = '%s'", f.SubSLS))
 	}
-	if len(parts) == 0 {
-		return "1"
+	if f.JenisPrelist != "" {
+		parts = append(parts, attrClause("jenis_prelist_root", f.JenisPrelist))
 	}
-	return strings.Join(parts, " AND ")
+	if f.KeberadaanKeluarga != "" {
+		parts = append(parts, attrClause("keberadaan_keluarga", f.KeberadaanKeluarga))
+	}
+	if f.Status != "" {
+		parts = append(parts, attrClause("assignment_status_alias", f.Status))
+	}
+	if f.Search != "" {
+		// positionCaseInsensitive is a plain substring search, not a LIKE
+		// pattern, so there's no %/_ wildcard to escape on top of the bind
+		// parameter already keeping the raw text out of the SQL text.
+		parts = append(parts, "positionCaseInsensitive(nama_assignment, ?) > 0")
+		args = append(args, f.Search)
+	}
+	if len(parts) == 0 {
+		return "1", nil
+	}
+	return strings.Join(parts, " AND "), args
+}
+
+// attrClause builds an equality WHERE fragment for one of the attribute
+// filters. val has already passed parseEnumFilter against a fixed
+// whitelist (see ParseJenisPrelist etc.), so it's always either EmptyValue
+// or a known-safe string — never arbitrary text — by the time it lands
+// here.
+func attrClause(col, val string) string {
+	if val == EmptyValue {
+		return fmt.Sprintf("%s = ''", col)
+	}
+	return fmt.Sprintf("%s = '%s'", col, val)
 }
 
 func clamp(v, lo, hi float64) float64 {
@@ -296,11 +440,12 @@ func (s *Service) Query(ctx context.Context, b BBox, zoom int, filter Filter) (R
 }
 
 func (s *Service) count(ctx context.Context, b BBox, filter Filter) (uint64, error) {
+	where, args := filter.clause()
 	q := fmt.Sprintf(
 		"SELECT count() FROM %s WHERE %s AND %s AND %s",
-		table, validCoords, bboxClause(b), filter.clause(),
+		table, validCoords, bboxClause(b), where,
 	)
-	row := s.conn.QueryRow(ctx, q)
+	row := s.conn.QueryRow(ctx, q, args...)
 	var n uint64
 	if err := row.Scan(&n); err != nil {
 		return 0, err
@@ -309,15 +454,16 @@ func (s *Service) count(ctx context.Context, b BBox, filter Filter) (uint64, err
 }
 
 func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Point, error) {
+	where, args := filter.clause()
 	q := fmt.Sprintf(`SELECT
 		assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root,
 		keberadaan_usaha, keberadaan_keluarga, assignment_status_alias,
 		latitude_ppl, longitude_ppl
 	FROM %s
 	WHERE %s AND %s AND %s
-	LIMIT %d`, table, validCoords, bboxClause(b), filter.clause(), IndividualLimit)
+	LIMIT %d`, table, validCoords, bboxClause(b), where, IndividualLimit)
 
-	rows, err := s.conn.Query(ctx, q)
+	rows, err := s.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -356,6 +502,7 @@ func (s *Service) queryClusters(ctx context.Context, b BBox, zoom int, filter Fi
 	cell := cellSizeForZoom(zoom)
 	cellStr := fFloat(cell)
 
+	where, args := filter.clause()
 	q := fmt.Sprintf(`SELECT
 		floor(latitude_ppl / %s) * %s + %s / 2 AS glat,
 		floor(longitude_ppl / %s) * %s + %s / 2 AS glon,
@@ -364,9 +511,9 @@ func (s *Service) queryClusters(ctx context.Context, b BBox, zoom int, filter Fi
 	WHERE %s AND %s AND %s
 	GROUP BY glat, glon
 	ORDER BY cnt DESC
-	LIMIT %d`, cellStr, cellStr, cellStr, cellStr, cellStr, cellStr, table, validCoords, bboxClause(b), filter.clause(), ClusterLimit)
+	LIMIT %d`, cellStr, cellStr, cellStr, cellStr, cellStr, cellStr, table, validCoords, bboxClause(b), where, ClusterLimit)
 
-	rows, err := s.conn.Query(ctx, q)
+	rows, err := s.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -425,10 +572,10 @@ type KabKotaInfoJSON struct {
 }
 
 // KabKotaList returns every kabupaten/kota actually present in the data,
-// most populous first, each with a bounding box for the map to fit to when
-// selected. The bbox uses the 1st/99th percentile of coordinates rather
-// than true min/max so the occasional bad-GPS outlier doesn't blow up the
-// zoom level.
+// ordered by code ascending, each with a bounding box for the map to fit
+// to when selected. The bbox uses the 1st/99th percentile of coordinates
+// rather than true min/max so the occasional bad-GPS outlier doesn't blow
+// up the zoom level.
 func (s *Service) KabKotaList(ctx context.Context) ([]KabKotaInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -441,7 +588,7 @@ func (s *Service) KabKotaList(ctx context.Context) ([]KabKotaInfo, error) {
 	FROM %s
 	WHERE %s AND length(level_6_full_code) >= 4
 	GROUP BY kabkota
-	ORDER BY count() DESC`, table, validCoords)
+	ORDER BY kabkota ASC`, table, validCoords)
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -463,17 +610,24 @@ func (s *Service) KabKotaList(ctx context.Context) ([]KabKotaInfo, error) {
 
 // KecamatanInfo describes one kecamatan filter option within a
 // kabupaten/kota: its 3-digit code, row count, and a bounding box (same
-// 1st/99th-percentile approach as KabKotaInfo). There's no name reference
-// table for kecamatan in this database, so the code itself is the label —
-// see the frontend, which renders it as "Kec. <code>".
+// 1st/99th-percentile approach as KabKotaInfo). ClickHouse itself has no
+// name reference table for kecamatan — the API layer enriches the
+// serialized KecamatanInfoJSON with a name from the optional PostGIS
+// database when it's configured (see internal/mapdb.KecamatanNames); the
+// frontend falls back to "Kec. <code>" when no name is available.
 type KecamatanInfo struct {
 	Code                           string `json:"code"`
 	Total                          uint64 `json:"total"`
 	MinLat, MaxLat, MinLon, MaxLon float64
 }
 
+// KecamatanInfoJSON is the API shape for a kecamatan option. Name is ""
+// unless the server enriched it from the optional PostGIS database (see
+// internal/mapdb.KecamatanNames) — the frontend falls back to showing
+// Code alone when Name is blank.
 type KecamatanInfoJSON struct {
 	Code   string  `json:"code"`
+	Name   string  `json:"name"`
 	Total  uint64  `json:"total"`
 	MinLat float64 `json:"min_lat"`
 	MaxLat float64 `json:"max_lat"`
@@ -482,7 +636,7 @@ type KecamatanInfoJSON struct {
 }
 
 // KecamatanList returns every kecamatan present within one kabupaten/kota,
-// most populous first. kabkota must be a validated 4-digit code (see
+// ordered by code ascending. kabkota must be a validated 4-digit code (see
 // ParseKabKota) — this is always scoped to one kabupaten/kota since
 // kecamatan codes repeat across them.
 func (s *Service) KecamatanList(ctx context.Context, kabkota string) ([]KecamatanInfo, error) {
@@ -497,7 +651,7 @@ func (s *Service) KecamatanList(ctx context.Context, kabkota string) ([]Kecamata
 	FROM %s
 	WHERE %s AND length(level_6_full_code) >= 7 AND substring(level_6_full_code, 1, 4) = '%s'
 	GROUP BY kec
-	ORDER BY count() DESC`, table, validCoords, kabkota)
+	ORDER BY kec ASC`, table, validCoords, kabkota)
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -518,16 +672,19 @@ func (s *Service) KecamatanList(ctx context.Context, kabkota string) ([]Kecamata
 
 // DesaInfo describes one desa/kelurahan filter option within a kecamatan:
 // its 3-digit code, row count, and a bounding box (same 1st/99th-percentile
-// approach as KabKotaInfo). No name reference table exists for desa either,
-// so the code is the label — frontend renders it as "Desa/Kel. <code>".
+// approach as KabKotaInfo). Same name-enrichment story as KecamatanInfo —
+// see DesaInfoJSON and internal/mapdb.DesaNames.
 type DesaInfo struct {
 	Code                           string `json:"code"`
 	Total                          uint64 `json:"total"`
 	MinLat, MaxLat, MinLon, MaxLon float64
 }
 
+// DesaInfoJSON is the API shape for a desa/kelurahan option. Name is ""
+// unless the server enriched it from the optional PostGIS database.
 type DesaInfoJSON struct {
 	Code   string  `json:"code"`
+	Name   string  `json:"name"`
 	Total  uint64  `json:"total"`
 	MinLat float64 `json:"min_lat"`
 	MaxLat float64 `json:"max_lat"`
@@ -536,9 +693,10 @@ type DesaInfoJSON struct {
 }
 
 // DesaList returns every desa/kelurahan present within one kabupaten/kota +
-// kecamatan combination, most populous first. Both codes must already be
-// validated (ParseKabKota / ParseKecamatan) — a desa code repeats across
-// different kecamatan, so both parents are required to disambiguate it.
+// kecamatan combination, ordered by code ascending. Both codes must
+// already be validated (ParseKabKota / ParseKecamatan) — a desa code
+// repeats across different kecamatan, so both parents are required to
+// disambiguate it.
 func (s *Service) DesaList(ctx context.Context, kabkota, kecamatan string) ([]DesaInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -553,7 +711,7 @@ func (s *Service) DesaList(ctx context.Context, kabkota, kecamatan string) ([]De
 		AND substring(level_6_full_code, 1, 4) = '%s'
 		AND substring(level_6_full_code, 5, 3) = '%s'
 	GROUP BY desa
-	ORDER BY count() DESC`, table, validCoords, kabkota, kecamatan)
+	ORDER BY desa ASC`, table, validCoords, kabkota, kecamatan)
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -593,8 +751,10 @@ type SLSInfoJSON struct {
 }
 
 // SLSList returns every Kode SLS present within one kabupaten/kota +
-// kecamatan + desa/kelurahan combination, most populous first. All three
-// codes must already be validated — an SLS code repeats across different
+// kecamatan + desa/kelurahan combination, ordered by code ascending (the
+// filter dropdown reads better sorted by code at this level than by
+// count, unlike the coarser levels above it). All three codes must
+// already be validated — an SLS code repeats across different
 // desa/kelurahan, so all three parents are required to disambiguate it.
 func (s *Service) SLSList(ctx context.Context, kabkota, kecamatan, desa string) ([]SLSInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -611,7 +771,7 @@ func (s *Service) SLSList(ctx context.Context, kabkota, kecamatan, desa string) 
 		AND substring(level_6_full_code, 5, 3) = '%s'
 		AND substring(level_6_full_code, 8, 3) = '%s'
 	GROUP BY sls
-	ORDER BY count() DESC`, table, validCoords, kabkota, kecamatan, desa)
+	ORDER BY sls ASC`, table, validCoords, kabkota, kecamatan, desa)
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -650,9 +810,10 @@ type SubSLSInfoJSON struct {
 }
 
 // SubSLSList returns every Kode SubSLS present within one kabupaten/kota +
-// kecamatan + desa/kelurahan + SLS combination, most populous first. All
-// four codes must already be validated — a SubSLS code repeats across
-// different SLS, so all four parents are required to disambiguate it.
+// kecamatan + desa/kelurahan + SLS combination, ordered by code ascending
+// (same reasoning as SLSList). All four codes must already be validated —
+// a SubSLS code repeats across different SLS, so all four parents are
+// required to disambiguate it.
 func (s *Service) SubSLSList(ctx context.Context, kabkota, kecamatan, desa, sls string) ([]SubSLSInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -669,7 +830,7 @@ func (s *Service) SubSLSList(ctx context.Context, kabkota, kecamatan, desa, sls 
 		AND substring(level_6_full_code, 8, 3) = '%s'
 		AND substring(level_6_full_code, 11, 4) = '%s'
 	GROUP BY subsls
-	ORDER BY count() DESC`, table, validCoords, kabkota, kecamatan, desa, sls)
+	ORDER BY subsls ASC`, table, validCoords, kabkota, kecamatan, desa, sls)
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -720,6 +881,37 @@ func (d SortDir) sql() string {
 	return "ASC"
 }
 
+// listSortColumns maps the sortable column keys the Daftar table exposes
+// (matching Point's JSON field names, so the frontend can pass back
+// whatever column it rendered) to the ClickHouse column actually sorted
+// on. A whitelist, not a passthrough — sortBy is user-controlled and goes
+// straight into the SQL text via listSortColumns' value, never its key.
+var listSortColumns = map[string]string{
+	"nama":                "nama_assignment",
+	"alamat":              "alamat",
+	"subsls":              "level_6_full_code",
+	"jenis_prelist":       "jenis_prelist_root",
+	"keberadaan_usaha":    "keberadaan_usaha",
+	"keberadaan_keluarga": "keberadaan_keluarga",
+	"status":              "assignment_status_alias",
+	"assignment_id":       "assignment_id",
+}
+
+// DefaultSortColumn is used by ParseSortColumn when sortBy is empty or not
+// a recognized key.
+const DefaultSortColumn = "nama"
+
+// ParseSortColumn validates a sort column key against listSortColumns,
+// defaulting to DefaultSortColumn for anything empty or unrecognized —
+// same forgiving-default approach as ParseSortDir, since the Daftar table
+// always has to render some order.
+func ParseSortColumn(v string) string {
+	if _, ok := listSortColumns[v]; ok {
+		return v
+	}
+	return DefaultSortColumn
+}
+
 // ListPage is one page of the "Daftar" table: unlike Query, it is not
 // viewport-bound — it lists every row matching filter (the whole table, if
 // filter is empty), sorted and paginated for browsing rather than mapping.
@@ -730,9 +922,10 @@ type ListPage struct {
 	Items    []Point `json:"items"`
 }
 
-// List returns one page of rows matching filter, sorted by nama_assignment.
-// page is 1-indexed; pageSize is clamped to [1, MaxPageSize].
-func (s *Service) List(ctx context.Context, filter Filter, page, pageSize int, dir SortDir) (ListPage, error) {
+// List returns one page of rows matching filter, sorted by sortColumn (a
+// key from listSortColumns — pass it through ParseSortColumn first). page
+// is 1-indexed; pageSize is clamped to [1, MaxPageSize].
+func (s *Service) List(ctx context.Context, filter Filter, page, pageSize int, sortColumn string, dir SortDir) (ListPage, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
@@ -751,7 +944,7 @@ func (s *Service) List(ctx context.Context, filter Filter, page, pageSize int, d
 		return ListPage{}, fmt.Errorf("points: list count: %w", err)
 	}
 
-	items, err := s.listItems(ctx, filter, page, pageSize, dir)
+	items, err := s.listItems(ctx, filter, page, pageSize, sortColumn, dir)
 	if err != nil {
 		return ListPage{}, fmt.Errorf("points: list items: %w", err)
 	}
@@ -766,20 +959,21 @@ func (s *Service) List(ctx context.Context, filter Filter, page, pageSize int, d
 const ReportMaxRows = 5000
 
 // ListAll returns every row matching filter (up to ReportMaxRows), sorted
-// by nama_assignment, with no pagination. Intended for the PDF report,
-// which needs the whole SubSLS in one document rather than one page's
-// worth — call sites should ensure filter is pinned all the way down to a
-// single SubSLS first, since that's the only scope small enough to make
-// sense as a report.
-func (s *Service) ListAll(ctx context.Context, filter Filter, dir SortDir) ([]Point, error) {
+// by sortColumn, with no pagination. Intended for the PDF report, which
+// needs the whole SubSLS in one document rather than one page's worth —
+// call sites should ensure filter is pinned all the way down to a single
+// SubSLS first, since that's the only scope small enough to make sense as
+// a report.
+func (s *Service) ListAll(ctx context.Context, filter Filter, sortColumn string, dir SortDir) ([]Point, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
-	return s.listItems(ctx, filter, 1, ReportMaxRows, dir)
+	return s.listItems(ctx, filter, 1, ReportMaxRows, sortColumn, dir)
 }
 
 func (s *Service) listCount(ctx context.Context, filter Filter) (uint64, error) {
-	q := fmt.Sprintf("SELECT count() FROM %s WHERE %s", table, filter.clause())
-	row := s.conn.QueryRow(ctx, q)
+	where, args := filter.clause()
+	q := fmt.Sprintf("SELECT count() FROM %s WHERE %s", table, where)
+	row := s.conn.QueryRow(ctx, q, args...)
 	var n uint64
 	if err := row.Scan(&n); err != nil {
 		return 0, err
@@ -787,18 +981,23 @@ func (s *Service) listCount(ctx context.Context, filter Filter) (uint64, error) 
 	return n, nil
 }
 
-func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize int, dir SortDir) ([]Point, error) {
+func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize int, sortColumn string, dir SortDir) ([]Point, error) {
 	offset := (page - 1) * pageSize
+	sortCol, ok := listSortColumns[sortColumn]
+	if !ok {
+		sortCol = listSortColumns[DefaultSortColumn]
+	}
+	where, args := filter.clause()
 	q := fmt.Sprintf(`SELECT
 		assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root,
 		keberadaan_usaha, keberadaan_keluarga, assignment_status_alias,
 		latitude_ppl, longitude_ppl
 	FROM %s
 	WHERE %s
-	ORDER BY nama_assignment %s
-	LIMIT %d OFFSET %d`, table, filter.clause(), dir.sql(), pageSize, offset)
+	ORDER BY %s %s
+	LIMIT %d OFFSET %d`, table, where, sortCol, dir.sql(), pageSize, offset)
 
-	rows, err := s.conn.Query(ctx, q)
+	rows, err := s.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

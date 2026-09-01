@@ -8,6 +8,10 @@
   const desaSelect = document.getElementById("desa-select-list");
   const slsSelect = document.getElementById("sls-select-list");
   const subslsSelect = document.getElementById("subsls-select-list");
+  const jenisPrelistSelect = document.getElementById("jenisprelist-select-list");
+  const keberadaanKeluargaSelect = document.getElementById("keberadaankeluarga-select-list");
+  const statusSelect = document.getElementById("status-select-list");
+  const searchInput = document.getElementById("daftar-search");
   const tbody = document.getElementById("daftar-tbody");
   const loadingEl = document.getElementById("daftar-loading");
   const errorEl = document.getElementById("daftar-error");
@@ -15,7 +19,7 @@
   const prevBtn = document.getElementById("daftar-prev");
   const nextBtn = document.getElementById("daftar-next");
   const pageSizeSelect = document.getElementById("daftar-pagesize");
-  const namaHeader = document.getElementById("daftar-sort-nama");
+  const sortHeaders = document.querySelectorAll("#daftar-table th.sortable");
   const downloadBtn = document.getElementById("download-pdf-btn");
 
   let kabkotaByCode = new Map();
@@ -28,9 +32,19 @@
   let selectedSls = "";
   let subslsByCode = new Map();
   let selectedSubsls = "";
+  let selectedJenisPrelist = "";
+  let selectedKeberadaanKeluarga = "";
+  let selectedStatus = "";
+  let selectedSearch = "";
+
+  // Must match points.EmptyValue on the server — the sentinel a dropdown
+  // sends to mean "filter for rows where this column is blank", as opposed
+  // to "" which means the filter itself isn't applied.
+  const EMPTY_VALUE = "__EMPTY__";
 
   let currentPage = 1;
   let pageSize = 50;
+  let sortColumn = "nama";
   let sortDir = "asc";
   let requestSeq = 0;
 
@@ -69,8 +83,9 @@
     loadingEl.classList.toggle("hidden", !v);
   }
 
-  // Wilayah filter params only — shared by the table page fetch and the
-  // PDF download link.
+  // Wilayah + attribute filter params — shared by the table page fetch and
+  // the PDF download link, so the download always reflects whatever's
+  // currently filtered on screen.
   function buildFilterParams() {
     const params = new URLSearchParams();
     if (selectedKabkota) params.set("kabkota", selectedKabkota);
@@ -78,6 +93,10 @@
     if (selectedDesa) params.set("desa", selectedDesa);
     if (selectedSls) params.set("sls", selectedSls);
     if (selectedSubsls) params.set("subsls", selectedSubsls);
+    if (selectedJenisPrelist) params.set("jenisPrelist", selectedJenisPrelist);
+    if (selectedKeberadaanKeluarga) params.set("keberadaanKeluarga", selectedKeberadaanKeluarga);
+    if (selectedStatus) params.set("status", selectedStatus);
+    if (selectedSearch) params.set("search", selectedSearch);
     return params;
   }
 
@@ -85,6 +104,7 @@
     const params = buildFilterParams();
     params.set("page", String(currentPage));
     params.set("pageSize", String(pageSize));
+    params.set("sortBy", sortColumn);
     params.set("dir", sortDir);
     return params;
   }
@@ -126,7 +146,18 @@
     prevBtn.disabled = resp.page <= 1;
     nextBtn.disabled = resp.page >= totalPages;
 
-    namaHeader.dataset.dir = sortDir;
+    updateSortHeaderUI();
+  }
+
+  // Reflects sortColumn/sortDir onto the <th> elements: only the active
+  // column gets the "sort-active" class (see .sort-arrow CSS), and its
+  // data-dir picks the arrow direction.
+  function updateSortHeaderUI() {
+    for (const th of sortHeaders) {
+      const active = th.dataset.sort === sortColumn;
+      th.classList.toggle("sort-active", active);
+      th.dataset.dir = active ? sortDir : "";
+    }
   }
 
   prevBtn.addEventListener("click", () => {
@@ -144,10 +175,33 @@
     currentPage = 1;
     loadPage();
   });
-  namaHeader.addEventListener("click", () => {
-    sortDir = sortDir === "asc" ? "desc" : "asc";
-    currentPage = 1;
-    loadPage();
+  // Clicking a column header sorts by it; clicking the already-active
+  // column just flips its direction, mirroring the old nama-only behavior
+  // but generalized to every sortable column.
+  for (const th of sortHeaders) {
+    th.addEventListener("click", () => {
+      const col = th.dataset.sort;
+      if (col === sortColumn) {
+        sortDir = sortDir === "asc" ? "desc" : "asc";
+      } else {
+        sortColumn = col;
+        sortDir = "asc";
+      }
+      currentPage = 1;
+      loadPage();
+    });
+  }
+
+  // Debounced free-text name search — waits for a pause in typing so it
+  // doesn't fire a query per keystroke.
+  let searchDebounce = null;
+  searchInput.addEventListener("input", () => {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => {
+      selectedSearch = searchInput.value.trim();
+      currentPage = 1;
+      loadPage();
+    }, 350);
   });
 
   // --- wilayah filter (kabkota -> kecamatan -> desa -> sls) -------------
@@ -179,6 +233,50 @@
       console.error("failed to load kabkota list", err);
     }
   }
+
+  // --- attribute filters (jenis prelist, keberadaan keluarga, status) ---
+  // Independent of the wilayah cascade and of each other — no parent/child
+  // resetting needed, just a value change and a reload.
+
+  function fillAttrSelect(selectEl, values) {
+    for (const v of values) {
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = v;
+      selectEl.appendChild(opt);
+    }
+    const blank = document.createElement("option");
+    blank.value = EMPTY_VALUE;
+    blank.textContent = "(Kosong)";
+    selectEl.appendChild(blank);
+  }
+
+  async function loadFilterOptions() {
+    try {
+      const opts = await fetchWithRetry("/api/filter-options", undefined);
+      fillAttrSelect(jenisPrelistSelect, opts.jenis_prelist || []);
+      fillAttrSelect(keberadaanKeluargaSelect, opts.keberadaan_keluarga || []);
+      fillAttrSelect(statusSelect, opts.status || []);
+    } catch (err) {
+      console.error("failed to load filter options", err);
+    }
+  }
+
+  jenisPrelistSelect.addEventListener("change", () => {
+    selectedJenisPrelist = jenisPrelistSelect.value;
+    currentPage = 1;
+    loadPage();
+  });
+  keberadaanKeluargaSelect.addEventListener("change", () => {
+    selectedKeberadaanKeluarga = keberadaanKeluargaSelect.value;
+    currentPage = 1;
+    loadPage();
+  });
+  statusSelect.addEventListener("change", () => {
+    selectedStatus = statusSelect.value;
+    currentPage = 1;
+    loadPage();
+  });
 
   kabkotaSelect.addEventListener("change", async () => {
     selectedKabkota = kabkotaSelect.value;
@@ -258,6 +356,7 @@
   downloadBtn.addEventListener("click", () => {
     if (downloadBtn.disabled) return;
     const params = buildFilterParams();
+    params.set("sortBy", sortColumn);
     params.set("dir", sortDir);
     const url = `/api/list/pdf?${params}`;
     // A plain navigation would work too (Content-Disposition: attachment
@@ -281,7 +380,9 @@
   document.addEventListener("view:daftar-shown", () => {
     if (booted) return;
     booted = true;
+    updateSortHeaderUI();
     loadKabKotaOptions();
+    loadFilterOptions();
     loadPage();
   });
 })();

@@ -14,9 +14,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"se2026-titik-maps/internal/api"
 	"se2026-titik-maps/internal/chdb"
 	"se2026-titik-maps/internal/config"
+	"se2026-titik-maps/internal/mapdb"
 	"se2026-titik-maps/internal/points"
 	"se2026-titik-maps/web"
 )
@@ -66,6 +69,25 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("kabupaten/kota list ready", "count", len(kabkotaList))
 
+	// The SubSLS polygon layer is optional: the map works fine without
+	// it. A missing MAP_HOST just skips it silently; a configured-but-
+	// unreachable Postgres logs a warning and continues without polygons,
+	// rather than taking down a server that otherwise has everything it
+	// needs.
+	var mapPool *pgxpool.Pool
+	if cfg.MapEnabled() {
+		log.Info("connecting to postgis", "host", cfg.MapHost, "port", cfg.MapPort, "database", cfg.MapDatabase)
+		mapCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		pool, err := mapdb.New(mapCtx, cfg)
+		cancel()
+		if err != nil {
+			log.Warn("postgis unavailable, SubSLS polygons disabled", "err", err)
+		} else {
+			mapPool = pool
+			defer mapPool.Close()
+		}
+	}
+
 	staticFS, err := fs.Sub(web.Static, "static")
 	if err != nil {
 		return err
@@ -74,7 +96,7 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	srv := api.NewServer(svc, conn, bounds, kabkotaList, log)
+	srv := api.NewServer(svc, conn, bounds, kabkotaList, mapPool, log)
 	go refreshBoundsPeriodically(ctx, svc, srv, log)
 
 	httpServer := &http.Server{

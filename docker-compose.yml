@@ -11,6 +11,13 @@ services:
       - DATABASE=${DATABASE}
       - USERNAME=${USERNAME}
       - PASSWORD=${PASSWORD}
+      # Optional PostGIS connection for the SubSLS boundary polygon layer
+      # on the Peta map — leave MAP_HOST unset/empty to run without it.
+      - MAP_HOST=${MAP_HOST}
+      - MAP_PORT=${MAP_PORT}
+      - MAP_DATABASE=${MAP_DATABASE}
+      - MAP_USERNAME=${MAP_USERNAME}
+      - MAP_PASSWORD=${MAP_PASSWORD}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
       interval: 30s
