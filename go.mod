@@ -2,7 +2,10 @@ module se2026-titik-maps
 
 go 1.26.1
 
-require github.com/ClickHouse/clickhouse-go/v2 v2.48.0
+require (
+	github.com/ClickHouse/clickhouse-go/v2 v2.48.0
+	github.com/go-pdf/fpdf v0.9.0
+)
 
 require (
 	github.com/ClickHouse/ch-go v0.74.0 // indirect

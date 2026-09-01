@@ -62,6 +62,7 @@ func ParseBBox(minLat, maxLat, minLon, maxLon string) (BBox, error) {
 var (
 	fourDigitCodeRe  = regexp.MustCompile(`^[0-9]{4}$`) // shared by kabkota and SLS codes
 	threeDigitCodeRe = regexp.MustCompile(`^[0-9]{3}$`) // shared by kecamatan and desa/kelurahan codes
+	twoDigitCodeRe   = regexp.MustCompile(`^[0-9]{2}$`) // SubSLS codes
 )
 
 // ParseKabKota validates a kabupaten/kota filter value: either empty (no
@@ -121,15 +122,31 @@ func ParseSLS(code string) (string, error) {
 	return code, nil
 }
 
-// Filter narrows a query down to a wilayah. All four fields come from
+// ParseSubSLS validates a Kode SubSLS filter value: either empty (no
+// filter) or exactly 2 digits — the 2 characters right after the SLS code
+// in level_6_full_code (the last 2 of its 16 digits). Like SLS, it's only
+// unique within its SLS, so it's meaningless without one — see Validate.
+func ParseSubSLS(code string) (string, error) {
+	if code == "" {
+		return "", nil
+	}
+	if !twoDigitCodeRe.MatchString(code) {
+		return "", fmt.Errorf("invalid SubSLS code %q: expected 2 digits", code)
+	}
+	return code, nil
+}
+
+// Filter narrows a query down to a wilayah. All five fields come from
 // level_6_full_code: KabKota is characters 1-4, Kecamatan is characters
-// 5-7, Desa is characters 8-10, SLS is characters 11-14. Each is
-// meaningless without the one above it — see Validate.
+// 5-7, Desa is characters 8-10, SLS is characters 11-14, SubSLS is
+// characters 15-16 (its last two). Each is meaningless without the one
+// above it — see Validate.
 type Filter struct {
 	KabKota   string
 	Kecamatan string
 	Desa      string
 	SLS       string
+	SubSLS    string
 }
 
 // Validate reports an error if a narrower field is set without its parent,
@@ -144,11 +161,14 @@ func (f Filter) Validate() error {
 	if f.SLS != "" && f.Desa == "" {
 		return fmt.Errorf("SLS filter requires a desa/kelurahan filter")
 	}
+	if f.SubSLS != "" && f.SLS == "" {
+		return fmt.Errorf("SubSLS filter requires an SLS filter")
+	}
 	return nil
 }
 
 func (f Filter) clause() string {
-	parts := make([]string, 0, 4)
+	parts := make([]string, 0, 5)
 	if f.KabKota != "" {
 		parts = append(parts, fmt.Sprintf("substring(level_6_full_code, 1, 4) = '%s'", f.KabKota))
 	}
@@ -160,6 +180,9 @@ func (f Filter) clause() string {
 	}
 	if f.SLS != "" {
 		parts = append(parts, fmt.Sprintf("substring(level_6_full_code, 11, 4) = '%s'", f.SLS))
+	}
+	if f.SubSLS != "" {
+		parts = append(parts, fmt.Sprintf("substring(level_6_full_code, 15, 2) = '%s'", f.SubSLS))
 	}
 	if len(parts) == 0 {
 		return "1"
@@ -183,6 +206,7 @@ type Point struct {
 	Lon                float64 `json:"lon"`
 	AssignmentID       string  `json:"assignment_id"`
 	Nama               string  `json:"nama"`
+	Alamat             string  `json:"alamat"`
 	SubSLS             string  `json:"subsls"`
 	JenisPrelist       string  `json:"jenis_prelist"`
 	KeberadaanUsaha    uint8   `json:"keberadaan_usaha"`
@@ -286,7 +310,7 @@ func (s *Service) count(ctx context.Context, b BBox, filter Filter) (uint64, err
 
 func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Point, error) {
 	q := fmt.Sprintf(`SELECT
-		assignment_id, nama_assignment, level_6_full_code, jenis_prelist_root,
+		assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root,
 		keberadaan_usaha, keberadaan_keluarga, assignment_status_alias,
 		latitude_ppl, longitude_ppl
 	FROM %s
@@ -303,7 +327,7 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 	for rows.Next() {
 		var p Point
 		if err := rows.Scan(
-			&p.AssignmentID, &p.Nama, &p.SubSLS, &p.JenisPrelist,
+			&p.AssignmentID, &p.Nama, &p.Alamat, &p.SubSLS, &p.JenisPrelist,
 			&p.KeberadaanUsaha, &p.KeberadaanKeluarga, &p.Status,
 			&p.Lat, &p.Lon,
 		); err != nil {
@@ -431,7 +455,7 @@ func (s *Service) KabKotaList(ctx context.Context) ([]KabKotaInfo, error) {
 		if err := rows.Scan(&k.Code, &k.Total, &k.MinLat, &k.MaxLat, &k.MinLon, &k.MaxLon); err != nil {
 			return nil, err
 		}
-		k.Name = kabkotaName(k.Code)
+		k.Name = KabKotaName(k.Code)
 		list = append(list, k)
 	}
 	return list, rows.Err()
@@ -604,4 +628,193 @@ func (s *Service) SLSList(ctx context.Context, kabkota, kecamatan, desa string) 
 		list = append(list, sl)
 	}
 	return list, rows.Err()
+}
+
+// SubSLSInfo describes one Kode SubSLS filter option within an SLS: its
+// 2-digit code, row count, and a bounding box (same 1st/99th-percentile
+// approach as KabKotaInfo). No name reference table exists for SubSLS
+// either, so the code is the label — frontend renders it as "SubSLS <code>".
+type SubSLSInfo struct {
+	Code                           string `json:"code"`
+	Total                          uint64 `json:"total"`
+	MinLat, MaxLat, MinLon, MaxLon float64
+}
+
+type SubSLSInfoJSON struct {
+	Code   string  `json:"code"`
+	Total  uint64  `json:"total"`
+	MinLat float64 `json:"min_lat"`
+	MaxLat float64 `json:"max_lat"`
+	MinLon float64 `json:"min_lon"`
+	MaxLon float64 `json:"max_lon"`
+}
+
+// SubSLSList returns every Kode SubSLS present within one kabupaten/kota +
+// kecamatan + desa/kelurahan + SLS combination, most populous first. All
+// four codes must already be validated — a SubSLS code repeats across
+// different SLS, so all four parents are required to disambiguate it.
+func (s *Service) SubSLSList(ctx context.Context, kabkota, kecamatan, desa, sls string) ([]SubSLSInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	q := fmt.Sprintf(`SELECT
+		substring(level_6_full_code, 15, 2) AS subsls,
+		count(),
+		quantile(0.01)(latitude_ppl), quantile(0.99)(latitude_ppl),
+		quantile(0.01)(longitude_ppl), quantile(0.99)(longitude_ppl)
+	FROM %s
+	WHERE %s AND length(level_6_full_code) >= 16
+		AND substring(level_6_full_code, 1, 4) = '%s'
+		AND substring(level_6_full_code, 5, 3) = '%s'
+		AND substring(level_6_full_code, 8, 3) = '%s'
+		AND substring(level_6_full_code, 11, 4) = '%s'
+	GROUP BY subsls
+	ORDER BY count() DESC`, table, validCoords, kabkota, kecamatan, desa, sls)
+
+	rows, err := s.conn.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]SubSLSInfo, 0, 16)
+	for rows.Next() {
+		var sub SubSLSInfo
+		if err := rows.Scan(&sub.Code, &sub.Total, &sub.MinLat, &sub.MaxLat, &sub.MinLon, &sub.MaxLon); err != nil {
+			return nil, err
+		}
+		list = append(list, sub)
+	}
+	return list, rows.Err()
+}
+
+// --- paginated table listing (the "Daftar" menu) ----------------------------
+
+const (
+	DefaultPageSize = 50
+	MaxPageSize     = 200
+)
+
+// SortDir is a column sort direction for List.
+type SortDir string
+
+const (
+	SortAsc  SortDir = "asc"
+	SortDesc SortDir = "desc"
+)
+
+// ParseSortDir validates a sort direction, defaulting to ascending for
+// anything empty or unrecognized rather than erroring — the table always
+// has to render some order, and "asc" is a harmless fallback.
+func ParseSortDir(v string) SortDir {
+	if strings.EqualFold(v, string(SortDesc)) {
+		return SortDesc
+	}
+	return SortAsc
+}
+
+func (d SortDir) sql() string {
+	if d == SortDesc {
+		return "DESC"
+	}
+	return "ASC"
+}
+
+// ListPage is one page of the "Daftar" table: unlike Query, it is not
+// viewport-bound — it lists every row matching filter (the whole table, if
+// filter is empty), sorted and paginated for browsing rather than mapping.
+type ListPage struct {
+	Total    uint64  `json:"total"`
+	Page     int     `json:"page"`
+	PageSize int     `json:"page_size"`
+	Items    []Point `json:"items"`
+}
+
+// List returns one page of rows matching filter, sorted by nama_assignment.
+// page is 1-indexed; pageSize is clamped to [1, MaxPageSize].
+func (s *Service) List(ctx context.Context, filter Filter, page, pageSize int, dir SortDir) (ListPage, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = DefaultPageSize
+	}
+	if pageSize > MaxPageSize {
+		pageSize = MaxPageSize
+	}
+
+	total, err := s.listCount(ctx, filter)
+	if err != nil {
+		return ListPage{}, fmt.Errorf("points: list count: %w", err)
+	}
+
+	items, err := s.listItems(ctx, filter, page, pageSize, dir)
+	if err != nil {
+		return ListPage{}, fmt.Errorf("points: list items: %w", err)
+	}
+
+	return ListPage{Total: total, Page: page, PageSize: pageSize, Items: items}, nil
+}
+
+// ReportMaxRows caps how many rows ListAll will ever return. A PDF report
+// is meant for one fully-drilled-down SubSLS, which in practice runs from
+// a few dozen to a few thousand rows — this is a safety net against a
+// pathological case, not a limit anyone should normally hit.
+const ReportMaxRows = 5000
+
+// ListAll returns every row matching filter (up to ReportMaxRows), sorted
+// by nama_assignment, with no pagination. Intended for the PDF report,
+// which needs the whole SubSLS in one document rather than one page's
+// worth — call sites should ensure filter is pinned all the way down to a
+// single SubSLS first, since that's the only scope small enough to make
+// sense as a report.
+func (s *Service) ListAll(ctx context.Context, filter Filter, dir SortDir) ([]Point, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+	return s.listItems(ctx, filter, 1, ReportMaxRows, dir)
+}
+
+func (s *Service) listCount(ctx context.Context, filter Filter) (uint64, error) {
+	q := fmt.Sprintf("SELECT count() FROM %s WHERE %s", table, filter.clause())
+	row := s.conn.QueryRow(ctx, q)
+	var n uint64
+	if err := row.Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize int, dir SortDir) ([]Point, error) {
+	offset := (page - 1) * pageSize
+	q := fmt.Sprintf(`SELECT
+		assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root,
+		keberadaan_usaha, keberadaan_keluarga, assignment_status_alias,
+		latitude_ppl, longitude_ppl
+	FROM %s
+	WHERE %s
+	ORDER BY nama_assignment %s
+	LIMIT %d OFFSET %d`, table, filter.clause(), dir.sql(), pageSize, offset)
+
+	rows, err := s.conn.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]Point, 0, pageSize)
+	for rows.Next() {
+		var p Point
+		if err := rows.Scan(
+			&p.AssignmentID, &p.Nama, &p.Alamat, &p.SubSLS, &p.JenisPrelist,
+			&p.KeberadaanUsaha, &p.KeberadaanKeluarga, &p.Status,
+			&p.Lat, &p.Lon,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, p)
+	}
+	return items, rows.Err()
 }

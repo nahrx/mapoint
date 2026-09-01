@@ -7,8 +7,15 @@
   const kecamatanSelect = document.getElementById("kecamatan-select");
   const desaSelect = document.getElementById("desa-select");
   const slsSelect = document.getElementById("sls-select");
+  const subslsSelect = document.getElementById("subsls-select");
 
   const map = L.map("map", { preferCanvas: true, worldCopyJump: true }).setView([-2.5, 118], 5);
+
+  // The Peta view can be hidden (display:none) while the Daftar tab is
+  // active; Leaflet doesn't notice its container resizing back to full
+  // size on its own, so nav.js dispatches this event right after showing
+  // the view again.
+  document.addEventListener("view:peta-shown", () => map.invalidateSize());
 
   const osmLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
@@ -55,6 +62,8 @@
   let selectedDesa = "";
   let slsByCode = new Map();
   let selectedSls = "";
+  let subslsByCode = new Map();
+  let selectedSubsls = "";
 
   // --- status labels -------------------------------------------------
 
@@ -76,18 +85,14 @@
     return STATUS_COLORS[status] || "#2a81cb";
   }
 
-  function esc(s) {
-    if (s === null || s === undefined || s === "") return "-";
-    return String(s).replace(/[&<>"']/g, (c) => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-    }[c]));
-  }
+  const { fetchWithRetry, makeCascadingLevel, esc } = App;
 
   function tooltipHTML(p) {
     return `
       <div class="titik-tooltip">
         <div><b>Assignment ID:</b> ${esc(p.assignment_id)}</div>
         <div><b>Nama:</b> ${esc(p.nama)}</div>
+        <div><b>Alamat:</b> ${esc(p.alamat)}</div>
         <div><b>ID SUBSLS:</b> ${esc(p.subsls)}</div>
         <div><b>Jenis Prelist:</b> ${esc(p.jenis_prelist)}</div>
         <div><b>Keberadaan Usaha:</b> ${esc(p.keberadaan_usaha)}</div>
@@ -125,6 +130,7 @@
     if (selectedKecamatan) params.set("kecamatan", selectedKecamatan);
     if (selectedDesa) params.set("desa", selectedDesa);
     if (selectedSls) params.set("sls", selectedSls);
+    if (selectedSubsls) params.set("subsls", selectedSubsls);
 
     setLoading(true);
     try {
@@ -137,22 +143,6 @@
       statsEl.textContent = "Gagal memuat data. Mencoba lagi saat peta digeser…";
     } finally {
       if (seq === requestSeq) setLoading(false);
-    }
-  }
-
-  async function fetchWithRetry(url, signal, attempt = 0) {
-    try {
-      const res = await fetch(url, { signal });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `HTTP ${res.status}`);
-      }
-      return await res.json();
-    } catch (err) {
-      if (err.name === "AbortError") throw err;
-      if (attempt >= 2) throw err;
-      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
-      return fetchWithRetry(url, signal, attempt + 1);
     }
   }
 
@@ -221,6 +211,7 @@
       if (selectedKecamatan) line += ` / Kec. ${selectedKecamatan}`;
       if (selectedDesa) line += ` / Desa/Kel. ${selectedDesa}`;
       if (selectedSls) line += ` / SLS ${selectedSls}`;
+      if (selectedSubsls) line += ` / SubSLS ${selectedSubsls}`;
       lines.push(line);
     }
     lines.push(`Di area ini: ${resp.total.toLocaleString("id-ID")} titik`);
@@ -251,36 +242,6 @@
     }
   }
 
-  // Generic helper for a level whose options depend on the level above it
-  // (kecamatan depends on kabkota, desa depends on kabkota+kecamatan).
-  function makeCascadingLevel({ selectEl, placeholder, byCode, labelPrefix }) {
-    function reset() {
-      byCode.clear();
-      selectEl.innerHTML = `<option value="">${placeholder}</option>`;
-    }
-    async function load(apiUrl) {
-      reset();
-      if (!apiUrl) {
-        selectEl.disabled = true;
-        return;
-      }
-      selectEl.disabled = false;
-      try {
-        const list = await fetchWithRetry(apiUrl, undefined);
-        for (const item of list) {
-          byCode.set(item.code, item);
-          const opt = document.createElement("option");
-          opt.value = item.code;
-          opt.textContent = `${labelPrefix}${item.code} (${item.total.toLocaleString("id-ID")} titik)`;
-          selectEl.appendChild(opt);
-        }
-      } catch (err) {
-        console.error(`failed to load ${placeholder} list`, err);
-      }
-    }
-    return { reset, load };
-  }
-
   const kecamatanLevel = makeCascadingLevel({
     selectEl: kecamatanSelect, placeholder: "Semua Kecamatan", byCode: kecamatanByCode, labelPrefix: "Kec. ",
   });
@@ -289,6 +250,9 @@
   });
   const slsLevel = makeCascadingLevel({
     selectEl: slsSelect, placeholder: "Semua SLS", byCode: slsByCode, labelPrefix: "SLS ",
+  });
+  const subslsLevel = makeCascadingLevel({
+    selectEl: subslsSelect, placeholder: "Semua SubSLS", byCode: subslsByCode, labelPrefix: "SubSLS ",
   });
 
   function boundsOf(info) {
@@ -313,10 +277,13 @@
     selectedKecamatan = "";
     selectedDesa = "";
     selectedSls = "";
+    selectedSubsls = "";
     desaLevel.reset();
     desaSelect.disabled = true;
     slsLevel.reset();
     slsSelect.disabled = true;
+    subslsLevel.reset();
+    subslsSelect.disabled = true;
     await kecamatanLevel.load(selectedKabkota ? `/api/kecamatan?kabkota=${encodeURIComponent(selectedKabkota)}` : null);
 
     fitTo(boundsOf(kabkotaByCode.get(selectedKabkota)) || datasetBounds);
@@ -329,8 +296,11 @@
     selectedKecamatan = kecamatanSelect.value;
     selectedDesa = "";
     selectedSls = "";
+    selectedSubsls = "";
     slsLevel.reset();
     slsSelect.disabled = true;
+    subslsLevel.reset();
+    subslsSelect.disabled = true;
     await desaLevel.load(
       selectedKecamatan
         ? `/api/desa?kabkota=${encodeURIComponent(selectedKabkota)}&kecamatan=${encodeURIComponent(selectedKecamatan)}`
@@ -344,6 +314,9 @@
   desaSelect.addEventListener("change", async () => {
     selectedDesa = desaSelect.value;
     selectedSls = "";
+    selectedSubsls = "";
+    subslsLevel.reset();
+    subslsSelect.disabled = true;
     await slsLevel.load(
       selectedDesa
         ? `/api/sls?kabkota=${encodeURIComponent(selectedKabkota)}&kecamatan=${encodeURIComponent(selectedKecamatan)}&desa=${encodeURIComponent(selectedDesa)}`
@@ -354,10 +327,24 @@
     scheduleLoad();
   });
 
-  slsSelect.addEventListener("change", () => {
+  slsSelect.addEventListener("change", async () => {
     selectedSls = slsSelect.value;
+    selectedSubsls = "";
+    await subslsLevel.load(
+      selectedSls
+        ? `/api/subsls?kabkota=${encodeURIComponent(selectedKabkota)}&kecamatan=${encodeURIComponent(selectedKecamatan)}&desa=${encodeURIComponent(selectedDesa)}&sls=${encodeURIComponent(selectedSls)}`
+        : null
+    );
+
     const fallbacks = [boundsOf(desaByCode.get(selectedDesa)), ...ancestorBounds()];
     fitTo(boundsOf(slsByCode.get(selectedSls)) || fallbacks.find(Boolean) || datasetBounds);
+    scheduleLoad();
+  });
+
+  subslsSelect.addEventListener("change", () => {
+    selectedSubsls = subslsSelect.value;
+    const fallbacks = [boundsOf(slsByCode.get(selectedSls)), boundsOf(desaByCode.get(selectedDesa)), ...ancestorBounds()];
+    fitTo(boundsOf(subslsByCode.get(selectedSubsls)) || fallbacks.find(Boolean) || datasetBounds);
     scheduleLoad();
   });
 

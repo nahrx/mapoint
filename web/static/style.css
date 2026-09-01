@@ -4,6 +4,69 @@ html, body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- top navigation --------------------------------------------------- */
+
+#topnav {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  height: 44px;
+  background: #103a5e;
+  color: #fff;
+}
+
+#brand {
+  font-weight: 600;
+  font-size: 14px;
+  margin-right: 16px;
+  opacity: 0.9;
+}
+
+.nav-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+}
+
+.nav-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.nav-btn.active {
+  background: #f5f6f7;
+  color: #103a5e;
+}
+
+/* --- view switching ----------------------------------------------------- */
+
+.view {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.view.active {
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- Peta view ----------------------------------------------------------- */
+
 #map {
   position: absolute;
   inset: 0;
@@ -21,6 +84,8 @@ html, body {
   min-width: 220px;
   font-size: 13px;
   color: #222;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
 }
 
 #panel h1 {
@@ -31,36 +96,6 @@ html, body {
 #stats {
   line-height: 1.5;
   white-space: pre-line;
-}
-
-#filter-row {
-  margin: 6px 0 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-#filter-row label {
-  font-size: 11px;
-  color: #555;
-}
-
-#kabkota-select,
-#kecamatan-select,
-#desa-select,
-#sls-select {
-  font-size: 12px;
-  padding: 4px 6px;
-  border-radius: 4px;
-  border: 1px solid #ccc;
-  max-width: 240px;
-}
-
-#kecamatan-select:disabled,
-#desa-select:disabled,
-#sls-select:disabled {
-  background: #f3f3f3;
-  color: #999;
 }
 
 #legend {
@@ -129,4 +164,261 @@ html, body {
   background: rgba(255, 140, 0, 0.85);
   border: 2px solid rgba(255, 255, 255, 0.9);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* --- shared filter-row (used by both Peta and Daftar views) ------------- */
+
+.filter-row {
+  margin: 6px 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.filter-row label {
+  font-size: 11px;
+  color: #555;
+}
+
+#kabkota-select, #kabkota-select-list,
+#kecamatan-select, #kecamatan-select-list,
+#desa-select, #desa-select-list,
+#sls-select, #sls-select-list,
+#subsls-select, #subsls-select-list {
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  max-width: 240px;
+}
+
+#kecamatan-select:disabled, #kecamatan-select-list:disabled,
+#desa-select:disabled, #desa-select-list:disabled,
+#sls-select:disabled, #sls-select-list:disabled,
+#subsls-select:disabled, #subsls-select-list:disabled {
+  background: #f3f3f3;
+  color: #999;
+}
+
+/* --- Daftar view ---------------------------------------------------------- */
+
+#daftar-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 18px;
+  box-sizing: border-box;
+  color: #222;
+  overflow: hidden;
+}
+
+#daftar-container h1 {
+  font-size: 17px;
+  margin: 0 0 10px;
+  color: #103a5e;
+}
+
+#daftar-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e2e2e2;
+  margin-bottom: 10px;
+}
+
+#daftar-filters .filter-row {
+  margin: 0;
+}
+
+#download-pdf-row {
+  margin-left: auto;
+  align-self: flex-end;
+}
+
+#download-pdf-btn {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-radius: 5px;
+  border: 1px solid #103a5e;
+  background: #103a5e;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#download-pdf-btn:hover:not(:disabled) {
+  background: #16528a;
+}
+
+#download-pdf-btn:disabled {
+  background: #eee;
+  border-color: #ccc;
+  color: #999;
+  cursor: not-allowed;
+}
+
+#daftar-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+#daftar-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+#daftar-pagination button {
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+}
+
+#daftar-pagination button:hover:not(:disabled) {
+  background: #f0f4f8;
+}
+
+#daftar-pagination button:disabled {
+  color: #aaa;
+  cursor: default;
+}
+
+#daftar-pagesize {
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+}
+
+#daftar-error {
+  background: #fdecea;
+  color: #a33;
+  border: 1px solid #f3c2bd;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+#daftar-error.hidden {
+  display: none;
+}
+
+#daftar-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #e2e2e2;
+  border-radius: 6px;
+}
+
+#daftar-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+#daftar-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f5f6f7;
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 2px solid #e2e2e2;
+  color: #333;
+  z-index: 1;
+}
+
+#daftar-table th.num, #daftar-table td.num {
+  text-align: right;
+}
+
+#daftar-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+#daftar-table th.sortable:hover {
+  background: #eaeef1;
+}
+
+.sort-arrow::after {
+  content: "▲";
+  font-size: 9px;
+  margin-left: 5px;
+  color: #888;
+}
+
+#daftar-sort-nama[data-dir="desc"] .sort-arrow::after {
+  content: "▼";
+}
+
+#daftar-table tbody td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #eee;
+}
+
+#daftar-table tbody tr:hover {
+  background: #f7fafc;
+}
+
+#daftar-table td.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #666;
+}
+
+#daftar-table td.addr {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+#daftar-table .empty-row {
+  text-align: center;
+  color: #888;
+  padding: 24px !important;
+  white-space: normal;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+#daftar-loading {
+  position: absolute;
+  top: 12px;
+  right: 18px;
+  z-index: 5;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  transition: opacity 0.15s ease;
+}
+
+#daftar-loading.hidden {
+  opacity: 0;
+  pointer-events: none;
 }

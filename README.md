@@ -49,16 +49,21 @@ nonaktif sampai kecamatan dipilih, terisi dari 3 digit berikutnya
 (`GET /api/desa?kabkota=6472&kecamatan=061`), label berupa kode ("Desa/Kel.
 003"), dan ditolak backend (400) kalau dikirim tanpa kecamatan.
 
-Dropdown "Kode SLS" adalah level terakhir: nonaktif sampai desa/kelurahan
+Dropdown "Kode SLS" satu tingkat lagi: nonaktif sampai desa/kelurahan
 dipilih, terisi dari 4 digit berikutnya
 (`GET /api/sls?kabkota=6472&kecamatan=061&desa=003`), label berupa kode
 ("SLS 0070"), dan ditolak backend (400) kalau dikirim tanpa desa/kelurahan.
-Total 14 digit pertama `level_6_full_code` sudah tercakup di titik ini
-(kabkota 4 + kecamatan 3 + desa 3 + SLS 4); 2 digit terakhir (kode urut
-bangunan/keluarga) tidak dipakai sebagai filter.
+
+Dropdown "Kode SubSLS" adalah level terakhir: nonaktif sampai SLS dipilih,
+terisi dari 2 digit terakhir `level_6_full_code`
+(`GET /api/subsls?kabkota=6472&kecamatan=061&desa=003&sls=0070`), label
+berupa kode ("SubSLS 01"), dan ditolak backend (400) kalau dikirim tanpa
+SLS. Dengan ini seluruh 16 digit `level_6_full_code` sudah tercakup sebagai
+filter (kabkota 4 + kecamatan 3 + desa 3 + SLS 4 + SubSLS 2).
 
 Reset di level manapun otomatis mengosongkan & men-disable semua level di
-bawahnya (ganti kabupaten/kota → kecamatan, desa, dan SLS ikut ter-reset).
+bawahnya (ganti kabupaten/kota → kecamatan, desa, SLS, dan SubSLS ikut
+ter-reset).
 
 ### Jenis peta (OpenStreetMap / Satelit)
 
@@ -76,6 +81,49 @@ Kalau nanti perlu sumber lain:
   komposit awan-minim, atribusi wajib, tanpa API key.
 - **Mapbox Satellite** — kualitas tinggi, tapi butuh signup + API key
   (gratis sampai ~50.000 pemuatan peta/bulan, berbayar di atas itu).
+
+### Menu Daftar
+
+Selain menu "Peta", ada menu "Daftar" (nav di paling atas) yang menampilkan
+isi tabel `se2026_titik` sebagai daftar biasa — bukan tampilan peta:
+
+- **Sort by nama** (`ORDER BY nama_assignment`), klik header kolom "Nama"
+  untuk membalik arah (naik/turun). Baris dengan nama kosong ikut tampil
+  apa adanya (muncul duluan saat urutan naik) — bukan disembunyikan,
+  karena ini daftar data mentah, bukan cuma titik yang siap dipetakan.
+- **Paginasi** lewat `LIMIT`/`OFFSET` di ClickHouse — bukan infinite
+  scroll, supaya jumlah data yang ditransfer & di-render tiap saat tetap
+  kecil. Ukuran halaman bisa dipilih 25/50/100/200 baris.
+- **Filter wilayah** kabupaten/kota → kecamatan → desa/kelurahan → SLS →
+  SubSLS, cascading persis seperti di menu Peta, tapi state-nya independen
+  (pilih filter di satu menu tidak mengubah filter di menu lainnya) dan
+  tidak ada auto-zoom (karena tidak ada peta di sini).
+- **Tidak difilter oleh validitas koordinat** — beda dari menu Peta, daftar
+  ini menampilkan semua baris yang cocok filter wilayah, termasuk yang
+  `latitude_ppl`/`longitude_ppl`-nya `0` atau kosong, karena tujuannya
+  menelusuri data, bukan memetakannya.
+- **Unduh PDF** — tombol di sebelah filter, aktif hanya kalau filter sudah
+  lengkap sampai Kode SubSLS (di titik itu `level_6_full_code` sudah pas
+  16 digit / satu wilayah spesifik, cocok jadi satu laporan). PDF berjudul
+  "Daftar Hasil Pendataan", berisi keterangan wilayah (nama kab/kota +
+  kode tiap level + kode wilayah 16 digit) lalu tabel semua baris di SubSLS
+  itu (bukan cuma satu halaman tabel — lihat `ListAll` di
+  `internal/points/points.go`, dibatasi `ReportMaxRows=5000` sebagai jaring
+  pengaman). Kolom `assignment_id` sengaja tidak disertakan (bukan info
+  yang relevan untuk dicetak), begitu juga kolom ID SUBSLS per baris —
+  karena nilainya sama persis untuk semua baris dalam satu SubSLS, itu
+  cukup ditulis sekali di keterangan wilayah. PDF digenerate di server
+  pakai `github.com/go-pdf/fpdf` (pure Go, tanpa Chrome/wkhtmltopdf) lewat
+  `internal/pdfreport/`.
+
+Endpoint-nya `GET /api/list` (lihat bagian Endpoint di bawah). Query
+`ORDER BY ... LIMIT ... OFFSET ...` tanpa filter di atas 4 juta baris
+diukur ~1–3 detik di ClickHouse (lihat `internal/points/points.go`) — masih
+wajar untuk tampilan tabel yang dilihat manusia, tapi kalau nanti data jauh
+lebih besar dan halaman-halaman terakhir (offset sangat dalam) terasa
+lambat, itu batasan `LIMIT/OFFSET` yang umum di database kolom manapun;
+solusinya persempit dulu pakai filter wilayah sebelum menjelajahi halaman
+jauh.
 
 ## Menjalankan
 
@@ -157,12 +205,15 @@ Lalu buka `http://localhost:8082` di browser (dari `HTTP_ADDR=:8082` di `.env`; 
 ## Endpoint
 
 - `GET /` — peta (frontend)
-- `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=` — data titik/cluster untuk satu viewport (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
+- `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=` — data titik/cluster untuk satu viewport (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
 - `GET /api/bounds` — extent geografis + total baris valid di seluruh dataset
 - `GET /api/kabkota` — daftar kabupaten/kota yang ada di data, dengan jumlah titik & bounding box masing-masing
 - `GET /api/kecamatan?kabkota=` — daftar kecamatan di dalam satu kabupaten/kota (parameter wajib)
 - `GET /api/desa?kabkota=&kecamatan=` — daftar desa/kelurahan di dalam satu kecamatan (kedua parameter wajib)
 - `GET /api/sls?kabkota=&kecamatan=&desa=` — daftar Kode SLS di dalam satu desa/kelurahan (ketiga parameter wajib)
+- `GET /api/subsls?kabkota=&kecamatan=&desa=&sls=` — daftar Kode SubSLS di dalam satu SLS (keempat parameter wajib)
+- `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&page=&pageSize=&dir=` — satu halaman tabel untuk menu Daftar, urut nama (`dir=asc` default atau `desc`), `pageSize` maks 200
+- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&dir=` — PDF "Daftar Hasil Pendataan" untuk satu SubSLS (kelima parameter wajib)
 - `GET /healthz` — health check (ping ClickHouse)
 
 ## Catatan kualitas data
@@ -180,8 +231,14 @@ main.go                    entry point, wiring, graceful shutdown, refresher
 internal/config/           parsing .env
 internal/chdb/             koneksi & pool ClickHouse
 internal/points/           query viewport → individual points / clusters
+internal/pdfreport/        generate PDF "Daftar Hasil Pendataan" (pakai go-pdf/fpdf)
 internal/api/              HTTP handlers + logging middleware
 web/static/                frontend (Leaflet, di-embed ke binary via go:embed)
+  index.html                shell: nav + view Peta + view Daftar
+  common.js                 helper bersama (fetch-with-retry, dropdown wilayah cascading)
+  app.js                    logika menu Peta
+  daftar.js                 logika menu Daftar (tabel, sort, paginasi)
+  nav.js                    switching antar menu
 Dockerfile                 build multi-stage → binary statis di image Alpine
 docker-compose.yml         menjalankan image di atas, baca env dari .env
 example.env                template .env — salin ke .env lalu isi nilai asli

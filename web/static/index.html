@@ -8,44 +8,144 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div id="map"></div>
+  <nav id="topnav">
+    <span id="brand">Titik SE2026</span>
+    <button id="nav-peta" class="nav-btn active">Peta</button>
+    <button id="nav-daftar" class="nav-btn">Daftar</button>
+  </nav>
 
-  <div id="panel">
-    <h1>Peta Titik SE2026</h1>
-    <div id="filter-row">
-      <label for="kabkota-select">Kabupaten/Kota:</label>
-      <select id="kabkota-select">
-        <option value="">Semua Kabupaten/Kota</option>
-      </select>
-    </div>
-    <div id="filter-row">
-      <label for="kecamatan-select">Kecamatan:</label>
-      <select id="kecamatan-select" disabled>
-        <option value="">Semua Kecamatan</option>
-      </select>
-    </div>
-    <div id="filter-row">
-      <label for="desa-select">Desa/Kelurahan:</label>
-      <select id="desa-select" disabled>
-        <option value="">Semua Desa/Kelurahan</option>
-      </select>
-    </div>
-    <div id="filter-row">
-      <label for="sls-select">Kode SLS:</label>
-      <select id="sls-select" disabled>
-        <option value="">Semua SLS</option>
-      </select>
-    </div>
-    <div id="stats">Memuat statistik…</div>
-    <div id="legend">
-      <div class="legend-row"><span class="dot dot-point"></span> Titik individual</div>
-      <div class="legend-row"><span class="dot dot-cluster"></span> Kelompok (angka = jumlah titik)</div>
-    </div>
-  </div>
+  <section id="view-peta" class="view active">
+    <div id="map"></div>
 
-  <div id="loading" class="hidden">Memuat data…</div>
+    <div id="panel">
+      <h1>Peta Titik SE2026</h1>
+      <div class="filter-row">
+        <label for="kabkota-select">Kabupaten/Kota:</label>
+        <select id="kabkota-select">
+          <option value="">Semua Kabupaten/Kota</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <label for="kecamatan-select">Kecamatan:</label>
+        <select id="kecamatan-select" disabled>
+          <option value="">Semua Kecamatan</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <label for="desa-select">Desa/Kelurahan:</label>
+        <select id="desa-select" disabled>
+          <option value="">Semua Desa/Kelurahan</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <label for="sls-select">Kode SLS:</label>
+        <select id="sls-select" disabled>
+          <option value="">Semua SLS</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <label for="subsls-select">Kode SubSLS:</label>
+        <select id="subsls-select" disabled>
+          <option value="">Semua SubSLS</option>
+        </select>
+      </div>
+      <div id="stats">Memuat statistik…</div>
+      <div id="legend">
+        <div class="legend-row"><span class="dot dot-point"></span> Titik individual</div>
+        <div class="legend-row"><span class="dot dot-cluster"></span> Kelompok (angka = jumlah titik)</div>
+      </div>
+    </div>
+
+    <div id="loading" class="hidden">Memuat data…</div>
+  </section>
+
+  <section id="view-daftar" class="view">
+    <div id="daftar-container">
+      <h1>Daftar Titik SE2026</h1>
+
+      <div id="daftar-filters">
+        <div class="filter-row">
+          <label for="kabkota-select-list">Kabupaten/Kota:</label>
+          <select id="kabkota-select-list">
+            <option value="">Semua Kabupaten/Kota</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="kecamatan-select-list">Kecamatan:</label>
+          <select id="kecamatan-select-list" disabled>
+            <option value="">Semua Kecamatan</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="desa-select-list">Desa/Kelurahan:</label>
+          <select id="desa-select-list" disabled>
+            <option value="">Semua Desa/Kelurahan</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="sls-select-list">Kode SLS:</label>
+          <select id="sls-select-list" disabled>
+            <option value="">Semua SLS</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="subsls-select-list">Kode SubSLS:</label>
+          <select id="subsls-select-list" disabled>
+            <option value="">Semua SubSLS</option>
+          </select>
+        </div>
+        <div class="filter-row" id="download-pdf-row">
+          <label>&nbsp;</label>
+          <button id="download-pdf-btn" disabled title="Pilih filter sampai Kode SubSLS untuk mengunduh">
+            Unduh PDF
+          </button>
+        </div>
+      </div>
+
+      <div id="daftar-toolbar">
+        <span id="daftar-page-info">Memuat…</span>
+        <div id="daftar-pagination">
+          <button id="daftar-prev">&laquo; Sebelumnya</button>
+          <button id="daftar-next">Selanjutnya &raquo;</button>
+          <label for="daftar-pagesize">Baris/halaman:</label>
+          <select id="daftar-pagesize">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="daftar-error" class="hidden"></div>
+
+      <div id="daftar-table-wrap">
+        <table id="daftar-table">
+          <thead>
+            <tr>
+              <th class="num">No</th>
+              <th id="daftar-sort-nama" class="sortable" data-dir="asc">Nama<span class="sort-arrow"></span></th>
+              <th>Alamat</th>
+              <th>ID SUBSLS</th>
+              <th>Jenis Prelist</th>
+              <th class="num">Keberadaan Usaha</th>
+              <th>Keberadaan Keluarga</th>
+              <th>Status</th>
+              <th>Assignment ID</th>
+            </tr>
+          </thead>
+          <tbody id="daftar-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="daftar-loading" class="hidden">Memuat data…</div>
+  </section>
 
   <script src="/vendor/leaflet/leaflet.js"></script>
+  <script src="/common.js"></script>
   <script src="/app.js"></script>
+  <script src="/daftar.js"></script>
+  <script src="/nav.js"></script>
 </body>
 </html>

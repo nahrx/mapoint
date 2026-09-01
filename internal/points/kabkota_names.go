@@ -20,8 +20,10 @@ var kabkotaNames = map[string]string{
 	"6474": "Bontang",
 }
 
-// kabkotaName returns the known name for code, or code itself if unknown.
-func kabkotaName(code string) string {
+// KabKotaName returns the known name for code, or code itself if unknown.
+// Exported so callers outside this package (e.g. the PDF report builder)
+// can label a kabupaten/kota without duplicating the lookup.
+func KabKotaName(code string) string {
 	if n, ok := kabkotaNames[code]; ok {
 		return n
 	}
