@@ -1,5 +1,6 @@
 services:
   app:
+    build: .
     image: se2026-titik-maps:latest
     restart: unless-stopped
     ports:
