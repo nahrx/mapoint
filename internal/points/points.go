@@ -283,22 +283,23 @@ func (f Filter) Validate() error {
 // bind arg for the ? placeholder in the search fragment, and the caller
 // must forward args to conn.Query/QueryRow alongside the query text.
 func (f Filter) clause() (string, []any) {
-	parts := make([]string, 0, 9)
+	parts := make([]string, 0, 6)
 	var args []any
-	if f.KabKota != "" {
-		parts = append(parts, fmt.Sprintf("substring(level_6_full_code, 1, 4) = '%s'", f.KabKota))
-	}
-	if f.Kecamatan != "" {
-		parts = append(parts, fmt.Sprintf("substring(level_6_full_code, 5, 3) = '%s'", f.Kecamatan))
-	}
-	if f.Desa != "" {
-		parts = append(parts, fmt.Sprintf("substring(level_6_full_code, 8, 3) = '%s'", f.Desa))
-	}
-	if f.SLS != "" {
-		parts = append(parts, fmt.Sprintf("substring(level_6_full_code, 11, 4) = '%s'", f.SLS))
-	}
-	if f.SubSLS != "" {
-		parts = append(parts, fmt.Sprintf("substring(level_6_full_code, 15, 2) = '%s'", f.SubSLS))
+	// The five wilayah levels are hierarchical and Validate rejects a level
+	// whose parent is unset, so whatever is set always forms a contiguous
+	// prefix of level_6_full_code — which FullCode already concatenates.
+	// That lets one startsWith replace what used to be five separate
+	// substring(...) = ... predicates, and it matters a lot: ClickHouse
+	// rewrites startsWith on the sort key into a primary-key range
+	// (level_6_full_code is the first sort column), while substring() is
+	// opaque to the index and forces a full scan. Measured on 2.17M rows,
+	// one kecamatan: 2,184,688 rows read before vs 131,072 after.
+	//
+	// Only valid for a filter that has been through Validate — callers get
+	// that via parseFilter. An unvalidated Filter with a gap (say Desa set
+	// but KabKota empty) would build a prefix that means something else.
+	if prefix := f.FullCode(); prefix != "" {
+		parts = append(parts, fmt.Sprintf("startsWith(level_6_full_code, '%s')", prefix))
 	}
 	if f.JenisPrelist != "" {
 		parts = append(parts, attrClause("jenis_prelist_root", f.JenisPrelist))
@@ -438,24 +439,46 @@ func (s *Service) Query(ctx context.Context, b BBox, zoom int, filter Filter) (R
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	total, err := s.count(ctx, b, filter)
-	if err != nil {
-		return Response{}, fmt.Errorf("points: count: %w", err)
-	}
-
-	if total <= IndividualLimit {
-		pts, err := s.queryPoints(ctx, b, filter)
-		if err != nil {
-			return Response{}, fmt.Errorf("points: query points: %w", err)
-		}
-		return Response{Type: "points", Total: total, Points: pts}, nil
-	}
-
+	// Cluster first, then decide. The grid aggregation already carries a
+	// count per cell, so summing those gives the viewport total for free —
+	// which is what the separate count() this used to run first was for.
+	// Both queries read exactly the same rows under the same WHERE, so
+	// dropping one halves the database work for any viewport dense enough
+	// to be shown as clusters (measured on an unfiltered province-wide
+	// view: ~600k rows scanned per query, ~30ms, twice).
 	clusters, err := s.queryClusters(ctx, b, zoom, filter)
 	if err != nil {
 		return Response{}, fmt.Errorf("points: query clusters: %w", err)
 	}
-	return Response{Type: "clusters", Total: total, Clusters: clusters}, nil
+
+	var total uint64
+	for _, c := range clusters {
+		total += c.Count
+	}
+
+	// Summing only works while the cluster list is complete. It's capped at
+	// ClusterLimit — far more cells than a screenful of ~60px cells ever
+	// needs, so this is a safety net rather than a normal path — and a
+	// truncated list would understate the total, so count properly instead.
+	if len(clusters) >= ClusterLimit {
+		total, err = s.count(ctx, b, filter)
+		if err != nil {
+			return Response{}, fmt.Errorf("points: count: %w", err)
+		}
+	}
+
+	if total > IndividualLimit {
+		return Response{Type: "clusters", Total: total, Clusters: clusters}, nil
+	}
+
+	// Sparse enough to draw every point individually. Still two queries in
+	// this branch, same as before — but at this zoom the grid has roughly
+	// one cell per point, so the aggregation it replaced was cheap.
+	pts, err := s.queryPoints(ctx, b, filter)
+	if err != nil {
+		return Response{}, fmt.Errorf("points: query points: %w", err)
+	}
+	return Response{Type: "points", Total: total, Points: pts}, nil
 }
 
 func (s *Service) count(ctx context.Context, b BBox, filter Filter) (uint64, error) {

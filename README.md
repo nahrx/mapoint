@@ -24,6 +24,50 @@ Total & extent dataset (untuk auto-fit peta saat awal buka) dihitung sekali
 saat startup dan di-refresh otomatis setiap 10 menit di background, supaya
 angka tetap akurat seiring data bertambah tanpa perlu restart server.
 
+### Catatan performa (hasil pengukuran, bukan perkiraan)
+
+Tabelnya `ORDER BY (level_6_full_code, assignment_id)` tanpa partisi dan
+tanpa skip index — 2,17 juta baris / 238 MiB / 269 granul. Tiga hal berikut
+sudah diterapkan dan diukur di data itu:
+
+1. **Filter wilayah pakai `startsWith`, bukan `substring`.** Karena kelima
+   level wilayah hierarkis (lihat `Validate`), yang terisi selalu membentuk
+   *prefix* dari `level_6_full_code` — dan itu kolom pertama sort key.
+   ClickHouse menerjemahkan `startsWith(level_6_full_code,'6471030')` jadi
+   rentang primary key `['6471030','6471031')` sehingga bisa melompati
+   granul; bentuk `substring(...)=...` tidak terbaca index dan memaksa full
+   scan. Lihat `Filter.clause` di `internal/points/points.go`.
+
+   | query | `substring()` | `startsWith()` |
+   |---|---|---|
+   | cluster + filter kabupaten | 2.168.304 baris | 417.792 baris |
+   | satu halaman Daftar + filter kecamatan | 2.184.688 baris | 131.072 baris |
+
+2. **Total viewport dihitung dari hasil cluster, bukan query terpisah.**
+   Dulu setiap perubahan viewport menjalankan `count()` lalu query
+   cluster/points — dua query membaca baris yang **sama persis**. Sekarang
+   agregasi grid dijalankan lebih dulu dan totalnya didapat dari
+   menjumlahkan `count()` per sel, jadi viewport padat cukup satu query.
+   Kalau daftar cluster kena `ClusterLimit` (mustahil di pemakaian normal,
+   tapi mungkin di zoom sangat tinggi + bbox sangat luas) penjumlahan itu
+   tidak sahih, jadi kodenya jatuh balik ke `count()` sungguhan — lihat
+   `Service.Query`. Terukur: viewport padat ~74ms → **~38ms**.
+
+3. **Response di-gzip** (`withGzip` di `internal/api/middleware.go`).
+   Diukur pada response `/api/points` berisi 942 titik: 285KB → 51KB
+   (**5,8x**); aset statis 3,3–3,8x (leaflet.js 147KB → 43KB). Unduhan PDF
+   dan Excel sengaja **tidak** ikut dikompres — `.xlsx` itu zip dan stream
+   PDF sudah ter-deflate, jadi mengompres ulang cuma buang CPU.
+
+**Yang sudah dicoba dan sengaja TIDAK dipakai:** minmax skip index di
+`(latitude_ppl, longitude_ppl)`. Hipotesisnya karena data terurut kode
+wilayah, tiap granul mestinya punya kotak lat/lon yang rapat sehingga bbox
+viewport bisa melompati banyak granul. Diuji langsung: index memang terpakai
+(78 dari 266 granul), **tapi hasilnya sedikit lebih buruk** — 598.016 →
+638.976 baris terbaca, ~50ms → ~66ms, karena granul terpilih dibaca penuh
+sementara PREWHERE di lat/lon sebelumnya sudah menyaring lebih hemat.
+Index-nya sudah di-`DROP` lagi. Jangan ditambahkan ulang tanpa mengukur.
+
 ### Tombol "Terapkan Filter"
 
 Baik di menu Peta maupun Daftar, mengubah dropdown wilayah, dropdown atribut

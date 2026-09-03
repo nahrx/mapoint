@@ -82,7 +82,10 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /daftar", s.serveIndex(staticFS))
 	mux.Handle("/", http.FileServer(staticFS))
 
-	return withLogging(s.log, mux)
+	// gzip sits inside logging so the logged status/duration still describe
+	// the real response, and outside the mux so static assets (leaflet.js,
+	// style.css) get compressed too, not just the API.
+	return withLogging(s.log, withGzip(mux))
 }
 
 func (s *Server) serveIndex(staticFS http.FileSystem) http.HandlerFunc {
