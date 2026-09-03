@@ -10,6 +10,7 @@
   const desaSelect = document.getElementById("desa-select");
   const slsSelect = document.getElementById("sls-select");
   const subslsSelect = document.getElementById("subsls-select");
+  const applyFilterBtn = document.getElementById("apply-filter-btn");
 
   const map = L.map("map", { preferCanvas: true, worldCopyJump: true }).setView([-2.5, 118], 5);
 
@@ -99,12 +100,12 @@
   async function loadSubSlsPolygon() {
     const seq = ++polygonSeq;
     clearPolygon();
-    if (!(selectedKabkota && selectedKecamatan && selectedDesa && selectedSls && selectedSubsls)) {
+    if (!(appliedKabkota && appliedKecamatan && appliedDesa && appliedSls && appliedSubsls)) {
       return;
     }
     const params = new URLSearchParams({
-      kabkota: selectedKabkota, kecamatan: selectedKecamatan, desa: selectedDesa,
-      sls: selectedSls, subsls: selectedSubsls,
+      kabkota: appliedKabkota, kecamatan: appliedKecamatan, desa: appliedDesa,
+      sls: appliedSls, subsls: appliedSubsls,
     });
     try {
       const geojson = await fetchWithRetry(`/api/subsls-polygon?${params}`, undefined);
@@ -131,15 +132,23 @@
   let datasetTotal = null;
   let datasetBounds = null; // [[minLat,minLon],[maxLat,maxLon]], for the "Semua Kabupaten/Kota" refit
   let kabkotaByCode = new Map();
-  let selectedKabkota = "";
   let kecamatanByCode = new Map();
-  let selectedKecamatan = "";
   let desaByCode = new Map();
-  let selectedDesa = "";
   let slsByCode = new Map();
-  let selectedSls = "";
   let subslsByCode = new Map();
-  let selectedSubsls = "";
+
+  // appliedKabkota..appliedSubsls are the wilayah filter actually in effect
+  // for the map/polygon right now — only the "Terapkan Filter" button
+  // (applyFilterBtn below) updates these, from whatever the selects
+  // currently hold. The selects themselves are free to be changed (which
+  // still cascades child dropdown options, e.g. picking a kabkota still
+  // loads its kecamatan list right away) without touching what's actually
+  // loaded on the map until that button is clicked.
+  let appliedKabkota = "";
+  let appliedKecamatan = "";
+  let appliedDesa = "";
+  let appliedSls = "";
+  let appliedSubsls = "";
 
   // --- status labels -------------------------------------------------
 
@@ -202,11 +211,11 @@
       minLon: b.getWest(), maxLon: b.getEast(),
       zoom: String(zoom),
     });
-    if (selectedKabkota) params.set("kabkota", selectedKabkota);
-    if (selectedKecamatan) params.set("kecamatan", selectedKecamatan);
-    if (selectedDesa) params.set("desa", selectedDesa);
-    if (selectedSls) params.set("sls", selectedSls);
-    if (selectedSubsls) params.set("subsls", selectedSubsls);
+    if (appliedKabkota) params.set("kabkota", appliedKabkota);
+    if (appliedKecamatan) params.set("kecamatan", appliedKecamatan);
+    if (appliedDesa) params.set("desa", appliedDesa);
+    if (appliedSls) params.set("sls", appliedSls);
+    if (appliedSubsls) params.set("subsls", appliedSubsls);
 
     setLoading(true);
     try {
@@ -281,13 +290,13 @@
     const kind = resp.type === "points" ? "titik individual" : "kelompok";
     const lines = [];
     if (datasetTotal !== null) lines.push(`Total data: ${datasetTotal.toLocaleString("id-ID")} titik`);
-    if (selectedKabkota) {
-      const info = kabkotaByCode.get(selectedKabkota);
-      let line = `Filter: ${info ? info.name : selectedKabkota}`;
-      if (selectedKecamatan) line += ` / Kec. ${selectedKecamatan}`;
-      if (selectedDesa) line += ` / Desa/Kel. ${selectedDesa}`;
-      if (selectedSls) line += ` / SLS ${selectedSls}`;
-      if (selectedSubsls) line += ` / SubSLS ${selectedSubsls}`;
+    if (appliedKabkota) {
+      const info = kabkotaByCode.get(appliedKabkota);
+      let line = `Filter: ${info ? info.name : appliedKabkota}`;
+      if (appliedKecamatan) line += ` / Kec. ${appliedKecamatan}`;
+      if (appliedDesa) line += ` / Desa/Kel. ${appliedDesa}`;
+      if (appliedSls) line += ` / SLS ${appliedSls}`;
+      if (appliedSubsls) line += ` / SubSLS ${appliedSubsls}`;
       lines.push(line);
     }
     lines.push(`Di area ini: ${resp.total.toLocaleString("id-ID")} titik`);
@@ -338,93 +347,92 @@
     return null;
   }
 
-  // Ancestor bounds to fall back to when the selected level itself has no
-  // usable bbox, nearest first.
-  function ancestorBounds() {
-    return [
-      boundsOf(kecamatanByCode.get(selectedKecamatan)),
-      boundsOf(kabkotaByCode.get(selectedKabkota)),
+  // Picks the bbox of the deepest wilayah level currently applied, falling
+  // back up the chain (SubSLS -> SLS -> desa -> kecamatan -> kabkota ->
+  // whole dataset) to whichever ancestor actually has a usable bbox.
+  // Replaces what used to be five near-identical per-select fallback
+  // chains, now that there's a single moment (the Filter button) where the
+  // map re-zooms to match the filter, instead of one per select change.
+  function currentBounds() {
+    const candidates = [
+      boundsOf(subslsByCode.get(appliedSubsls)),
+      boundsOf(slsByCode.get(appliedSls)),
+      boundsOf(desaByCode.get(appliedDesa)),
+      boundsOf(kecamatanByCode.get(appliedKecamatan)),
+      boundsOf(kabkotaByCode.get(appliedKabkota)),
       datasetBounds,
     ];
+    return candidates.find(Boolean);
   }
 
+  // The five selects below only cascade each other's *options* — picking a
+  // kabkota loads its kecamatan list right away, same as before — but no
+  // longer touch the map (no re-zoom, no point/polygon reload) on their
+  // own. That only happens once "Terapkan Filter" is clicked (see
+  // applyFilterBtn below), so switching through several levels while
+  // deciding doesn't fire a request per click.
+
   kabkotaSelect.addEventListener("change", async () => {
-    selectedKabkota = kabkotaSelect.value;
-    selectedKecamatan = "";
-    selectedDesa = "";
-    selectedSls = "";
-    selectedSubsls = "";
+    const kabkota = kabkotaSelect.value;
     desaLevel.reset();
     desaSelect.disabled = true;
     slsLevel.reset();
     slsSelect.disabled = true;
     subslsLevel.reset();
     subslsSelect.disabled = true;
-    await kecamatanLevel.load(selectedKabkota ? `/api/kecamatan?kabkota=${encodeURIComponent(selectedKabkota)}` : null);
-
-    fitTo(boundsOf(kabkotaByCode.get(selectedKabkota)) || datasetBounds);
-    // fitBounds triggers moveend -> scheduleLoad already; force an
-    // immediate reload too in case the view didn't actually move.
-    scheduleLoad();
-    loadSubSlsPolygon();
+    await kecamatanLevel.load(kabkota ? `/api/kecamatan?kabkota=${encodeURIComponent(kabkota)}` : null);
   });
 
   kecamatanSelect.addEventListener("change", async () => {
-    selectedKecamatan = kecamatanSelect.value;
-    selectedDesa = "";
-    selectedSls = "";
-    selectedSubsls = "";
+    const kabkota = kabkotaSelect.value;
+    const kecamatan = kecamatanSelect.value;
     slsLevel.reset();
     slsSelect.disabled = true;
     subslsLevel.reset();
     subslsSelect.disabled = true;
     await desaLevel.load(
-      selectedKecamatan
-        ? `/api/desa?kabkota=${encodeURIComponent(selectedKabkota)}&kecamatan=${encodeURIComponent(selectedKecamatan)}`
-        : null
+      kecamatan ? `/api/desa?kabkota=${encodeURIComponent(kabkota)}&kecamatan=${encodeURIComponent(kecamatan)}` : null
     );
-
-    fitTo(boundsOf(kecamatanByCode.get(selectedKecamatan)) || boundsOf(kabkotaByCode.get(selectedKabkota)) || datasetBounds);
-    scheduleLoad();
-    loadSubSlsPolygon();
   });
 
   desaSelect.addEventListener("change", async () => {
-    selectedDesa = desaSelect.value;
-    selectedSls = "";
-    selectedSubsls = "";
+    const kabkota = kabkotaSelect.value;
+    const kecamatan = kecamatanSelect.value;
+    const desa = desaSelect.value;
     subslsLevel.reset();
     subslsSelect.disabled = true;
     await slsLevel.load(
-      selectedDesa
-        ? `/api/sls?kabkota=${encodeURIComponent(selectedKabkota)}&kecamatan=${encodeURIComponent(selectedKecamatan)}&desa=${encodeURIComponent(selectedDesa)}`
+      desa
+        ? `/api/sls?kabkota=${encodeURIComponent(kabkota)}&kecamatan=${encodeURIComponent(kecamatan)}&desa=${encodeURIComponent(desa)}`
         : null
     );
-
-    fitTo(boundsOf(desaByCode.get(selectedDesa)) || ancestorBounds().find(Boolean) || datasetBounds);
-    scheduleLoad();
-    loadSubSlsPolygon();
   });
 
   slsSelect.addEventListener("change", async () => {
-    selectedSls = slsSelect.value;
-    selectedSubsls = "";
+    const kabkota = kabkotaSelect.value;
+    const kecamatan = kecamatanSelect.value;
+    const desa = desaSelect.value;
+    const sls = slsSelect.value;
     await subslsLevel.load(
-      selectedSls
-        ? `/api/subsls?kabkota=${encodeURIComponent(selectedKabkota)}&kecamatan=${encodeURIComponent(selectedKecamatan)}&desa=${encodeURIComponent(selectedDesa)}&sls=${encodeURIComponent(selectedSls)}`
+      sls
+        ? `/api/subsls?kabkota=${encodeURIComponent(kabkota)}&kecamatan=${encodeURIComponent(kecamatan)}&desa=${encodeURIComponent(desa)}&sls=${encodeURIComponent(sls)}`
         : null
     );
-
-    const fallbacks = [boundsOf(desaByCode.get(selectedDesa)), ...ancestorBounds()];
-    fitTo(boundsOf(slsByCode.get(selectedSls)) || fallbacks.find(Boolean) || datasetBounds);
-    scheduleLoad();
-    loadSubSlsPolygon();
   });
 
-  subslsSelect.addEventListener("change", () => {
-    selectedSubsls = subslsSelect.value;
-    const fallbacks = [boundsOf(slsByCode.get(selectedSls)), boundsOf(desaByCode.get(selectedDesa)), ...ancestorBounds()];
-    fitTo(boundsOf(subslsByCode.get(selectedSubsls)) || fallbacks.find(Boolean) || datasetBounds);
+  // subslsSelect has no child level to cascade — nothing to do here at all
+  // now; its value is only read when Terapkan Filter is clicked.
+
+  applyFilterBtn.addEventListener("click", () => {
+    appliedKabkota = kabkotaSelect.value;
+    appliedKecamatan = kecamatanSelect.value;
+    appliedDesa = desaSelect.value;
+    appliedSls = slsSelect.value;
+    appliedSubsls = subslsSelect.value;
+
+    fitTo(currentBounds());
+    // fitBounds triggers moveend -> scheduleLoad already; force an
+    // immediate reload too in case the view didn't actually move.
     scheduleLoad();
     loadSubSlsPolygon();
   });

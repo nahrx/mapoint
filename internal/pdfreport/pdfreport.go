@@ -14,35 +14,13 @@ import (
 	"github.com/go-pdf/fpdf"
 
 	"se2026-titik-maps/internal/points"
+	"se2026-titik-maps/internal/report"
 )
 
-// Region describes the wilayah — and, optionally, the extra attribute
-// filters — a report is scoped to. All fields are expected to be
-// already-validated (see points.Parse*) — this package only formats them,
-// it doesn't validate. JenisPrelist, KeberadaanKeluarga and Status are ""
-// when that filter wasn't applied; a set filter's raw value (including
-// points.EmptyValue for "filter for a blank column") is rendered via
-// attrLabel. Search is "" when no name search was applied.
-type Region struct {
-	KabKotaCode string
-	KabKotaName string
-	Kecamatan   string
-	Desa        string
-	SLS         string
-	SubSLS      string
-
-	JenisPrelist       string
-	KeberadaanKeluarga string
-	Status             string
-	Search             string
-}
-
-// FullCode reconstructs the 16-digit level_6_full_code these five codes
-// pin exactly (4+3+3+4+2 digits) — shown once in the header instead of
-// repeated in every table row, since it's identical for the whole report.
-func (r Region) FullCode() string {
-	return r.KabKotaCode + r.Kecamatan + r.Desa + r.SLS + r.SubSLS
-}
+// Region is the wilayah/filter metadata a report is scoped to — see
+// report.Region, shared with xlsxreport so both export formats describe
+// their scope identically.
+type Region = report.Region
 
 var columns = []struct {
 	header string
@@ -89,12 +67,12 @@ func Generate(w io.Writer, region Region, items []points.Point, truncated bool) 
 	for i, p := range items {
 		row := []string{
 			strconv.Itoa(i + 1),
-			dashIfEmpty(p.Nama),
-			dashIfEmpty(p.Alamat),
-			dashIfEmpty(p.JenisPrelist),
+			report.DashIfEmpty(p.Nama),
+			report.DashIfEmpty(p.Alamat),
+			report.DashIfEmpty(p.JenisPrelist),
 			strconv.Itoa(int(p.KeberadaanUsaha)),
-			dashIfEmpty(p.KeberadaanKeluarga),
-			dashIfEmpty(p.Status),
+			report.DashIfEmpty(p.KeberadaanKeluarga),
+			report.DashIfEmpty(p.Status),
 		}
 		for i := range row {
 			row[i] = tr(row[i])
@@ -151,19 +129,7 @@ func writeHeader(pdf *fpdf.Fpdf, tr func(string) string, region Region, total in
 		pdf.CellFormat(0, 5.5, tr(": "+kv[1]), "", 1, "L", false, 0, "")
 	}
 
-	var extra [][2]string
-	if region.JenisPrelist != "" {
-		extra = append(extra, [2]string{"Jenis Prelist", attrLabel(region.JenisPrelist)})
-	}
-	if region.KeberadaanKeluarga != "" {
-		extra = append(extra, [2]string{"Keberadaan Keluarga", attrLabel(region.KeberadaanKeluarga)})
-	}
-	if region.Status != "" {
-		extra = append(extra, [2]string{"Status", attrLabel(region.Status)})
-	}
-	if region.Search != "" {
-		extra = append(extra, [2]string{"Cari Nama", region.Search})
-	}
+	extra := region.ExtraFilters()
 	if len(extra) > 0 {
 		pdf.Ln(2)
 		pdf.SetFont("Arial", "B", 10)
@@ -252,19 +218,3 @@ func fillMode(fill bool) string {
 	return "D"
 }
 
-func dashIfEmpty(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}
-
-// attrLabel renders an attribute filter's raw value for display, turning
-// points.EmptyValue (the sentinel for "filter for a blank column") into a
-// human-readable label instead of the literal sentinel string.
-func attrLabel(val string) string {
-	if val == points.EmptyValue {
-		return "(Kosong)"
-	}
-	return val
-}

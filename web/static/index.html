@@ -55,6 +55,9 @@
             <option value="">Semua SubSLS</option>
           </select>
         </div>
+        <div class="filter-row" id="apply-filter-row">
+          <button id="apply-filter-btn" class="apply-filter-btn" type="button">Terapkan Filter</button>
+        </div>
         <div id="stats">Memuat statistik…</div>
         <div id="legend">
           <div class="legend-row"><span class="dot dot-point"></span> Titik individual</div>
@@ -123,11 +126,20 @@
             <option value="">Semua Status</option>
           </select>
         </div>
+        <div class="filter-row" id="apply-filter-row-list">
+          <label>&nbsp;</label>
+          <button id="apply-filter-btn-list" class="apply-filter-btn" type="button">Terapkan Filter</button>
+        </div>
         <div class="filter-row" id="download-pdf-row">
           <label>&nbsp;</label>
-          <button id="download-pdf-btn" disabled title="Pilih filter sampai Kode SubSLS untuk mengunduh">
-            Unduh PDF
-          </button>
+          <div id="download-btn-group">
+            <button id="download-pdf-btn" disabled title="Pilih filter sampai Kode SubSLS untuk mengunduh">
+              Unduh PDF
+            </button>
+            <button id="download-xlsx-btn" disabled title="Pilih filter sampai Kode SubSLS untuk mengunduh">
+              Unduh Excel
+            </button>
+          </div>
         </div>
       </div>
 

@@ -24,6 +24,34 @@ Total & extent dataset (untuk auto-fit peta saat awal buka) dihitung sekali
 saat startup dan di-refresh otomatis setiap 10 menit di background, supaya
 angka tetap akurat seiring data bertambah tanpa perlu restart server.
 
+### Tombol "Terapkan Filter"
+
+Baik di menu Peta maupun Daftar, mengubah dropdown wilayah, dropdown atribut
+(Jenis Prelist/Keberadaan Keluarga/Status di Daftar), atau kotak cari nama
+**tidak langsung memuat ulang data** — itu baru terjadi begitu tombol
+"Terapkan Filter" diklik (di Daftar, menekan Enter di kotak cari juga
+sama saja dengan mengklik tombolnya). Ini supaya ganti beberapa filter
+sekaligus (misalnya kabupaten/kota lalu kecamatan lalu status) tidak memicu
+satu request per klik — cukup satu request begitu semua filter yang
+diinginkan sudah dipilih.
+
+Yang TETAP langsung terjadi tanpa menunggu tombol (karena ini soal mengisi
+pilihan dropdown, bukan soal memuat data titik/tabelnya): memilih
+kabupaten/kota tetap langsung mengisi daftar kecamatan-nya, memilih
+kecamatan tetap langsung mengisi daftar desa/kelurahan, dan seterusnya —
+cuma peta/tabelnya sendiri yang menunggu. Di menu Peta, auto-zoom ke area
+yang difilter juga baru terjadi saat tombol diklik (bukan saat dropdown
+diubah); di Daftar, tombol Unduh PDF/Excel juga selalu mengikuti filter
+yang **sudah diterapkan** (bukan yang baru dipilih di dropdown tapi belum
+diklik Terapkan Filter). Lihat `appliedKabkota` dkk. di `web/static/app.js`
+dan `web/static/daftar.js` untuk detail pemisahan "state dropdown yang
+sedang dipilih" vs "filter yang benar-benar aktif".
+
+Menggeser/zoom peta secara manual tetap langsung memuat ulang titik di
+viewport yang baru (itu navigasi peta biasa, bukan mengubah filter) —
+yang ditahan tombol Terapkan Filter cuma perubahan filter wilayah/atribut/
+cari nama itu sendiri.
+
 ### Filter kabupaten/kota
 
 Dropdown "Kabupaten/Kota" di panel diisi otomatis dari data yang ada (4
@@ -31,10 +59,11 @@ digit pertama `level_6_full_code`, kode wilayah BPS/Kemendagri provinsi+
 kabupaten/kota), bukan daftar statis — jadi kalau cakupan data bertambah ke
 kabupaten/kota lain, opsinya otomatis muncul (nama tampil kalau kodenya ada
 di `internal/points/kabkota_names.go`, kalau belum ada di map itu tetap
-berfungsi sebagai filter, hanya labelnya berupa kode mentah). Memilih satu
-kab/kota otomatis zoom ke area itu (bounding box dihitung pakai persentil
-1–99% supaya titik dengan GPS salah/outlier tidak merusak zoom) dan
-membatasi semua query berikutnya (`GET /api/points?...&kabkota=6472`).
+berfungsi sebagai filter, hanya labelnya berupa kode mentah). Begitu tombol
+"Terapkan Filter" diklik, kab/kota yang dipilih otomatis men-zoom peta ke
+area itu (bounding box dihitung pakai persentil 1–99% supaya titik dengan
+GPS salah/outlier tidak merusak zoom) dan membatasi semua query berikutnya
+(`GET /api/points?...&kabkota=6472`).
 
 Dropdown "Kecamatan" di sebelahnya mengikuti (cascading): nonaktif sampai
 sebuah kabupaten/kota dipilih, lalu terisi otomatis dari 3 digit berikutnya
@@ -127,8 +156,10 @@ isi tabel `se2026_titik` sebagai daftar biasa — bukan tampilan peta:
   yang siap dipetakan.
 - **Cari nama** — kotak teks di atas filter wilayah, mencari substring
   (tidak case-sensitive) di kolom `nama_assignment`, digabung dengan filter
-  lain lewat `AND` (semuanya harus cocok). Ketikan di-debounce 350ms supaya
-  tidak mengirim query tiap huruf. Berbeda dari filter lain di menu ini,
+  lain lewat `AND` (semuanya harus cocok). Sama seperti filter lain di menu
+  ini, ketikan baru diterapkan begitu tombol "Terapkan Filter" diklik (atau
+  tekan Enter di kotak ini) — lihat bagian "Tombol Terapkan Filter" di atas.
+  Berbeda dari filter lain di menu ini,
   teks pencarian adalah input bebas dari pengguna — jadi tidak divalidasi
   terhadap whitelist, tapi dikirim ke ClickHouse lewat parameter binding
   (`?` placeholder, lihat `Filter.clause()` di
@@ -154,24 +185,35 @@ isi tabel `se2026_titik` sebagai daftar biasa — bukan tampilan peta:
   ini menampilkan semua baris yang cocok filter, termasuk yang
   `latitude_ppl`/`longitude_ppl`-nya `0` atau kosong, karena tujuannya
   menelusuri data, bukan memetakannya.
-- **Unduh PDF** — tombol di sebelah filter, aktif hanya kalau filter
-  wilayah sudah lengkap sampai Kode SubSLS (di titik itu
+- **Unduh PDF & Unduh Excel** — dua tombol di sebelah filter, aktif hanya
+  kalau filter wilayah sudah lengkap sampai Kode SubSLS (di titik itu
   `level_6_full_code` sudah pas 16 digit / satu wilayah spesifik, cocok
   jadi satu laporan) — filter atribut dan cari nama boleh diisi atau tidak,
   tidak mempengaruhi aktif/tidaknya tombol, tapi tetap ikut mempersempit
-  isi PDF kalau diisi, dan urutan barisnya ikut sort kolom yang sedang
-  aktif di tabel. PDF berjudul "Daftar Hasil Pendataan", berisi keterangan
-  wilayah (nama kab/kota + kode tiap level + kode wilayah 16 digit),
-  bagian "Filter Tambahan" kalau ada filter atribut atau cari nama yang
-  aktif, lalu tabel
-  semua baris yang cocok (bukan cuma satu halaman tabel — lihat `ListAll`
-  di `internal/points/points.go`, dibatasi `ReportMaxRows=5000` sebagai
-  jaring pengaman). Kolom `assignment_id` sengaja tidak disertakan (bukan
-  info yang relevan untuk dicetak), begitu juga kolom ID SUBSLS per baris
-  — karena nilainya sama persis untuk semua baris dalam satu SubSLS, itu
-  cukup ditulis sekali di keterangan wilayah. PDF digenerate di server
-  pakai `github.com/go-pdf/fpdf` (pure Go, tanpa Chrome/wkhtmltopdf) lewat
-  `internal/pdfreport/`.
+  isi laporan kalau diisi, dan urutan barisnya ikut sort kolom yang sedang
+  aktif di tabel. Keduanya laporan yang sama persis secara isi ("Daftar
+  Hasil Pendataan": keterangan wilayah — nama kab/kota + kode tiap level +
+  kode wilayah 16 digit —, bagian "Filter Tambahan" kalau ada filter
+  atribut atau cari nama yang aktif, lalu semua baris yang cocok, bukan
+  cuma satu halaman tabel — lihat `ListAll` di `internal/points/points.go`,
+  dibatasi `ReportMaxRows=5000` sebagai jaring pengaman), cuma beda format:
+  - **PDF** — buat dicetak/dibaca. Kolom `assignment_id` sengaja tidak
+    disertakan (bukan info yang relevan untuk dicetak), begitu juga kolom
+    ID SUBSLS per baris — karena nilainya sama persis untuk semua baris
+    dalam satu SubSLS, itu cukup ditulis sekali di keterangan wilayah.
+    Digenerate pakai `github.com/go-pdf/fpdf` (pure Go, tanpa
+    Chrome/wkhtmltopdf) lewat `internal/pdfreport/`.
+  - **Excel (.xlsx)** — buat diolah lebih lanjut (disortir, difilter,
+    dicocokkan dengan data lain), jadi kolom `assignment_id` dan ID SUBSLS
+    per baris justru disertakan di sini, plus header tabelnya di-freeze
+    dan dikasih AutoFilter bawaan Excel. Digenerate pakai
+    `github.com/xuri/excelize/v2` lewat `internal/xlsxreport/`.
+
+  Kedua paket format ini berbagi metadata wilayah/filter yang sama lewat
+  `report.Region` di `internal/report/` (satu sumber kebenaran soal apa
+  yang ditampilkan di "Keterangan Wilayah" dan "Filter Tambahan"), supaya
+  PDF dan Excel tidak bisa "berbeda cerita" soal filter apa yang lagi
+  aktif.
 
 Endpoint-nya `GET /api/list` (lihat bagian Endpoint di bawah). Query
 `ORDER BY ... LIMIT ... OFFSET ...` tanpa filter di atas 4 juta baris
@@ -272,6 +314,7 @@ Lalu buka `http://localhost:8082` di browser (dari `HTTP_ADDR=:8082` di `.env`; 
 - `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — GeoJSON batas SubSLS untuk overlay di peta (kelima parameter wajib); 503 kalau PostGIS tidak dikonfigurasi/tidak terhubung — lihat `internal/mapdb/`
 - `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `keberadaan_usaha`, `keberadaan_keluarga`, `status`, `assignment_id` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`) semuanya opsional dan independen dari filter wilayah maupun satu sama lain — nilainya divalidasi terhadap enum tetap di `internal/points/points.go`, pakai `__EMPTY__` untuk memfilter kolom yang kosong
 - `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan" untuk satu SubSLS (kelima parameter wilayah wajib); filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
+- `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&sortBy=&dir=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf` (lihat `prepareReport` di `internal/api/server.go`, dipakai bareng oleh kedua handler)
 - `GET /api/filter-options` — daftar nilai enum untuk dropdown filter Jenis Prelist, Keberadaan Keluarga, dan Status (statis, bukan query ke ClickHouse)
 - `GET /healthz` — health check (ping ClickHouse)
 
@@ -291,7 +334,9 @@ internal/config/           parsing .env
 internal/chdb/             koneksi & pool ClickHouse
 internal/mapdb/            koneksi PostGIS opsional + query polygon batas SubSLS
 internal/points/           query viewport → individual points / clusters
+internal/report/           metadata wilayah/filter (Region) dipakai bareng pdfreport & xlsxreport
 internal/pdfreport/        generate PDF "Daftar Hasil Pendataan" (pakai go-pdf/fpdf)
+internal/xlsxreport/       generate Excel "Daftar Hasil Pendataan" (pakai excelize/v2)
 internal/api/              HTTP handlers + logging middleware
 web/static/                frontend (Leaflet, di-embed ke binary via go:embed)
   index.html                shell: nav + view Peta + view Daftar

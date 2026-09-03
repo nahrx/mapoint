@@ -1,7 +1,7 @@
 // Package api wires up the HTTP handlers: static frontend, /api/points,
 // /api/bounds, /api/kabkota, /api/kecamatan, /api/desa, /api/sls,
-// /api/subsls, /api/list, /api/list/pdf, /api/subsls-polygon and
-// /healthz.
+// /api/subsls, /api/list, /api/list/pdf, /api/list/xlsx,
+// /api/subsls-polygon and /healthz.
 package api
 
 import (
@@ -23,6 +23,8 @@ import (
 	"se2026-titik-maps/internal/mapdb"
 	"se2026-titik-maps/internal/pdfreport"
 	"se2026-titik-maps/internal/points"
+	"se2026-titik-maps/internal/report"
+	"se2026-titik-maps/internal/xlsxreport"
 )
 
 type Server struct {
@@ -69,6 +71,7 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /api/subsls", s.handleSubSLS)
 	mux.HandleFunc("GET /api/list", s.handleList)
 	mux.HandleFunc("GET /api/list/pdf", s.handleListPDF)
+	mux.HandleFunc("GET /api/list/xlsx", s.handleListXLSX)
 	mux.HandleFunc("GET /api/filter-options", s.handleFilterOptions)
 	mux.HandleFunc("GET /api/subsls-polygon", s.handleSubSLSPolygon)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
@@ -456,22 +459,33 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// handleListPDF renders the "Daftar Hasil Pendataan" PDF for one
-// fully-drilled-down SubSLS. It deliberately requires every wilayah level
-// (kabkota through subsls) — mirroring the button's disabled state on the
-// frontend — since a report scoped any wider than a single SubSLS isn't
-// what this button is for, and could otherwise return an unbounded
-// number of rows.
-func (s *Server) handleListPDF(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
+// reportData is what handleListPDF and handleListXLSX both need to render
+// their respective format — gathered once by prepareReport so the two
+// handlers can't drift out of sync on how a report's scope or row set is
+// determined.
+type reportData struct {
+	region    report.Region
+	items     []points.Point
+	truncated bool
+}
+
+// prepareReport validates and parses the wilayah/attribute/sort filter
+// from q, requires it to be pinned all the way down to one SubSLS
+// (mirroring the download buttons' disabled state on the frontend, since
+// a report scoped any wider isn't what either button is for and could
+// otherwise return an unbounded number of rows), and fetches every
+// matching row (capped at points.ReportMaxRows). ok is false when it has
+// already written an error response and the caller should return
+// immediately.
+func (s *Server) prepareReport(w http.ResponseWriter, r *http.Request, q url.Values, downloadKind string) (data reportData, ok bool) {
 	filter, err := parseFilter(q)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return reportData{}, false
 	}
 	if filter.KabKota == "" || filter.Kecamatan == "" || filter.Desa == "" || filter.SLS == "" || filter.SubSLS == "" {
-		writeError(w, http.StatusBadRequest, "PDF download requires filtering all the way down to Kode SubSLS")
-		return
+		writeError(w, http.StatusBadRequest, downloadKind+" download requires filtering all the way down to Kode SubSLS")
+		return reportData{}, false
 	}
 
 	sortBy := points.ParseSortColumn(q.Get("sortBy"))
@@ -480,14 +494,14 @@ func (s *Server) handleListPDF(w http.ResponseWriter, r *http.Request) {
 	items, err := s.svc.ListAll(r.Context(), filter, sortBy, dir)
 	if err != nil {
 		if r.Context().Err() != nil {
-			return
+			return reportData{}, false
 		}
-		s.log.Error("list-pdf query failed", "err", err)
+		s.log.Error("list-report query failed", "err", err, "format", downloadKind)
 		writeError(w, http.StatusInternalServerError, "query failed")
-		return
+		return reportData{}, false
 	}
 
-	region := pdfreport.Region{
+	region := report.Region{
 		KabKotaCode: filter.KabKota,
 		KabKotaName: points.KabKotaName(filter.KabKota),
 		Kecamatan:   filter.Kecamatan,
@@ -500,19 +514,48 @@ func (s *Server) handleListPDF(w http.ResponseWriter, r *http.Request) {
 		Status:             filter.Status,
 		Search:             filter.Search,
 	}
-	truncated := len(items) >= points.ReportMaxRows
+
+	return reportData{region: region, items: items, truncated: len(items) >= points.ReportMaxRows}, true
+}
+
+// handleListPDF renders the "Daftar Hasil Pendataan" PDF for one
+// fully-drilled-down SubSLS — see prepareReport for the shared scope
+// rules.
+func (s *Server) handleListPDF(w http.ResponseWriter, r *http.Request) {
+	data, ok := s.prepareReport(w, r, r.URL.Query(), "PDF")
+	if !ok {
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="daftar-hasil-pendataan-%s.pdf"`, region.FullCode()))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="daftar-hasil-pendataan-%s.pdf"`, data.region.FullCode()))
 	// The report reflects live data and every filter combination shares
 	// this same URL shape, so never let a browser (or an intermediary
 	// proxy) serve a stale cached copy back for a re-download.
 	w.Header().Set("Cache-Control", "no-store")
-	if err := pdfreport.Generate(w, region, items, truncated); err != nil {
+	if err := pdfreport.Generate(w, data.region, data.items, data.truncated); err != nil {
 		s.log.Error("pdf generation failed", "err", err)
 		// Headers are already sent at this point, so we can't fall back to
 		// writeError's JSON body — the client just gets a truncated/broken
 		// download, which is at least visible rather than silently wrong.
+	}
+}
+
+// handleListXLSX renders the same "Daftar Hasil Pendataan" report as
+// handleListPDF, as an Excel workbook instead — same scope rules, same
+// data, see prepareReport.
+func (s *Server) handleListXLSX(w http.ResponseWriter, r *http.Request) {
+	data, ok := s.prepareReport(w, r, r.URL.Query(), "Excel")
+	if !ok {
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="daftar-hasil-pendataan-%s.xlsx"`, data.region.FullCode()))
+	w.Header().Set("Cache-Control", "no-store")
+	if err := xlsxreport.Generate(w, data.region, data.items, data.truncated); err != nil {
+		s.log.Error("xlsx generation failed", "err", err)
+		// Same caveat as handleListPDF above: headers are already sent.
 	}
 }
 

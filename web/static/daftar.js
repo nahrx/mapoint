@@ -20,22 +20,32 @@
   const nextBtn = document.getElementById("daftar-next");
   const pageSizeSelect = document.getElementById("daftar-pagesize");
   const sortHeaders = document.querySelectorAll("#daftar-table th.sortable");
-  const downloadBtn = document.getElementById("download-pdf-btn");
+  const downloadPdfBtn = document.getElementById("download-pdf-btn");
+  const downloadXlsxBtn = document.getElementById("download-xlsx-btn");
+  const applyFilterBtn = document.getElementById("apply-filter-btn-list");
 
   let kabkotaByCode = new Map();
-  let selectedKabkota = "";
   let kecamatanByCode = new Map();
-  let selectedKecamatan = "";
   let desaByCode = new Map();
-  let selectedDesa = "";
   let slsByCode = new Map();
-  let selectedSls = "";
   let subslsByCode = new Map();
-  let selectedSubsls = "";
-  let selectedJenisPrelist = "";
-  let selectedKeberadaanKeluarga = "";
-  let selectedStatus = "";
-  let selectedSearch = "";
+
+  // applied* are the filters actually in effect for the table/downloads
+  // right now — only applyFilterBtn's click handler (see below) updates
+  // these, reading whatever the selects/search box currently hold at that
+  // moment. Changing a select or typing in the search box never touches
+  // these on its own (wilayah selects still cascade their *own* child
+  // dropdown options live, same as before — see the change handlers
+  // further down — just without reloading the table).
+  let appliedKabkota = "";
+  let appliedKecamatan = "";
+  let appliedDesa = "";
+  let appliedSls = "";
+  let appliedSubsls = "";
+  let appliedJenisPrelist = "";
+  let appliedKeberadaanKeluarga = "";
+  let appliedStatus = "";
+  let appliedSearch = "";
 
   // Must match points.EmptyValue on the server — the sentinel a dropdown
   // sends to mean "filter for rows where this column is blank", as opposed
@@ -88,15 +98,15 @@
   // currently filtered on screen.
   function buildFilterParams() {
     const params = new URLSearchParams();
-    if (selectedKabkota) params.set("kabkota", selectedKabkota);
-    if (selectedKecamatan) params.set("kecamatan", selectedKecamatan);
-    if (selectedDesa) params.set("desa", selectedDesa);
-    if (selectedSls) params.set("sls", selectedSls);
-    if (selectedSubsls) params.set("subsls", selectedSubsls);
-    if (selectedJenisPrelist) params.set("jenisPrelist", selectedJenisPrelist);
-    if (selectedKeberadaanKeluarga) params.set("keberadaanKeluarga", selectedKeberadaanKeluarga);
-    if (selectedStatus) params.set("status", selectedStatus);
-    if (selectedSearch) params.set("search", selectedSearch);
+    if (appliedKabkota) params.set("kabkota", appliedKabkota);
+    if (appliedKecamatan) params.set("kecamatan", appliedKecamatan);
+    if (appliedDesa) params.set("desa", appliedDesa);
+    if (appliedSls) params.set("sls", appliedSls);
+    if (appliedSubsls) params.set("subsls", appliedSubsls);
+    if (appliedJenisPrelist) params.set("jenisPrelist", appliedJenisPrelist);
+    if (appliedKeberadaanKeluarga) params.set("keberadaanKeluarga", appliedKeberadaanKeluarga);
+    if (appliedStatus) params.set("status", appliedStatus);
+    if (appliedSearch) params.set("search", appliedSearch);
     return params;
   }
 
@@ -109,12 +119,14 @@
     return params;
   }
 
-  // The download button only makes sense once the filter is pinned all
-  // the way down to one SubSLS (see handleListPDF on the server) — that's
-  // the only scope small enough for a printable report, and it's also
-  // the point at which level_6_full_code is fully determined.
+  // Both download buttons only make sense once the filter is pinned all
+  // the way down to one SubSLS (see prepareReport on the server) — that's
+  // the only scope small enough for a report, and it's also the point at
+  // which level_6_full_code is fully determined.
   function updateDownloadButtonState() {
-    downloadBtn.disabled = !(selectedKabkota && selectedKecamatan && selectedDesa && selectedSls && selectedSubsls);
+    const ready = !!(appliedKabkota && appliedKecamatan && appliedDesa && appliedSls && appliedSubsls);
+    downloadPdfBtn.disabled = !ready;
+    downloadXlsxBtn.disabled = !ready;
   }
 
   async function loadPage() {
@@ -192,16 +204,10 @@
     });
   }
 
-  // Debounced free-text name search — waits for a pause in typing so it
-  // doesn't fire a query per keystroke.
-  let searchDebounce = null;
-  searchInput.addEventListener("input", () => {
-    clearTimeout(searchDebounce);
-    searchDebounce = setTimeout(() => {
-      selectedSearch = searchInput.value.trim();
-      currentPage = 1;
-      loadPage();
-    }, 350);
+  // Search is just another filter now — typing doesn't reload anything on
+  // its own, only Enter (as a shortcut) or Terapkan Filter does.
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") applyFilters();
   });
 
   // --- wilayah filter (kabkota -> kecamatan -> desa -> sls) -------------
@@ -262,114 +268,107 @@
     }
   }
 
-  jenisPrelistSelect.addEventListener("change", () => {
-    selectedJenisPrelist = jenisPrelistSelect.value;
-    currentPage = 1;
-    loadPage();
-  });
-  keberadaanKeluargaSelect.addEventListener("change", () => {
-    selectedKeberadaanKeluarga = keberadaanKeluargaSelect.value;
-    currentPage = 1;
-    loadPage();
-  });
-  statusSelect.addEventListener("change", () => {
-    selectedStatus = statusSelect.value;
-    currentPage = 1;
-    loadPage();
-  });
+  // No listeners needed on the attribute selects themselves — their value
+  // is only read when Terapkan Filter is clicked (see applyFilters below).
+
+  // The four selects below only cascade each other's *options* — picking a
+  // kabkota loads its kecamatan list right away, same as before — without
+  // touching the table on their own. Terapkan Filter (applyFilters) is the
+  // only thing that actually reloads the table.
 
   kabkotaSelect.addEventListener("change", async () => {
-    selectedKabkota = kabkotaSelect.value;
-    selectedKecamatan = "";
-    selectedDesa = "";
-    selectedSls = "";
-    selectedSubsls = "";
+    const kabkota = kabkotaSelect.value;
     desaLevel.reset();
     desaSelect.disabled = true;
     slsLevel.reset();
     slsSelect.disabled = true;
     subslsLevel.reset();
     subslsSelect.disabled = true;
-    await kecamatanLevel.load(selectedKabkota ? `/api/kecamatan?kabkota=${encodeURIComponent(selectedKabkota)}` : null);
-    updateDownloadButtonState();
-    currentPage = 1;
-    loadPage();
+    await kecamatanLevel.load(kabkota ? `/api/kecamatan?kabkota=${encodeURIComponent(kabkota)}` : null);
   });
 
   kecamatanSelect.addEventListener("change", async () => {
-    selectedKecamatan = kecamatanSelect.value;
-    selectedDesa = "";
-    selectedSls = "";
-    selectedSubsls = "";
+    const kabkota = kabkotaSelect.value;
+    const kecamatan = kecamatanSelect.value;
     slsLevel.reset();
     slsSelect.disabled = true;
     subslsLevel.reset();
     subslsSelect.disabled = true;
     await desaLevel.load(
-      selectedKecamatan
-        ? `/api/desa?kabkota=${encodeURIComponent(selectedKabkota)}&kecamatan=${encodeURIComponent(selectedKecamatan)}`
-        : null
+      kecamatan ? `/api/desa?kabkota=${encodeURIComponent(kabkota)}&kecamatan=${encodeURIComponent(kecamatan)}` : null
     );
-    updateDownloadButtonState();
-    currentPage = 1;
-    loadPage();
   });
 
   desaSelect.addEventListener("change", async () => {
-    selectedDesa = desaSelect.value;
-    selectedSls = "";
-    selectedSubsls = "";
+    const kabkota = kabkotaSelect.value;
+    const kecamatan = kecamatanSelect.value;
+    const desa = desaSelect.value;
     subslsLevel.reset();
     subslsSelect.disabled = true;
     await slsLevel.load(
-      selectedDesa
-        ? `/api/sls?kabkota=${encodeURIComponent(selectedKabkota)}&kecamatan=${encodeURIComponent(selectedKecamatan)}&desa=${encodeURIComponent(selectedDesa)}`
+      desa
+        ? `/api/sls?kabkota=${encodeURIComponent(kabkota)}&kecamatan=${encodeURIComponent(kecamatan)}&desa=${encodeURIComponent(desa)}`
         : null
     );
-    updateDownloadButtonState();
-    currentPage = 1;
-    loadPage();
   });
 
   slsSelect.addEventListener("change", async () => {
-    selectedSls = slsSelect.value;
-    selectedSubsls = "";
+    const kabkota = kabkotaSelect.value;
+    const kecamatan = kecamatanSelect.value;
+    const desa = desaSelect.value;
+    const sls = slsSelect.value;
     await subslsLevel.load(
-      selectedSls
-        ? `/api/subsls?kabkota=${encodeURIComponent(selectedKabkota)}&kecamatan=${encodeURIComponent(selectedKecamatan)}&desa=${encodeURIComponent(selectedDesa)}&sls=${encodeURIComponent(selectedSls)}`
+      sls
+        ? `/api/subsls?kabkota=${encodeURIComponent(kabkota)}&kecamatan=${encodeURIComponent(kecamatan)}&desa=${encodeURIComponent(desa)}&sls=${encodeURIComponent(sls)}`
         : null
     );
+  });
+
+  // subslsSelect has no child level to cascade — nothing to do here at all
+  // now; its value is only read when Terapkan Filter is clicked.
+
+  // Reads every filter control's current value into applied*, then reloads
+  // page 1 with them — the one place all of this actually takes effect.
+  function applyFilters() {
+    appliedKabkota = kabkotaSelect.value;
+    appliedKecamatan = kecamatanSelect.value;
+    appliedDesa = desaSelect.value;
+    appliedSls = slsSelect.value;
+    appliedSubsls = subslsSelect.value;
+    appliedJenisPrelist = jenisPrelistSelect.value;
+    appliedKeberadaanKeluarga = keberadaanKeluargaSelect.value;
+    appliedStatus = statusSelect.value;
+    appliedSearch = searchInput.value.trim();
+
     updateDownloadButtonState();
     currentPage = 1;
     loadPage();
-  });
+  }
 
-  subslsSelect.addEventListener("change", () => {
-    selectedSubsls = subslsSelect.value;
-    updateDownloadButtonState();
-    currentPage = 1;
-    loadPage();
-  });
+  applyFilterBtn.addEventListener("click", applyFilters);
 
-  // --- PDF download ------------------------------------------------------
+  // --- PDF / Excel download ----------------------------------------------
 
-  downloadBtn.addEventListener("click", () => {
-    if (downloadBtn.disabled) return;
+  // Shared by both download buttons — same filter/sort params, same
+  // "build a temporary link and click it" approach (works for any
+  // Content-Disposition: attachment endpoint, and keeps this an explicit,
+  // self-contained action rather than ever touching location.href).
+  function downloadReport(btn, apiPath) {
+    if (btn.disabled) return;
     const params = buildFilterParams();
     params.set("sortBy", sortColumn);
     params.set("dir", sortDir);
-    const url = `/api/list/pdf?${params}`;
-    // A plain navigation would work too (Content-Disposition: attachment
-    // makes the browser download instead of leaving the page), but a
-    // temporary link keeps this an explicit, self-contained action and
-    // avoids ever touching location.href.
+    const url = `${apiPath}?${params}`;
     const a = document.createElement("a");
     a.href = url;
     a.rel = "noopener";
     document.body.appendChild(a);
     a.click();
     a.remove();
-  });
+  }
+
+  downloadPdfBtn.addEventListener("click", () => downloadReport(downloadPdfBtn, "/api/list/pdf"));
+  downloadXlsxBtn.addEventListener("click", () => downloadReport(downloadXlsxBtn, "/api/list/xlsx"));
 
   // --- boot ------------------------------------------------------------
 

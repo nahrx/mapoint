@@ -254,6 +254,29 @@ body {
   max-width: 240px;
 }
 
+/* Filters (wilayah, atribut, cari) only take effect once this is clicked —
+   nothing reloads on its own as a select/input changes. Distinct accent
+   color from the PDF (navy) / Excel (green) download buttons so it reads
+   as "the button you press first". */
+.apply-filter-btn {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 18px;
+  border-radius: 5px;
+  border: 1px solid #b8590a;
+  background: #d9720f;
+  color: #fff;
+  cursor: pointer;
+}
+
+.apply-filter-btn:hover {
+  background: #e8801c;
+}
+
+#apply-filter-row, #apply-filter-row-list {
+  align-self: flex-end;
+}
+
 /* --- Daftar view ---------------------------------------------------------- */
 
 #daftar-container {
@@ -291,25 +314,43 @@ body {
   align-self: flex-end;
 }
 
-#download-pdf-btn {
+#download-btn-group {
+  display: flex;
+  gap: 8px;
+}
+
+#download-pdf-btn, #download-xlsx-btn {
   font-size: 13px;
   font-weight: 600;
   padding: 6px 16px;
   border-radius: 5px;
-  border: 1px solid #103a5e;
-  background: #103a5e;
-  color: #fff;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
+#download-pdf-btn {
+  border: 1px solid #103a5e;
+  background: #103a5e;
+  color: #fff;
+}
+
 #download-pdf-btn:hover:not(:disabled) {
   background: #16528a;
 }
 
-#download-pdf-btn:disabled {
+#download-xlsx-btn {
+  border: 1px solid #1e7145;
+  background: #1e7145;
+  color: #fff;
+}
+
+#download-xlsx-btn:hover:not(:disabled) {
+  background: #278f58;
+}
+
+#download-pdf-btn:disabled, #download-xlsx-btn:disabled {
   background: #eee;
   border-color: #ccc;
   color: #999;
