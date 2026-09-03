@@ -71,7 +71,12 @@
 
   <section id="view-daftar" class="view">
     <div id="daftar-container">
-      <h1>Daftar Titik SE2026</h1>
+      <div id="daftar-head">
+        <h1>Daftar Titik SE2026</h1>
+        <button id="daftar-filter-toggle" type="button" aria-expanded="true" aria-controls="daftar-filters">
+          Filter <span aria-hidden="true">&#9650;</span>
+        </button>
+      </div>
 
       <div id="daftar-filters">
         <div class="filter-row">
@@ -126,17 +131,13 @@
             <option value="">Semua Status</option>
           </select>
         </div>
-        <div class="filter-row" id="apply-filter-row-list">
-          <label>&nbsp;</label>
+        <div id="daftar-actions">
           <button id="apply-filter-btn-list" class="apply-filter-btn" type="button">Terapkan Filter</button>
-        </div>
-        <div class="filter-row" id="download-pdf-row">
-          <label>&nbsp;</label>
           <div id="download-btn-group">
-            <button id="download-pdf-btn" disabled title="Pilih filter sampai Kode SubSLS untuk mengunduh">
+            <button id="download-pdf-btn" disabled title="Pilih filter minimal sampai Desa/Kelurahan untuk mengunduh">
               Unduh PDF
             </button>
-            <button id="download-xlsx-btn" disabled title="Pilih filter sampai Kode SubSLS untuk mengunduh">
+            <button id="download-xlsx-btn" disabled title="Pilih filter minimal sampai Desa/Kelurahan untuk mengunduh">
               Unduh Excel
             </button>
           </div>

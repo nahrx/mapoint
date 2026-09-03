@@ -5,7 +5,12 @@
 // format is aware of the other; both only depend on this package.
 package report
 
-import "se2026-titik-maps/internal/points"
+import (
+	"fmt"
+	"strconv"
+
+	"se2026-titik-maps/internal/points"
+)
 
 // Region describes the wilayah — and, optionally, the extra attribute
 // filters — a report is scoped to. All fields are expected to be
@@ -28,12 +33,49 @@ type Region struct {
 	Search             string
 }
 
-// FullCode reconstructs the 16-digit level_6_full_code these five codes
-// pin exactly (4+3+3+4+2 digits) — shown once in a report's header
-// instead of repeated in every row, since it's identical for the whole
-// report.
+// FullCode joins the wilayah codes that are set into the longest prefix
+// of level_6_full_code the report is pinned to (4+3+3+4+2 digits): all 16
+// digits when drilled down to a SubSLS, 14 at SLS level, 10 at
+// desa/kelurahan level. Shown once in a report's header instead of
+// repeated in every row, since it's identical for the whole report.
 func (r Region) FullCode() string {
 	return r.KabKotaCode + r.Kecamatan + r.Desa + r.SLS + r.SubSLS
+}
+
+// PinnedToSubSLS reports whether the report covers exactly one SubSLS.
+// When it doesn't, level_6_full_code varies from row to row, so the table
+// needs its own ID SUBSLS column instead of relying on the single value in
+// the header (see FullCode).
+func (r Region) PinnedToSubSLS() bool {
+	return r.SubSLS != ""
+}
+
+// WilayahRows is the "Keterangan Wilayah" label/value block, shared so PDF
+// and Excel describe the same scope in the same words. Levels below what
+// the filter reached read "(Semua)" rather than being dropped, so it's
+// clear the report deliberately spans all of them rather than having lost
+// a line.
+func (r Region) WilayahRows(total int) [][2]string {
+	codeLabel := "Kode Wilayah"
+	if r.PinnedToSubSLS() {
+		codeLabel = "Kode Wilayah (ID SUBSLS)"
+	}
+	return [][2]string{
+		{"Kabupaten/Kota", fmt.Sprintf("%s (%s)", r.KabKotaName, r.KabKotaCode)},
+		{"Kecamatan", r.Kecamatan},
+		{"Desa/Kelurahan", r.Desa},
+		{"SLS", allIfEmpty(r.SLS)},
+		{"SubSLS", allIfEmpty(r.SubSLS)},
+		{codeLabel, r.FullCode()},
+		{"Jumlah Data", strconv.Itoa(total)},
+	}
+}
+
+func allIfEmpty(s string) string {
+	if s == "" {
+		return "(Semua)"
+	}
+	return s
 }
 
 // ExtraFilters collects the "Filter Tambahan" label/value rows both

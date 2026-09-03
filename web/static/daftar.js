@@ -23,6 +23,8 @@
   const downloadPdfBtn = document.getElementById("download-pdf-btn");
   const downloadXlsxBtn = document.getElementById("download-xlsx-btn");
   const applyFilterBtn = document.getElementById("apply-filter-btn-list");
+  const filtersEl = document.getElementById("daftar-filters");
+  const filterToggleBtn = document.getElementById("daftar-filter-toggle");
 
   let kabkotaByCode = new Map();
   let kecamatanByCode = new Map();
@@ -119,12 +121,12 @@
     return params;
   }
 
-  // Both download buttons only make sense once the filter is pinned all
-  // the way down to one SubSLS (see prepareReport on the server) — that's
-  // the only scope small enough for a report, and it's also the point at
-  // which level_6_full_code is fully determined.
+  // Both download buttons need the filter pinned at least down to one
+  // desa/kelurahan (see prepareReport on the server) — anything wider runs
+  // to hundreds of thousands of rows. Narrowing further to an SLS or
+  // SubSLS is allowed and just makes the report smaller.
   function updateDownloadButtonState() {
-    const ready = !!(appliedKabkota && appliedKecamatan && appliedDesa && appliedSls && appliedSubsls);
+    const ready = !!(appliedKabkota && appliedKecamatan && appliedDesa);
     downloadPdfBtn.disabled = !ready;
     downloadXlsxBtn.disabled = !ready;
   }
@@ -346,6 +348,27 @@
   }
 
   applyFilterBtn.addEventListener("click", applyFilters);
+
+  // --- filter panel collapse (phone only) --------------------------------
+  // The nine filter controls stack to roughly a full screen on a phone,
+  // which would push the table itself out of view. The toggle button is
+  // hidden by CSS above 600px, where everything fits side by side anyway.
+
+  function setFiltersCollapsed(collapsed) {
+    filtersEl.classList.toggle("collapsed", collapsed);
+    filterToggleBtn.setAttribute("aria-expanded", String(!collapsed));
+  }
+
+  filterToggleBtn.addEventListener("click", () => {
+    setFiltersCollapsed(!filtersEl.classList.contains("collapsed"));
+  });
+
+  // Applying a filter on a phone means you're done choosing — fold the
+  // panel away so the results you just asked for are what's on screen.
+  if (window.matchMedia("(max-width: 600px)").matches) {
+    setFiltersCollapsed(true);
+    applyFilterBtn.addEventListener("click", () => setFiltersCollapsed(true));
+  }
 
   // --- PDF / Excel download ----------------------------------------------
 

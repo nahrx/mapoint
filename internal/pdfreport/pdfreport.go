@@ -1,8 +1,8 @@
 // Package pdfreport renders the "Daftar Hasil Pendataan" PDF for the
-// Daftar menu's download button: every row in one fully-drilled-down
-// SubSLS, laid out as a wrapped table (assignment_id deliberately
-// excluded — it's an internal id, not something field staff need on a
-// printed list).
+// Daftar menu's download button: every row in the filtered wilayah
+// (desa/kelurahan level or narrower), laid out as a wrapped table
+// (assignment_id deliberately excluded — it's an internal id, not
+// something field staff need on a printed list).
 package pdfreport
 
 import (
@@ -22,17 +22,75 @@ import (
 // their scope identically.
 type Region = report.Region
 
-var columns = []struct {
+type column struct {
 	header string
 	width  float64 // mm
-}{
-	{"No", 10},
-	{"Nama", 43},
-	{"Alamat", 55},
-	{"Jenis Prelist", 26},
-	{"Keberadaan Usaha", 28},
-	{"Keberadaan Keluarga", 45},
-	{"Status", 40},
+}
+
+// Landscape A4 is 297mm wide; minus pageMargin on both sides that leaves
+// 277mm for the table, which both column sets below stay just under.
+var (
+	// subslsColumns is used when the report covers exactly one SubSLS: the
+	// ID SUBSLS is identical on every row there, so the header states it
+	// once (see report.Region.WilayahRows) and the table spends the space
+	// on Nama/Alamat instead. Total: 247mm.
+	subslsColumns = []column{
+		{"No", 10},
+		{"Nama", 43},
+		{"Alamat", 55},
+		{"Jenis Prelist", 26},
+		{"Keberadaan Usaha", 28},
+		{"Keberadaan Keluarga", 45},
+		{"Status", 40},
+	}
+
+	// wideColumns is used for anything broader than one SubSLS (a whole
+	// desa/kelurahan, or an SLS): level_6_full_code then differs from row
+	// to row, so it has to be a column of its own or the report couldn't
+	// tell you which SubSLS a given row belongs to. Total: 275mm.
+	wideColumns = []column{
+		{"No", 10},
+		{"Nama", 42},
+		{"Alamat", 52},
+		{"ID SUBSLS", 30},
+		{"Jenis Prelist", 26},
+		{"Keberadaan Usaha", 28},
+		{"Keberadaan Keluarga", 45},
+		{"Status", 42},
+	}
+)
+
+// columnsFor picks the column set matching the report's scope, and rowFor
+// must stay in step with it — both switch on the same condition.
+func columnsFor(region Region) []column {
+	if region.PinnedToSubSLS() {
+		return subslsColumns
+	}
+	return wideColumns
+}
+
+func rowFor(region Region, no int, p points.Point) []string {
+	if region.PinnedToSubSLS() {
+		return []string{
+			strconv.Itoa(no),
+			report.DashIfEmpty(p.Nama),
+			report.DashIfEmpty(p.Alamat),
+			report.DashIfEmpty(p.JenisPrelist),
+			strconv.Itoa(int(p.KeberadaanUsaha)),
+			report.DashIfEmpty(p.KeberadaanKeluarga),
+			report.DashIfEmpty(p.Status),
+		}
+	}
+	return []string{
+		strconv.Itoa(no),
+		report.DashIfEmpty(p.Nama),
+		report.DashIfEmpty(p.Alamat),
+		report.DashIfEmpty(p.SubSLS),
+		report.DashIfEmpty(p.JenisPrelist),
+		strconv.Itoa(int(p.KeberadaanUsaha)),
+		report.DashIfEmpty(p.KeberadaanKeluarga),
+		report.DashIfEmpty(p.Status),
+	}
 }
 
 const (
@@ -53,9 +111,11 @@ func Generate(w io.Writer, region Region, items []points.Point, truncated bool) 
 	pdf.SetAutoPageBreak(false, pageMargin)
 	tr := pdf.UnicodeTranslatorFromDescriptor("cp1252")
 
+	cols := columnsFor(region)
+
 	pdf.AddPage()
 	writeHeader(pdf, tr, region, len(items), truncated)
-	drawTableHeader(pdf, tr)
+	drawTableHeader(pdf, tr, cols)
 
 	// GetPageSize returns (width, height) — for landscape A4 that's
 	// (297, 210). The page-break boundary is a vertical (Y) limit, so it
@@ -65,25 +125,17 @@ func Generate(w io.Writer, region Region, items []points.Point, truncated bool) 
 
 	fill := false
 	for i, p := range items {
-		row := []string{
-			strconv.Itoa(i + 1),
-			report.DashIfEmpty(p.Nama),
-			report.DashIfEmpty(p.Alamat),
-			report.DashIfEmpty(p.JenisPrelist),
-			strconv.Itoa(int(p.KeberadaanUsaha)),
-			report.DashIfEmpty(p.KeberadaanKeluarga),
-			report.DashIfEmpty(p.Status),
-		}
+		row := rowFor(region, i+1, p)
 		for i := range row {
 			row[i] = tr(row[i])
 		}
 
-		wr := wrapRow(pdf, row)
+		wr := wrapRow(pdf, row, cols)
 		if pdf.GetY()+wr.height+rowSafetyMargin > bottom {
 			pdf.AddPage()
-			drawTableHeader(pdf, tr)
+			drawTableHeader(pdf, tr, cols)
 		}
-		drawWrappedRow(pdf, wr, fill)
+		drawWrappedRow(pdf, wr, cols, fill)
 		fill = !fill
 	}
 
@@ -115,16 +167,7 @@ func writeHeader(pdf *fpdf.Fpdf, tr func(string) string, region Region, total in
 	pdf.CellFormat(0, 6, tr("Keterangan Wilayah"), "", 1, "L", false, 0, "")
 
 	pdf.SetFont("Arial", "", 10)
-	rows := [][2]string{
-		{"Kabupaten/Kota", fmt.Sprintf("%s (%s)", region.KabKotaName, region.KabKotaCode)},
-		{"Kecamatan", region.Kecamatan},
-		{"Desa/Kelurahan", region.Desa},
-		{"SLS", region.SLS},
-		{"SubSLS", region.SubSLS},
-		{"Kode Wilayah (ID SUBSLS)", region.FullCode()},
-		{"Jumlah Data", strconv.Itoa(total)},
-	}
-	for _, kv := range rows {
+	for _, kv := range region.WilayahRows(total) {
 		pdf.CellFormat(50, 5.5, tr(kv[0]), "", 0, "L", false, 0, "")
 		pdf.CellFormat(0, 5.5, tr(": "+kv[1]), "", 1, "L", false, 0, "")
 	}
@@ -150,12 +193,12 @@ func writeHeader(pdf *fpdf.Fpdf, tr func(string) string, region Region, total in
 	pdf.Ln(3)
 }
 
-func drawTableHeader(pdf *fpdf.Fpdf, tr func(string) string) {
+func drawTableHeader(pdf *fpdf.Fpdf, tr func(string) string, cols []column) {
 	pdf.SetFont("Arial", "B", 8)
 	pdf.SetFillColor(230, 230, 230)
 	startX, y := pdf.GetXY()
 	x := startX
-	for _, c := range columns {
+	for _, c := range cols {
 		pdf.SetXY(x, y)
 		pdf.CellFormat(c.width, 7, tr(c.header), "1", 0, "C", true, 0, "")
 		x += c.width
@@ -177,11 +220,11 @@ type wrappedRow struct {
 // there is deliberately only one source of truth for how a row wraps, so
 // the height used to decide page breaks can never disagree with what
 // actually gets drawn.
-func wrapRow(pdf *fpdf.Fpdf, row []string) wrappedRow {
+func wrapRow(pdf *fpdf.Fpdf, row []string, cols []column) wrappedRow {
 	wr := wrappedRow{lines: make([][][]byte, len(row))}
 	maxLines := 1
 	for i, text := range row {
-		lines := pdf.SplitLines([]byte(text), columns[i].width-2*cellPadding)
+		lines := pdf.SplitLines([]byte(text), cols[i].width-2*cellPadding)
 		if len(lines) == 0 {
 			lines = [][]byte{[]byte("")}
 		}
@@ -194,19 +237,19 @@ func wrapRow(pdf *fpdf.Fpdf, row []string) wrappedRow {
 	return wr
 }
 
-func drawWrappedRow(pdf *fpdf.Fpdf, wr wrappedRow, fill bool) {
+func drawWrappedRow(pdf *fpdf.Fpdf, wr wrappedRow, cols []column, fill bool) {
 	startX, y := pdf.GetXY()
 	if fill {
 		pdf.SetFillColor(247, 247, 247)
 	}
 	x := startX
 	for i, lines := range wr.lines {
-		pdf.Rect(x, y, columns[i].width, wr.height, fillMode(fill))
+		pdf.Rect(x, y, cols[i].width, wr.height, fillMode(fill))
 		for li, line := range lines {
 			pdf.SetXY(x+cellPadding, y+cellPadding+float64(li)*lineHeight)
-			pdf.CellFormat(columns[i].width-2*cellPadding, lineHeight, string(line), "", 0, "L", false, 0, "")
+			pdf.CellFormat(cols[i].width-2*cellPadding, lineHeight, string(line), "", 0, "L", false, 0, "")
 		}
-		x += columns[i].width
+		x += cols[i].width
 	}
 	pdf.SetXY(startX, y+wr.height)
 }

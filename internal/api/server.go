@@ -470,21 +470,22 @@ type reportData struct {
 }
 
 // prepareReport validates and parses the wilayah/attribute/sort filter
-// from q, requires it to be pinned all the way down to one SubSLS
-// (mirroring the download buttons' disabled state on the frontend, since
-// a report scoped any wider isn't what either button is for and could
-// otherwise return an unbounded number of rows), and fetches every
-// matching row (capped at points.ReportMaxRows). ok is false when it has
-// already written an error response and the caller should return
-// immediately.
+// from q, requires it to be pinned at least down to one desa/kelurahan
+// (mirroring the download buttons' disabled state on the frontend: a
+// report scoped any wider isn't what either button is for, and a whole
+// kecamatan would run to hundreds of thousands of rows), and fetches every
+// matching row (capped at points.ReportMaxRows). SLS and SubSLS stay
+// optional — narrowing further just makes the report smaller. ok is false
+// when it has already written an error response and the caller should
+// return immediately.
 func (s *Server) prepareReport(w http.ResponseWriter, r *http.Request, q url.Values, downloadKind string) (data reportData, ok bool) {
 	filter, err := parseFilter(q)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return reportData{}, false
 	}
-	if filter.KabKota == "" || filter.Kecamatan == "" || filter.Desa == "" || filter.SLS == "" || filter.SubSLS == "" {
-		writeError(w, http.StatusBadRequest, downloadKind+" download requires filtering all the way down to Kode SubSLS")
+	if filter.KabKota == "" || filter.Kecamatan == "" || filter.Desa == "" {
+		writeError(w, http.StatusBadRequest, downloadKind+" download requires filtering at least down to Desa/Kelurahan")
 		return reportData{}, false
 	}
 

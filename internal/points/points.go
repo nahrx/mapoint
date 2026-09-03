@@ -952,18 +952,21 @@ func (s *Service) List(ctx context.Context, filter Filter, page, pageSize int, s
 	return ListPage{Total: total, Page: page, PageSize: pageSize, Items: items}, nil
 }
 
-// ReportMaxRows caps how many rows ListAll will ever return. A PDF report
-// is meant for one fully-drilled-down SubSLS, which in practice runs from
-// a few dozen to a few thousand rows — this is a safety net against a
-// pathological case, not a limit anyone should normally hit.
-const ReportMaxRows = 5000
+// ReportMaxRows caps how many rows ListAll will ever return. Reports are
+// scoped to a desa/kelurahan or narrower (see prepareReport in
+// internal/api); measured against live data, a desa runs ~700 rows at the
+// median, ~18k at the 99th percentile and ~27k at the largest, so this
+// clears every real desa with headroom while still bounding the damage if
+// a much larger wilayah ever reaches ListAll. A report that does hit the
+// cap says so in its header rather than truncating silently — see the
+// truncated flag threaded through to pdfreport/xlsxreport.
+const ReportMaxRows = 40000
 
 // ListAll returns every row matching filter (up to ReportMaxRows), sorted
-// by sortColumn, with no pagination. Intended for the PDF report, which
-// needs the whole SubSLS in one document rather than one page's worth —
-// call sites should ensure filter is pinned all the way down to a single
-// SubSLS first, since that's the only scope small enough to make sense as
-// a report.
+// by sortColumn, with no pagination. Intended for the PDF/Excel reports,
+// which need the whole wilayah in one document rather than one page's
+// worth — call sites should ensure filter is pinned at least down to a
+// desa/kelurahan first, since anything wider is too big to be a report.
 func (s *Service) ListAll(ctx context.Context, filter Filter, sortColumn string, dir SortDir) ([]Point, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()

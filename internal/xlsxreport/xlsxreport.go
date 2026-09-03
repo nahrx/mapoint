@@ -1,10 +1,11 @@
 // Package xlsxreport renders the "Daftar Hasil Pendataan" Excel workbook
 // for the Daftar menu's download button — same data and scope as
 // pdfreport (see report.Region), just as an .xlsx sheet instead of a
-// printable PDF. Unlike the PDF, Assignment ID and ID SUBSLS are included
-// as their own columns here: a spreadsheet is meant for further sorting,
-// filtering and lookup, not just reading on paper, so the extra columns
-// pull their weight here in a way they wouldn't on a printed page.
+// printable PDF. Assignment ID is included as its own column here but not
+// in the PDF: a spreadsheet is meant for further sorting, filtering and
+// lookup, not just reading on paper, so it pulls its weight here in a way
+// it wouldn't on a printed page. ID SUBSLS is always a column here too,
+// where the PDF only adds one for reports spanning more than one SubSLS.
 package xlsxreport
 
 import (
@@ -162,13 +163,9 @@ func writeInfoBlock(f *excelize.File, sheet string, st styles, region report.Reg
 
 	set(fmt.Sprintf("A%d", row), st.section, "Keterangan Wilayah")
 	row++
-	kv("Kabupaten/Kota", fmt.Sprintf("%s (%s)", region.KabKotaName, region.KabKotaCode))
-	kv("Kecamatan", region.Kecamatan)
-	kv("Desa/Kelurahan", region.Desa)
-	kv("SLS", region.SLS)
-	kv("SubSLS", region.SubSLS)
-	kv("Kode Wilayah (ID SUBSLS)", region.FullCode())
-	kv("Jumlah Data", fmt.Sprintf("%d", total))
+	for _, e := range region.WilayahRows(total) {
+		kv(e[0], e[1])
+	}
 
 	if extra := region.ExtraFilters(); len(extra) > 0 {
 		row++

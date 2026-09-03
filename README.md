@@ -185,29 +185,48 @@ isi tabel `se2026_titik` sebagai daftar biasa — bukan tampilan peta:
   ini menampilkan semua baris yang cocok filter, termasuk yang
   `latitude_ppl`/`longitude_ppl`-nya `0` atau kosong, karena tujuannya
   menelusuri data, bukan memetakannya.
-- **Unduh PDF & Unduh Excel** — dua tombol di sebelah filter, aktif hanya
-  kalau filter wilayah sudah lengkap sampai Kode SubSLS (di titik itu
-  `level_6_full_code` sudah pas 16 digit / satu wilayah spesifik, cocok
-  jadi satu laporan) — filter atribut dan cari nama boleh diisi atau tidak,
-  tidak mempengaruhi aktif/tidaknya tombol, tapi tetap ikut mempersempit
-  isi laporan kalau diisi, dan urutan barisnya ikut sort kolom yang sedang
-  aktif di tabel. Keduanya laporan yang sama persis secara isi ("Daftar
-  Hasil Pendataan": keterangan wilayah — nama kab/kota + kode tiap level +
-  kode wilayah 16 digit —, bagian "Filter Tambahan" kalau ada filter
-  atribut atau cari nama yang aktif, lalu semua baris yang cocok, bukan
-  cuma satu halaman tabel — lihat `ListAll` di `internal/points/points.go`,
-  dibatasi `ReportMaxRows=5000` sebagai jaring pengaman), cuma beda format:
+- **Unduh PDF & Unduh Excel** — dua tombol di sebelah filter, aktif begitu
+  filter wilayah sudah **minimal sampai Desa/Kelurahan**. Boleh dipersempit
+  lagi ke Kode SLS atau Kode SubSLS — itu cuma bikin laporannya lebih
+  kecil, bukan syarat. Yang tidak boleh cuma lebih luas dari desa: satu
+  kecamatan saja sudah ratusan ribu baris, bukan lagi sesuatu yang masuk
+  akal jadi satu laporan (aturan ini ditegakkan di server oleh
+  `prepareReport` di `internal/api/server.go`, bukan cuma oleh tombol yang
+  di-disable di frontend). Filter atribut dan cari nama boleh diisi atau
+  tidak, tidak mempengaruhi aktif/tidaknya tombol, tapi tetap ikut
+  mempersempit isi laporan kalau diisi, dan urutan barisnya ikut sort kolom
+  yang sedang aktif di tabel. Keduanya laporan yang sama persis secara isi
+  ("Daftar Hasil Pendataan": keterangan wilayah — nama kab/kota + kode tiap
+  level + kode wilayah gabungan; level yang tidak difilter ditulis
+  "(Semua)" —, bagian "Filter Tambahan" kalau ada filter atribut atau cari
+  nama yang aktif, lalu semua baris yang cocok, bukan cuma satu halaman
+  tabel — lihat `ListAll` di `internal/points/points.go`), cuma beda
+  format:
   - **PDF** — buat dicetak/dibaca. Kolom `assignment_id` sengaja tidak
-    disertakan (bukan info yang relevan untuk dicetak), begitu juga kolom
-    ID SUBSLS per baris — karena nilainya sama persis untuk semua baris
-    dalam satu SubSLS, itu cukup ditulis sekali di keterangan wilayah.
-    Digenerate pakai `github.com/go-pdf/fpdf` (pure Go, tanpa
-    Chrome/wkhtmltopdf) lewat `internal/pdfreport/`.
+    disertakan (bukan info yang relevan untuk dicetak). Kolom ID SUBSLS per
+    baris **muncul atau tidak tergantung cakupan**: kalau laporannya tepat
+    satu SubSLS, nilainya sama untuk semua baris jadi cukup ditulis sekali
+    di keterangan wilayah; kalau cakupannya lebih luas (satu desa atau satu
+    SLS), nilainya beda-beda antar baris jadi harus jadi kolom sendiri —
+    lihat `columnsFor`/`rowFor` di `internal/pdfreport/`. Digenerate pakai
+    `github.com/go-pdf/fpdf` (pure Go, tanpa Chrome/wkhtmltopdf).
   - **Excel (.xlsx)** — buat diolah lebih lanjut (disortir, difilter,
     dicocokkan dengan data lain), jadi kolom `assignment_id` dan ID SUBSLS
-    per baris justru disertakan di sini, plus header tabelnya di-freeze
-    dan dikasih AutoFilter bawaan Excel. Digenerate pakai
-    `github.com/xuri/excelize/v2` lewat `internal/xlsxreport/`.
+    per baris selalu disertakan di sini (tidak kondisional seperti di PDF),
+    plus header tabelnya di-freeze dan dikasih AutoFilter bawaan Excel.
+    Digenerate pakai `github.com/xuri/excelize/v2` lewat
+    `internal/xlsxreport/`.
+
+  **Batas jumlah baris** — `ReportMaxRows` di `internal/points/points.go`
+  (sekarang 40.000). Diukur dari data live, satu desa/kelurahan berisi
+  ±700 baris di median, ±18.000 di persentil 99, dan 27.146 di yang
+  terbesar — jadi angka itu memuat semua desa yang ada dengan sisa ruang,
+  sambil tetap membatasi kerusakan kalau suatu saat wilayah yang jauh lebih
+  besar lolos ke `ListAll`. Laporan yang benar-benar kena batas ini
+  menuliskannya di header ("Catatan: daftar ini dibatasi hingga N baris
+  pertama"), bukan memotong diam-diam. Sebagai gambaran beban: desa
+  terbesar (27.146 baris) menghasilkan PDF ±5,4 MB dan Excel ±2,2 MB,
+  masing-masing ±2 detik.
 
   Kedua paket format ini berbagi metadata wilayah/filter yang sama lewat
   `report.Region` di `internal/report/` (satu sumber kebenaran soal apa
@@ -223,6 +242,52 @@ lebih besar dan halaman-halaman terakhir (offset sangat dalam) terasa
 lambat, itu batasan `LIMIT/OFFSET` yang umum di database kolom manapun;
 solusinya persempit dulu pakai filter wilayah sebelum menjelajahi halaman
 jauh.
+
+### Tampilan & responsif
+
+Warna, jarak, radius, dan bayangan didefinisikan sekali sebagai CSS custom
+property di blok `:root` paling atas `web/static/style.css` (`--navy`,
+`--orange`, `--border`, `--radius`, dst.), jadi ganti warna brand cukup di
+satu tempat. Kontrol form di-style secara struktural
+(`.filter-row select`, `.filter-row input`) — bukan dengan mendaftar satu
+per satu id-nya — supaya filter baru otomatis ikut gayanya tanpa menambah
+CSS. Panah dropdown digambar sendiri (SVG inline) supaya bentuknya sama di
+semua OS/browser, dan semua kontrol punya focus ring yang konsisten untuk
+navigasi keyboard.
+
+Layout-nya dirancang desktop-first lalu diciutkan lewat dua breakpoint di
+bagian "Responsive" paling bawah file yang sama:
+
+- **≤900px (tablet)** — padding diperkecil; grid filter di menu Daftar
+  (`repeat(auto-fit, minmax(...))`, bukan flex-wrap) otomatis turun jumlah
+  kolomnya, jadi filter selalu rata tidak bergerigi di lebar berapa pun.
+- **≤600px (HP)** — filter jadi satu kolom, tinggi kontrol minimal 40px
+  supaya nyaman disentuh, dan ukuran font input 16px (di bawah itu iOS
+  otomatis nge-zoom halaman saat input difokuskan). Tombol jadi selebar
+  layar, dan tabel memakai lebar penuh (padding samping container
+  di-cancel) karena itu elemen terlebar di halaman.
+
+Dua penyesuaian khusus HP yang diatur dari JS, bukan CSS:
+
+- **Panel filter di Peta** mulai dalam keadaan tertutup (`app.js`,
+  `setPanelCollapsed`) — kalau terbuka, panel selebar layar itu menutupi
+  sebagian besar peta. Tombol buka/tutupnya tetap terlihat di header panel.
+- **Kartu filter di Daftar** juga mulai tertutup dan punya tombol "Filter"
+  sendiri di sebelah judul (`daftar.js`, `setFiltersCollapsed`; tombolnya
+  `display: none` di atas 600px). Sembilan kontrol filter yang ditumpuk
+  setinggi ±satu layar penuh akan mendorong tabelnya keluar layar kalau
+  dibiarkan terbuka. Menekan "Terapkan Filter" di HP otomatis menutup
+  kartunya lagi, supaya yang tampil langsung hasil filternya. Di lebar ini
+  `#daftar-container` juga di-scroll seperti halaman biasa (di desktop dia
+  flex column ber-`overflow: hidden` dengan hanya tabelnya yang scroll
+  sendiri) — kalau tidak, isi yang lebih tinggi dari layar jadi tidak bisa
+  dijangkau sama sekali, bukan cuma terpotong.
+
+Kontrol bawaan Leaflet juga ditata ulang supaya tidak bertabrakan dengan
+panel filter yang menempel di kiri atas: tombol zoom dipindah ke kanan
+bawah (default Leaflet kiri atas — persis di bawah panel, jadi selamanya
+tertutup), dan pemilih basemap tampil terbuka di desktop tapi menciut jadi
+satu ikon di HP.
 
 ## Menjalankan
 
@@ -313,7 +378,7 @@ Lalu buka `http://localhost:8082` di browser (dari `HTTP_ADDR=:8082` di `.env`; 
 - `GET /api/subsls?kabkota=&kecamatan=&desa=&sls=` — daftar Kode SubSLS di dalam satu SLS (keempat parameter wajib)
 - `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — GeoJSON batas SubSLS untuk overlay di peta (kelima parameter wajib); 503 kalau PostGIS tidak dikonfigurasi/tidak terhubung — lihat `internal/mapdb/`
 - `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `keberadaan_usaha`, `keberadaan_keluarga`, `status`, `assignment_id` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`) semuanya opsional dan independen dari filter wilayah maupun satu sama lain — nilainya divalidasi terhadap enum tetap di `internal/points/points.go`, pakai `__EMPTY__` untuk memfilter kolom yang kosong
-- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan" untuk satu SubSLS (kelima parameter wilayah wajib); filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
+- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
 - `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&sortBy=&dir=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf` (lihat `prepareReport` di `internal/api/server.go`, dipakai bareng oleh kedua handler)
 - `GET /api/filter-options` — daftar nilai enum untuk dropdown filter Jenis Prelist, Keberadaan Keluarga, dan Status (statis, bukan query ke ClickHouse)
 - `GET /healthz` — health check (ping ClickHouse)

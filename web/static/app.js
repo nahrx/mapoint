@@ -12,7 +12,21 @@
   const subslsSelect = document.getElementById("subsls-select");
   const applyFilterBtn = document.getElementById("apply-filter-btn");
 
-  const map = L.map("map", { preferCanvas: true, worldCopyJump: true }).setView([-2.5, 118], 5);
+  // Phone-sized screens get the compact (icon) basemap switcher and a
+  // panel that starts collapsed — see setPanelCollapsed below. Read once
+  // at startup because both are construction-time Leaflet options.
+  const isNarrow = window.matchMedia("(max-width: 600px)").matches;
+
+  // zoomControl is off here and re-added bottom-right below: Leaflet puts
+  // it top-left by default, which is exactly where #panel sits, so the
+  // default placement leaves it permanently buried under the panel.
+  const map = L.map("map", {
+    preferCanvas: true,
+    worldCopyJump: true,
+    zoomControl: false,
+  }).setView([-2.5, 118], 5);
+
+  L.control.zoom({ position: "bottomright" }).addTo(map);
 
   // The Peta view can be hidden (display:none) while the Daftar tab is
   // active; Leaflet doesn't notice its container resizing back to full
@@ -24,11 +38,23 @@
   // cover the map on small screens or when the user just wants to look
   // around — the map itself is a fixed absolute layer underneath, so this
   // doesn't need an invalidateSize() call.
-  panelToggleBtn.addEventListener("click", () => {
-    const collapsed = panelEl.classList.toggle("collapsed");
+  function setPanelCollapsed(collapsed) {
+    panelEl.classList.toggle("collapsed", collapsed);
     panelToggleBtn.setAttribute("aria-expanded", String(!collapsed));
     panelToggleBtn.title = collapsed ? "Tampilkan filter" : "Sembunyikan filter";
+  }
+
+  panelToggleBtn.addEventListener("click", () => {
+    setPanelCollapsed(!panelEl.classList.contains("collapsed"));
   });
+
+  // On a phone the expanded panel is a full-width sheet covering most of
+  // the map, so start collapsed there — the toggle sits right in the
+  // header bar that stays visible. Decided once at load rather than on
+  // resize, so it never yanks the panel shut while someone is using it.
+  if (isNarrow) {
+    setPanelCollapsed(true);
+  }
 
   const osmLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
@@ -59,7 +85,10 @@
       "Satelit (Esri)": L.layerGroup([satelliteLayer, satelliteLabels]),
     },
     null,
-    { collapsed: false, position: "bottomleft" }
+    // Expanded on desktop (both options visible at a glance); collapsed to
+    // a single icon on a phone, where the expanded box would cover a
+    // meaningful slice of an already-small map.
+    { collapsed: isNarrow, position: "bottomleft" }
   ).addTo(map);
 
   const canvasRenderer = L.canvas({ padding: 0.5 });
