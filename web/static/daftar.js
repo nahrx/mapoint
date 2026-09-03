@@ -84,7 +84,7 @@
         <td class="addr" title="${esc(p.alamat)}">${esc(p.alamat)}</td>
         <td>${esc(p.subsls)}</td>
         <td>${esc(p.jenis_prelist)}</td>
-        <td class="num">${esc(p.keberadaan_usaha)}</td>
+        <td class="num">${esc(p.nomor_bangunan)}</td>
         <td>${esc(p.keberadaan_keluarga)}</td>
         <td><span class="status-dot" style="background:${color}"></span>${esc(p.status)}</td>
         <td class="mono">${esc(p.assignment_id)}</td>

@@ -6,6 +6,8 @@
 // lookup, not just reading on paper, so it pulls its weight here in a way
 // it wouldn't on a printed page. ID SUBSLS is always a column here too,
 // where the PDF only adds one for reports spanning more than one SubSLS.
+// Catatan is a column in both formats. Keberadaan Usaha is temporarily
+// dropped from both — see points.Point's doc comment on that field.
 package xlsxreport
 
 import (
@@ -29,11 +31,12 @@ var columns = []struct {
 	{"Nama", 32},
 	{"Alamat", 40},
 	{"ID SUBSLS", 20},
+	{"Nomor Bangunan", 14},
 	{"Jenis Prelist", 18},
-	{"Keberadaan Usaha", 16},
 	{"Keberadaan Keluarga", 34},
 	{"Status", 34},
 	{"Assignment ID", 38},
+	{"Catatan", 40},
 }
 
 // Generate writes the report workbook to w. items should already be
@@ -213,11 +216,12 @@ func writeTable(f *excelize.File, sheet string, st styles, headerRow int, items 
 			report.DashIfEmpty(p.Nama),
 			report.DashIfEmpty(p.Alamat),
 			report.DashIfEmpty(p.SubSLS),
+			int(p.NomorBangunan),
 			report.DashIfEmpty(p.JenisPrelist),
-			int(p.KeberadaanUsaha),
 			report.DashIfEmpty(p.KeberadaanKeluarga),
 			report.DashIfEmpty(p.Status),
 			report.DashIfEmpty(p.AssignmentID),
+			report.DashIfEmpty(p.Catatan),
 		}
 		for ci, v := range values {
 			col, err := excelize.ColumnNumberToName(ci + 1)

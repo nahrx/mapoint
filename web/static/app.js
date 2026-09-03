@@ -209,7 +209,7 @@
         <div><b>Alamat:</b> ${esc(p.alamat)}</div>
         <div><b>ID SUBSLS:</b> ${esc(p.subsls)}</div>
         <div><b>Jenis Prelist:</b> ${esc(p.jenis_prelist)}</div>
-        <div><b>Keberadaan Usaha:</b> ${esc(p.keberadaan_usaha)}</div>
+        <div><b>Nomor Bangunan:</b> ${esc(p.nomor_bangunan)}</div>
         <div><b>Keberadaan Keluarga:</b> ${esc(p.keberadaan_keluarga)}</div>
         <div><b>Status:</b> ${esc(p.status)}</div>
       </div>`;

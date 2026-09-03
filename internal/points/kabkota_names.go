@@ -3,7 +3,7 @@ package points
 // kabkotaNames maps a 4-digit BPS/Kemendagri kabupaten/kota code (the
 // first 4 characters of level_6_full_code — 2-digit provinsi + 2-digit
 // kabupaten/kota) to its official name. Only entries actually present in
-// se2026_titik need to be here; a code with no entry still works as a
+// se2026_titik2 need to be here; a code with no entry still works as a
 // filter, it just falls back to showing the bare code instead of a name
 // (see kabkotaName below) — so this map is safe to extend incrementally
 // as fieldwork covers new regions, nothing breaks if it lags behind.

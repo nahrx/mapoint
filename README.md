@@ -1,7 +1,7 @@
 # Peta Titik SE2026
 
 Web map (Go + Leaflet/OpenStreetMap) yang menampilkan seluruh titik pada
-tabel ClickHouse `dtsen.se2026_titik` (jutaan baris) secara seamless, tanpa
+tabel ClickHouse `dtsen.se2026_titik2` (jutaan baris) secara seamless, tanpa
 mengirim seluruh dataset ke browser sekaligus.
 
 ## Cara kerja (ringkas)
@@ -140,10 +140,10 @@ kecamatan/desa. Lihat `internal/mapdb/`.
 ### Menu Daftar
 
 Selain menu "Peta", ada menu "Daftar" (nav di paling atas) yang menampilkan
-isi tabel `se2026_titik` sebagai daftar biasa — bukan tampilan peta:
+isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
 
 - **Sort by kolom apa saja** — klik header kolom mana pun (Nama, Alamat, ID
-  SUBSLS, Jenis Prelist, Keberadaan Usaha, Keberadaan Keluarga, Status,
+  SUBSLS, Jenis Prelist, Nomor Bangunan, Keberadaan Keluarga, Status,
   Assignment ID) untuk mengurutkan tabel berdasarkan kolom itu; klik lagi
   kolom yang sama untuk membalik arah (naik/turun), klik kolom lain untuk
   pindah kolom urut (default naik). Panah kecil di header cuma muncul di
@@ -377,7 +377,7 @@ Lalu buka `http://localhost:8082` di browser (dari `HTTP_ADDR=:8082` di `.env`; 
 - `GET /api/sls?kabkota=&kecamatan=&desa=` — daftar Kode SLS di dalam satu desa/kelurahan (ketiga parameter wajib)
 - `GET /api/subsls?kabkota=&kecamatan=&desa=&sls=` — daftar Kode SubSLS di dalam satu SLS (keempat parameter wajib)
 - `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — GeoJSON batas SubSLS untuk overlay di peta (kelima parameter wajib); 503 kalau PostGIS tidak dikonfigurasi/tidak terhubung — lihat `internal/mapdb/`
-- `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `keberadaan_usaha`, `keberadaan_keluarga`, `status`, `assignment_id` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`) semuanya opsional dan independen dari filter wilayah maupun satu sama lain — nilainya divalidasi terhadap enum tetap di `internal/points/points.go`, pakai `__EMPTY__` untuk memfilter kolom yang kosong
+- `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `status`, `assignment_id` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`) semuanya opsional dan independen dari filter wilayah maupun satu sama lain — nilainya divalidasi terhadap enum tetap di `internal/points/points.go`, pakai `__EMPTY__` untuk memfilter kolom yang kosong
 - `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
 - `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&sortBy=&dir=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf` (lihat `prepareReport` di `internal/api/server.go`, dipakai bareng oleh kedua handler)
 - `GET /api/filter-options` — daftar nilai enum untuk dropdown filter Jenis Prelist, Keberadaan Keluarga, dan Status (statis, bukan query ke ClickHouse)
@@ -390,6 +390,50 @@ luar wilayah Indonesia (mis. longitude negatif). Baris ini tetap ditampilkan
 apa adanya (tidak difilter) selama koordinatnya bukan `0`/`0` atau
 non-finite — kalau perlu dibersihkan, itu sebaiknya dilakukan di sisi data
 sumber, bukan disembunyikan oleh peta ini.
+
+### Kolom `jumlah_usaha` (dulu `keberadaan_usaha`) — sementara disembunyikan
+
+Tabel `se2026_titik2` menamai kolom ini `jumlah_usaha`, sementara tabel lama
+menamainya `keberadaan_usaha`. Isinya sama: **cacahan** usaha di titik itu,
+bukan penanda ada/tidak (0/1) — di tabel lama pun nilainya sudah 0–8, jadi
+yang berubah cuma namanya, bukan artinya. Di kode, `Point.KeberadaanUsaha`
+di-scan dari kolom baru itu dan nama JSON-nya (`keberadaan_usaha`) sengaja
+dipertahankan.
+
+Ada ±1.847 baris yang nilainya jauh di luar rentang wajar (maksimum
+tercatat 97.351.353) — kelihatannya salah entri/parsing di sumber data.
+Karena itu field Go-nya `int32`, bukan `uint8` seperti dulu: `uint8` gagal
+men-scan baris-baris tersebut dan akan membuat query-nya error, bukan cuma
+menampilkan angka aneh. Sama seperti catatan koordinat di atas, nilainya
+ditampilkan apa adanya — pembersihannya sebaiknya di sisi data sumber.
+
+Kolom ini **untuk sementara disembunyikan dari semua tampilan** — tooltip
+peta, tabel Daftar, PDF, dan Excel — meski masih diambil dari ClickHouse
+seperti biasa (`SELECT`-nya tidak berubah, `Point.KeberadaanUsaha` masih
+terisi, cuma tidak dirender di mana pun). Menampilkannya lagi tinggal
+menambahkan baris tooltip/kolom tabel yang sudah dihapus; lihat riwayat git
+`tooltipHTML` di `web/static/app.js`, `rowHTML` di `web/static/daftar.js`,
+header tabel di `web/static/index.html`, dan `subslsColumns`/`wideColumns`/
+`rowFor` di `internal/pdfreport/pdfreport.go` serta `columns`/`writeTable`
+di `internal/xlsxreport/xlsxreport.go`.
+
+### Kolom `nomor_bangunan` dan `catatan`
+
+**`nomor_bangunan`** menempati posisi yang dulu dipakai `keberadaan_usaha`
+di tooltip peta, tabel Daftar, PDF, dan Excel — sortable di Daftar lewat
+`sortBy=nomor_bangunan`. Nilainya `int32` (ada beberapa baris bernilai `-1`
+dan beberapa lagi persis `2147483647`, kemungkinan sentinel/nilai kosong
+dari sumber data — ditampilkan apa adanya, sama seperti `jumlah_usaha`).
+
+**`catatan`** (teks bebas catatan lapangan, sampai ±1.450 karakter) cuma
+muncul di **unduhan PDF dan Excel**, bukan di tooltip peta atau tabel
+Daftar — kolom ini bisa berisi catatan internal yang tidak dimaksudkan
+untuk ditelusuri di layar. Konsekuensinya di kode: `Point.Catatan` cuma
+diisi oleh `ListAll` (jalur PDF/Excel), bukan oleh query yang melayani
+`/api/points` atau `/api/list` — keduanya sama sekali tidak men-`SELECT`
+kolom ini, jadi field itu selalu kosong (dan `omitempty` menyembunyikannya
+dari body JSON) di kedua endpoint tersebut. Lihat `listItems` dan parameter
+`includeCatatan`-nya di `internal/points/points.go`.
 
 ## Struktur project
 

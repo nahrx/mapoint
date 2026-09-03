@@ -1,5 +1,5 @@
 // Command se2026-titik-maps serves a web map of every titik in the
-// dtsen.se2026_titik ClickHouse table, streaming only what the current
+// dtsen.se2026_titik2 ClickHouse table, streaming only what the current
 // viewport needs so millions of rows load seamlessly.
 package main
 

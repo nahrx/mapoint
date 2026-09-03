@@ -1,5 +1,5 @@
 // Package points implements viewport-aware queries against the
-// se2026_titik ClickHouse table: individual points when the visible area
+// se2026_titik2 ClickHouse table: individual points when the visible area
 // is sparse enough, grid clusters otherwise. This is what lets a
 // multi-million-row table be shown "seamlessly" without ever shipping more
 // than a few thousand markers to the browser at once.
@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	table = "se2026_titik"
+	table = "se2026_titik2"
 
 	// IndividualLimit is the max rows returned as raw points for one
 	// request. Below this the viewport is "sparse" and every point is
@@ -346,16 +346,35 @@ func clamp(v, lo, hi float64) float64 {
 
 // Point is a single map marker with the fields needed for the hover tooltip.
 type Point struct {
-	Lat                float64 `json:"lat"`
-	Lon                float64 `json:"lon"`
-	AssignmentID       string  `json:"assignment_id"`
-	Nama               string  `json:"nama"`
-	Alamat             string  `json:"alamat"`
-	SubSLS             string  `json:"subsls"`
-	JenisPrelist       string  `json:"jenis_prelist"`
-	KeberadaanUsaha    uint8   `json:"keberadaan_usaha"`
-	KeberadaanKeluarga string  `json:"keberadaan_keluarga"`
-	Status             string  `json:"status"`
+	Lat          float64 `json:"lat"`
+	Lon          float64 `json:"lon"`
+	AssignmentID string  `json:"assignment_id"`
+	Nama         string  `json:"nama"`
+	Alamat       string  `json:"alamat"`
+	SubSLS       string  `json:"subsls"`
+	JenisPrelist string  `json:"jenis_prelist"`
+	// KeberadaanUsaha is scanned from the table's jumlah_usaha column
+	// (renamed there from keberadaan_usaha; it always held a count of usaha
+	// at the point, not a 0/1 presence flag). int32 to match that column's
+	// type — a uint8 would fail to scan the ~1.8k rows whose value exceeds
+	// 255. Still fetched on every query (unused fields cost nothing extra
+	// here) even though it's temporarily hidden from every display —
+	// tooltip, Daftar table, PDF and Excel all skip rendering it for now;
+	// see NomorBangunan below for what replaced it in those views.
+	KeberadaanUsaha int32 `json:"keberadaan_usaha"`
+	// NomorBangunan is shown wherever KeberadaanUsaha used to be: tooltip,
+	// Daftar table, PDF and Excel. int32 to match the column (its one
+	// sentinel/overflow-looking value is math.MaxInt32, which still scans
+	// fine at this width).
+	NomorBangunan      int32  `json:"nomor_bangunan"`
+	KeberadaanKeluarga string `json:"keberadaan_keluarga"`
+	Status             string `json:"status"`
+	// Catatan is free-text field notes — only populated by ListAll (the
+	// PDF/Excel report path, via listItems' includeCatatan). Left "" for
+	// /api/points and /api/list, which don't select this column at all:
+	// it can run to over a thousand characters and isn't meant for
+	// on-screen browsing, only for the downloaded report.
+	Catatan string `json:"catatan,omitempty"`
 }
 
 // Cluster is an aggregated grid cell representing many points.
@@ -457,7 +476,7 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 	where, args := filter.clause()
 	q := fmt.Sprintf(`SELECT
 		assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root,
-		keberadaan_usaha, keberadaan_keluarga, assignment_status_alias,
+		jumlah_usaha, nomor_bangunan, keberadaan_keluarga, assignment_status_alias,
 		latitude_ppl, longitude_ppl
 	FROM %s
 	WHERE %s AND %s AND %s
@@ -474,7 +493,7 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 		var p Point
 		if err := rows.Scan(
 			&p.AssignmentID, &p.Nama, &p.Alamat, &p.SubSLS, &p.JenisPrelist,
-			&p.KeberadaanUsaha, &p.KeberadaanKeluarga, &p.Status,
+			&p.KeberadaanUsaha, &p.NomorBangunan, &p.KeberadaanKeluarga, &p.Status,
 			&p.Lat, &p.Lon,
 		); err != nil {
 			return nil, err
@@ -891,7 +910,8 @@ var listSortColumns = map[string]string{
 	"alamat":              "alamat",
 	"subsls":              "level_6_full_code",
 	"jenis_prelist":       "jenis_prelist_root",
-	"keberadaan_usaha":    "keberadaan_usaha",
+	"keberadaan_usaha":    "jumlah_usaha",
+	"nomor_bangunan":      "nomor_bangunan",
 	"keberadaan_keluarga": "keberadaan_keluarga",
 	"status":              "assignment_status_alias",
 	"assignment_id":       "assignment_id",
@@ -944,7 +964,7 @@ func (s *Service) List(ctx context.Context, filter Filter, page, pageSize int, s
 		return ListPage{}, fmt.Errorf("points: list count: %w", err)
 	}
 
-	items, err := s.listItems(ctx, filter, page, pageSize, sortColumn, dir)
+	items, err := s.listItems(ctx, filter, page, pageSize, sortColumn, dir, false)
 	if err != nil {
 		return ListPage{}, fmt.Errorf("points: list items: %w", err)
 	}
@@ -970,7 +990,7 @@ const ReportMaxRows = 40000
 func (s *Service) ListAll(ctx context.Context, filter Filter, sortColumn string, dir SortDir) ([]Point, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
-	return s.listItems(ctx, filter, 1, ReportMaxRows, sortColumn, dir)
+	return s.listItems(ctx, filter, 1, ReportMaxRows, sortColumn, dir, true)
 }
 
 func (s *Service) listCount(ctx context.Context, filter Filter) (uint64, error) {
@@ -984,21 +1004,28 @@ func (s *Service) listCount(ctx context.Context, filter Filter) (uint64, error) 
 	return n, nil
 }
 
-func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize int, sortColumn string, dir SortDir) ([]Point, error) {
+// listItems fetches one page of rows. includeCatatan adds the catatan
+// column to both the SELECT and the scan target — only ListAll (the
+// report path) passes true; List (the Daftar table) leaves Point.Catatan
+// unset, since that column isn't meant for on-screen browsing (see the
+// field's doc comment on Point).
+func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize int, sortColumn string, dir SortDir, includeCatatan bool) ([]Point, error) {
 	offset := (page - 1) * pageSize
 	sortCol, ok := listSortColumns[sortColumn]
 	if !ok {
 		sortCol = listSortColumns[DefaultSortColumn]
 	}
+	cols := "assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root, jumlah_usaha, nomor_bangunan, keberadaan_keluarga, assignment_status_alias, latitude_ppl, longitude_ppl"
+	if includeCatatan {
+		cols += ", catatan"
+	}
 	where, args := filter.clause()
 	q := fmt.Sprintf(`SELECT
-		assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root,
-		keberadaan_usaha, keberadaan_keluarga, assignment_status_alias,
-		latitude_ppl, longitude_ppl
+		%s
 	FROM %s
 	WHERE %s
 	ORDER BY %s %s
-	LIMIT %d OFFSET %d`, table, where, sortCol, dir.sql(), pageSize, offset)
+	LIMIT %d OFFSET %d`, cols, table, where, sortCol, dir.sql(), pageSize, offset)
 
 	rows, err := s.conn.Query(ctx, q, args...)
 	if err != nil {
@@ -1009,11 +1036,15 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 	items := make([]Point, 0, pageSize)
 	for rows.Next() {
 		var p Point
-		if err := rows.Scan(
+		dest := []any{
 			&p.AssignmentID, &p.Nama, &p.Alamat, &p.SubSLS, &p.JenisPrelist,
-			&p.KeberadaanUsaha, &p.KeberadaanKeluarga, &p.Status,
+			&p.KeberadaanUsaha, &p.NomorBangunan, &p.KeberadaanKeluarga, &p.Status,
 			&p.Lat, &p.Lon,
-		); err != nil {
+		}
+		if includeCatatan {
+			dest = append(dest, &p.Catatan)
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
 		items = append(items, p)

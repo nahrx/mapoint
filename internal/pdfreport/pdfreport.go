@@ -2,7 +2,10 @@
 // Daftar menu's download button: every row in the filtered wilayah
 // (desa/kelurahan level or narrower), laid out as a wrapped table
 // (assignment_id deliberately excluded — it's an internal id, not
-// something field staff need on a printed list).
+// something field staff need on a printed list). Keberadaan Usaha is
+// temporarily dropped from the table too — see points.Point's doc
+// comment on that field — with Nomor Bangunan and Catatan taking its
+// place; see columnsFor/rowFor.
 package pdfreport
 
 import (
@@ -33,30 +36,32 @@ var (
 	// subslsColumns is used when the report covers exactly one SubSLS: the
 	// ID SUBSLS is identical on every row there, so the header states it
 	// once (see report.Region.WilayahRows) and the table spends the space
-	// on Nama/Alamat instead. Total: 247mm.
+	// on Nama/Alamat/Catatan instead. Total: 255mm.
 	subslsColumns = []column{
-		{"No", 10},
-		{"Nama", 43},
-		{"Alamat", 55},
-		{"Jenis Prelist", 26},
-		{"Keberadaan Usaha", 28},
-		{"Keberadaan Keluarga", 45},
-		{"Status", 40},
+		{"No", 8},
+		{"Nama", 38},
+		{"Alamat", 42},
+		{"Nomor Bangunan", 18},
+		{"Jenis Prelist", 20},
+		{"Keberadaan Keluarga", 36},
+		{"Status", 33},
+		{"Catatan", 60},
 	}
 
 	// wideColumns is used for anything broader than one SubSLS (a whole
 	// desa/kelurahan, or an SLS): level_6_full_code then differs from row
 	// to row, so it has to be a column of its own or the report couldn't
-	// tell you which SubSLS a given row belongs to. Total: 275mm.
+	// tell you which SubSLS a given row belongs to. Total: 250mm.
 	wideColumns = []column{
-		{"No", 10},
-		{"Nama", 42},
-		{"Alamat", 52},
-		{"ID SUBSLS", 30},
-		{"Jenis Prelist", 26},
-		{"Keberadaan Usaha", 28},
-		{"Keberadaan Keluarga", 45},
-		{"Status", 42},
+		{"No", 8},
+		{"Nama", 34},
+		{"Alamat", 36},
+		{"ID SUBSLS", 26},
+		{"Nomor Bangunan", 16},
+		{"Jenis Prelist", 18},
+		{"Keberadaan Keluarga", 32},
+		{"Status", 30},
+		{"Catatan", 50},
 	}
 )
 
@@ -69,16 +74,22 @@ func columnsFor(region Region) []column {
 	return wideColumns
 }
 
+// rowFor renders one row of the report table. Keberadaan Usaha is
+// deliberately not one of these columns right now — see the field's doc
+// comment on points.Point for why — and Catatan comes from ListAll's
+// includeCatatan=true, so it's always populated here even though it's
+// empty for every other Point-returning endpoint.
 func rowFor(region Region, no int, p points.Point) []string {
 	if region.PinnedToSubSLS() {
 		return []string{
 			strconv.Itoa(no),
 			report.DashIfEmpty(p.Nama),
 			report.DashIfEmpty(p.Alamat),
+			strconv.Itoa(int(p.NomorBangunan)),
 			report.DashIfEmpty(p.JenisPrelist),
-			strconv.Itoa(int(p.KeberadaanUsaha)),
 			report.DashIfEmpty(p.KeberadaanKeluarga),
 			report.DashIfEmpty(p.Status),
+			report.DashIfEmpty(p.Catatan),
 		}
 	}
 	return []string{
@@ -86,10 +97,11 @@ func rowFor(region Region, no int, p points.Point) []string {
 		report.DashIfEmpty(p.Nama),
 		report.DashIfEmpty(p.Alamat),
 		report.DashIfEmpty(p.SubSLS),
+		strconv.Itoa(int(p.NomorBangunan)),
 		report.DashIfEmpty(p.JenisPrelist),
-		strconv.Itoa(int(p.KeberadaanUsaha)),
 		report.DashIfEmpty(p.KeberadaanKeluarga),
 		report.DashIfEmpty(p.Status),
+		report.DashIfEmpty(p.Catatan),
 	}
 }
 
@@ -260,4 +272,3 @@ func fillMode(fill bool) string {
 	}
 	return "D"
 }
-
