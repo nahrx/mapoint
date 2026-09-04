@@ -20,16 +20,18 @@ const regsosekSubtitle = "Daftar keluarga SE2026 dengan status tidak ditemukan, 
 // between margins. Assignment ID is left out for the same reason it is in
 // the other PDF: it's an internal id, not something a field team reads off
 // paper. The Excel export keeps it.
+// The 60mm freed by dropping No KK and NIK KK (see regsosek.rowColumns for
+// why they are gone) went to the columns people actually read off the
+// page — the two name columns take most of it — rather than being left as
+// white space. Still 275mm.
 var regsosekColumns = []column{
 	{"No", 8},
-	{"Nama", 40},
-	{"Nama KK", 34},
-	{"No KK", 30},
-	{"NIK KK", 30},
+	{"Nama", 58},
+	{"Nama KK", 52},
 	{"ID SubSLS", 27},
-	{"Match Status", 38},
-	{"Alamat Regsosek", 38},
-	{"Nama Matched", 30},
+	{"Match Status", 42},
+	{"Alamat Regsosek", 46},
+	{"Nama Matched", 42},
 }
 
 func regsosekRow(no int, r regsosek.Row) []string {
@@ -37,8 +39,6 @@ func regsosekRow(no int, r regsosek.Row) []string {
 		strconv.Itoa(no),
 		report.DashIfEmpty(r.Nama),
 		report.DashIfEmpty(r.NamaKK),
-		report.DashIfEmpty(r.NoKK),
-		report.DashIfEmpty(r.NIKKK),
 		report.DashIfEmpty(r.SubSLS),
 		report.DashIfEmpty(r.MatchStatus),
 		report.DashIfEmpty(r.AlamatRegsosek),

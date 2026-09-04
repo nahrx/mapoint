@@ -106,9 +106,13 @@
   let debounceTimer = null;
   let requestSeq = 0;
 
+  // Same reasoning and same value as the main map — see LOAD_DEBOUNCE_MS
+  // in app.js. Kept in step deliberately so the two maps feel identical.
+  const LOAD_DEBOUNCE_MS = 120;
+
   function scheduleLoad() {
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(loadViewport, 250);
+    debounceTimer = setTimeout(loadViewport, LOAD_DEBOUNCE_MS);
   }
 
   function filterParams() {
@@ -233,7 +237,7 @@
     selectEl: desaSelect, placeholder: "Semua Desa/Kelurahan", byCode: desaByCode, labelPrefix: "Desa/Kel. ",
   });
   const slsLevel = makeCascadingLevel({
-    selectEl: slsSelect, placeholder: "Semua SLS", byCode: slsByCode, labelPrefix: "SLS ",
+    selectEl: slsSelect, placeholder: "Semua SLS", byCode: slsByCode, labelPrefix: "SLS ", keepCode: true,
   });
   const subslsLevel = makeCascadingLevel({
     selectEl: subslsSelect, placeholder: "Semua SubSLS", byCode: subslsByCode, labelPrefix: "SubSLS ",

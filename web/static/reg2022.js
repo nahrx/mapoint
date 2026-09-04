@@ -24,7 +24,7 @@
   const downloadPdfBtn = document.getElementById("download-pdf-btn-reg");
   const downloadXlsxBtn = document.getElementById("download-xlsx-btn-reg");
 
-  const COLUMN_COUNT = 11; // keep in step with the <thead> in index.html
+  const COLUMN_COUNT = 8; // keep in step with the <thead> in index.html
 
   // Match Status is what this table is read for, so each value gets a
   // badge colored by how strong the match is: green for an exact NIK hit,
@@ -73,15 +73,12 @@
         <td class="num">${rowNo}</td>
         <td>${esc(r.nama)}</td>
         <td>${esc(r.nama_kk)}</td>
-        <td class="mono">${esc(r.no_kk)}</td>
-        <td class="mono">${esc(r.nik_kk)}</td>
         <td class="mono">${esc(r.subsls)}</td>
         <td class="col-match">${r.match_status
           ? `<span class="match-badge" style="background:${MATCH_COLORS[r.match_status] || "#8794a1"}">${esc(r.match_status)}</span>`
           : "-"}</td>
         <td class="addr" title="${esc(r.alamat_regsosek)}">${esc(r.alamat_regsosek)}</td>
         <td>${esc(r.nama_matched)}</td>
-        <td class="mono">${esc(r.nik_matched)}</td>
         <td class="mono">${esc(r.assignment_id)}</td>
       </tr>`;
   }
@@ -201,7 +198,7 @@
     selectEl: desaSelect, placeholder: "Semua Desa/Kelurahan", byCode: desaByCode, labelPrefix: "Desa/Kel. ",
   });
   const slsLevel = makeCascadingLevel({
-    selectEl: slsSelect, placeholder: "Semua SLS", byCode: slsByCode, labelPrefix: "SLS ",
+    selectEl: slsSelect, placeholder: "Semua SLS", byCode: slsByCode, labelPrefix: "SLS ", keepCode: true,
   });
   const subslsLevel = makeCascadingLevel({
     selectEl: subslsSelect, placeholder: "Semua SubSLS", byCode: subslsByCode, labelPrefix: "SubSLS ",

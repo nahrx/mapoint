@@ -288,9 +288,18 @@
   let debounceTimer = null;
   let requestSeq = 0;
 
+  // Measured in the browser: the viewport query itself is 22ms for
+  // individual points and 65ms for a province-wide cluster, so at the old
+  // 250ms this wait was ~4x the work it was waiting for and the single
+  // largest contributor to how slow the map felt. 120ms is still long
+  // enough to swallow the burst of moveend/zoomend events a single
+  // drag or wheel gesture emits, and a request that does get superseded is
+  // aborted by inFlightController rather than left to land late.
+  const LOAD_DEBOUNCE_MS = 120;
+
   function scheduleLoad() {
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(loadViewport, 250);
+    debounceTimer = setTimeout(loadViewport, LOAD_DEBOUNCE_MS);
   }
 
   async function loadViewport() {
@@ -448,7 +457,7 @@
     selectEl: desaSelect, placeholder: "Semua Desa/Kelurahan", byCode: desaByCode, labelPrefix: "Desa/Kel. ",
   });
   const slsLevel = makeCascadingLevel({
-    selectEl: slsSelect, placeholder: "Semua SLS", byCode: slsByCode, labelPrefix: "SLS ",
+    selectEl: slsSelect, placeholder: "Semua SLS", byCode: slsByCode, labelPrefix: "SLS ", keepCode: true,
   });
   const subslsLevel = makeCascadingLevel({
     selectEl: subslsSelect, placeholder: "Semua SubSLS", byCode: subslsByCode, labelPrefix: "SubSLS ",

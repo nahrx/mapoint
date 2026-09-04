@@ -26,13 +26,10 @@ var regsosekColumns = []struct {
 	{"No", 6},
 	{"Nama", 32},
 	{"Nama KK", 28},
-	{"No KK", 20},
-	{"NIK KK", 20},
 	{"ID SubSLS", 20},
 	{"Match Status", 30},
 	{"Alamat Regsosek", 40},
 	{"Nama Matched Regsosek", 30},
-	{"NIK Matched Regsosek", 20},
 	{"Assignment ID", 38},
 }
 
@@ -81,13 +78,10 @@ func GenerateRegsosek(w io.Writer, region report.Region, rows []regsosek.Row, tr
 			i + 1,
 			report.DashIfEmpty(r.Nama),
 			report.DashIfEmpty(r.NamaKK),
-			report.DashIfEmpty(r.NoKK),
-			report.DashIfEmpty(r.NIKKK),
 			report.DashIfEmpty(r.SubSLS),
 			report.DashIfEmpty(r.MatchStatus),
 			report.DashIfEmpty(r.AlamatRegsosek),
 			report.DashIfEmpty(r.NamaMatched),
-			report.DashIfEmpty(r.NIKMatched),
 			report.DashIfEmpty(r.AssignmentID),
 		}
 		for ci, v := range values {

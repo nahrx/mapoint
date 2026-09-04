@@ -126,6 +126,43 @@ func KecamatanNames(ctx context.Context, pool *pgxpool.Pool, kabkotaCode string)
 
 // DesaNames returns kddesa -> nmdesa for every desa/kelurahan within the
 // given kabkota + kecamatan.
+// SLSNames maps each 4-digit Kode SLS inside one desa/kelurahan to its name
+// (nmsls — e.g. "RT 051 DUSUN IV"), so the Kode SLS dropdown can show a
+// human-readable area name next to the bare code.
+//
+// The table stores one row per SubSLS, so a single SLS appears several
+// times; DISTINCT collapses those. Measured on the live table, 14,331 of
+// 14,332 SLS carry exactly one nmsls across their SubSLS — for the single
+// exception this map keeps whichever row comes last, which is why the
+// caller treats a missing or ambiguous name as "just show the code".
+func SLSNames(ctx context.Context, pool *pgxpool.Pool, kabkotaCode, kecamatanCode, desaCode string) (map[string]string, error) {
+	kdprov, kdkab, err := splitKabKota(kabkotaCode)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := pool.Query(ctx,
+		`SELECT DISTINCT kdsls, nmsls FROM `+table+`
+		 WHERE kdprov = $1 AND kdkab = $2 AND kdkec = $3 AND kddesa = $4`,
+		kdprov, kdkab, kecamatanCode, desaCode,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("mapdb: query SLS names: %w", err)
+	}
+	defer rows.Close()
+
+	names := make(map[string]string)
+	for rows.Next() {
+		var code, name string
+		if err := rows.Scan(&code, &name); err != nil {
+			return nil, fmt.Errorf("mapdb: scan SLS name: %w", err)
+		}
+		if name != "" {
+			names[code] = name
+		}
+	}
+	return names, rows.Err()
+}
+
 func DesaNames(ctx context.Context, pool *pgxpool.Pool, kabkotaCode, kecamatanCode string) (map[string]string, error) {
 	kdprov, kdkab, err := splitKabKota(kabkotaCode)
 	if err != nil {

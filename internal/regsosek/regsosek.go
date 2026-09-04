@@ -42,23 +42,27 @@ type Row struct {
 	SubSLS         string `json:"subsls"` // level_6_full_code
 	Nama           string `json:"nama"`   // nama_prelist
 	NamaKK         string `json:"nama_kk"`
-	NoKK           string `json:"no_kk"`
-	NIKKK          string `json:"nik_kk"`
 	MatchStatus    string `json:"match_status"`
 	AlamatRegsosek string `json:"alamat_regsosek"` // alamat_gabung_regsosek
 	NamaMatched    string `json:"nama_matched"`    // nama_matched_regsosek
-	NIKMatched     string `json:"nik_matched"`     // nik_matched_regsosek
 }
 
 // rowColumns is the SELECT list backing Row, in scan order.
-const rowColumns = `assignment_id, level_6_full_code, nama_prelist, nama_kk, no_kk, nik_kk,
-		match_status, alamat_gabung_regsosek, nama_matched_regsosek, nik_matched_regsosek`
+//
+// no_kk, nik_kk and nik_matched_regsosek are deliberately absent. They are
+// personal identity numbers and are not shown anywhere — not in the table,
+// the map tooltip, the PDF, the Excel export, or the search — so they are
+// left out of the query entirely rather than fetched and then hidden. That
+// way they never reach the browser at all, and no future display code can
+// surface them by accident. nama_kk stays: it is a name, not a number.
+const rowColumns = `assignment_id, level_6_full_code, nama_prelist, nama_kk,
+		match_status, alamat_gabung_regsosek, nama_matched_regsosek`
 
 func scanRow(rows driver.Rows) (Row, error) {
 	var r Row
 	err := rows.Scan(
-		&r.AssignmentID, &r.SubSLS, &r.Nama, &r.NamaKK, &r.NoKK, &r.NIKKK,
-		&r.MatchStatus, &r.AlamatRegsosek, &r.NamaMatched, &r.NIKMatched,
+		&r.AssignmentID, &r.SubSLS, &r.Nama, &r.NamaKK,
+		&r.MatchStatus, &r.AlamatRegsosek, &r.NamaMatched,
 	)
 	return r, err
 }
@@ -117,8 +121,11 @@ type Filter struct {
 	Search        string
 }
 
-// searchColumns are the columns the free-text search box looks in.
-var searchColumns = []string{"nama_prelist", "nama_kk", "no_kk", "nik_kk"}
+// searchColumns are the columns the free-text search box looks in. Names
+// only: no_kk and nik_kk were dropped along with their columns, so an
+// identity number can't be used as a lookup key either — not merely hidden
+// from display. See rowColumns.
+var searchColumns = []string{"nama_prelist", "nama_kk"}
 
 func (f Filter) clause() (string, []any) {
 	parts := make([]string, 0, 3)
@@ -142,8 +149,8 @@ func (f Filter) clause() (string, []any) {
 	}
 	if f.Search != "" {
 		// One bind parameter per searched column (same value each time), so
-		// what's typed matches the prelist name, the head-of-household
-		// name, the KK number or the NIK. positionCaseInsensitive is a
+		// what's typed matches either the prelist name or the
+		// head-of-household name. positionCaseInsensitive is a
 		// plain substring search — no LIKE wildcards to escape — and the
 		// text never reaches the SQL string itself.
 		ors := make([]string, len(searchColumns))
@@ -167,13 +174,10 @@ func (f Filter) clause() (string, []any) {
 var listSortColumns = map[string]string{
 	"nama":            "nama_prelist",
 	"nama_kk":         "nama_kk",
-	"no_kk":           "no_kk",
-	"nik_kk":          "nik_kk",
 	"subsls":          "level_6_full_code",
 	"match_status":    "match_status",
 	"alamat_regsosek": "alamat_gabung_regsosek",
 	"nama_matched":    "nama_matched_regsosek",
-	"nik_matched":     "nik_matched_regsosek",
 	"assignment_id":   "assignment_id",
 }
 

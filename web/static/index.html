@@ -14,6 +14,11 @@
     <button id="nav-daftar" class="nav-btn">Daftar</button>
     <button id="nav-reg2022" class="nav-btn">Daftar Match Regsosek</button>
     <button id="nav-petamatch" class="nav-btn">Peta Match Reg2022</button>
+    <!-- A real form post, not fetch: logging out should work even if the
+         page's scripts failed to load. -->
+    <form id="logout-form" method="post" action="/api/logout">
+      <button type="submit" class="logout-btn" title="Keluar dari sesi ini">Keluar</button>
+    </form>
   </nav>
 
   <section id="view-peta" class="view active">
@@ -236,7 +241,7 @@
       <div id="reg2022-filters" class="list-filters">
         <div class="filter-row">
           <label for="reg2022-search">Cari:</label>
-          <input type="text" id="reg2022-search" placeholder="Nama / Nama KK / No KK / NIK KK…" autocomplete="off">
+          <input type="text" id="reg2022-search" placeholder="Cari nama / nama KK…" autocomplete="off">
         </div>
         <div class="filter-row">
           <label for="kabkota-select-reg">Kabupaten/Kota:</label>
@@ -311,13 +316,10 @@
               <th class="num">No</th>
               <th class="sortable" data-sort="nama">Nama<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="nama_kk">Nama KK<span class="sort-arrow"></span></th>
-              <th class="sortable" data-sort="no_kk">No KK<span class="sort-arrow"></span></th>
-              <th class="sortable" data-sort="nik_kk">NIK KK<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="subsls">ID SubSLS<span class="sort-arrow"></span></th>
               <th class="sortable col-match" data-sort="match_status">Match Status<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="alamat_regsosek">Alamat Regsosek<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="nama_matched">Nama Matched Regsosek<span class="sort-arrow"></span></th>
-              <th class="sortable" data-sort="nik_matched">NIK Matched Regsosek<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="assignment_id">Assignment ID<span class="sort-arrow"></span></th>
             </tr>
           </thead>
@@ -344,7 +346,7 @@
         <p class="list-note">Titik koordinat Regsosek 2022 dari keluarga SE2026 berstatus tidak ditemukan.</p>
         <div class="filter-row">
           <label for="match-search">Cari:</label>
-          <input type="text" id="match-search" placeholder="Nama / Nama KK / No KK / NIK KK…" autocomplete="off">
+          <input type="text" id="match-search" placeholder="Cari nama / nama KK…" autocomplete="off">
         </div>
         <div class="filter-row">
           <label for="kabkota-select-match">Kabupaten/Kota:</label>

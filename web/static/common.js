@@ -9,6 +9,16 @@ window.App = (() => {
   async function fetchWithRetry(url, signal, attempt = 0) {
     try {
       const res = await fetch(url, { signal });
+      // A session that expired mid-session isn't a transient failure —
+      // retrying just delays the inevitable and ends in a generic error
+      // message. Send the user to the login form instead, remembering
+      // where they were so they come back to it.
+      if (res.status === 401) {
+        location.replace("/login?next=" + encodeURIComponent(location.pathname + location.search));
+        // Never settles: the navigation is already underway, and rejecting
+        // here would flash an error banner on a page that's leaving.
+        return new Promise(() => {});
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `HTTP ${res.status}`);
@@ -27,7 +37,12 @@ window.App = (() => {
   // kecamatan depends on kabkota). Populates byCode (a Map the caller
   // owns) as a side effect so callers can look up bounding boxes / names
   // for the selected option.
-  function makeCascadingLevel({ selectEl, placeholder, byCode, labelPrefix }) {
+  // keepCode changes how an item's PostGIS name is shown. For kecamatan and
+  // desa the name replaces the code — nobody refers to "Kec. 060", they say
+  // "Kec. Bontang Selatan". For SLS the code is what people actually work
+  // from (it's part of level_6_full_code), so the name is added alongside
+  // it instead of replacing it.
+  function makeCascadingLevel({ selectEl, placeholder, byCode, labelPrefix, keepCode = false }) {
     function reset() {
       byCode.clear();
       selectEl.innerHTML = `<option value="">${placeholder}</option>`;
@@ -46,10 +61,17 @@ window.App = (() => {
           const opt = document.createElement("option");
           opt.value = item.code;
           // item.name comes from an optional PostGIS lookup on the server
-          // (kecamatan/desa only, for now) — fall back to the bare code
-          // when it isn't set, same label as before this existed.
-          const label = item.name ? item.name : item.code;
-          opt.textContent = `${labelPrefix}${label} (${item.total.toLocaleString("id-ID")} titik)`;
+          // (kecamatan, desa and SLS). When it isn't set — PostGIS not
+          // configured, or no name for this code — every branch falls back
+          // to the bare code, exactly the label used before names existed.
+          const count = `${item.total.toLocaleString("id-ID")} titik`;
+          if (item.name && keepCode) {
+            opt.textContent = `${labelPrefix}${item.code} (${item.name}, ${count})`;
+          } else if (item.name) {
+            opt.textContent = `${labelPrefix}${item.name} (${count})`;
+          } else {
+            opt.textContent = `${labelPrefix}${item.code} (${count})`;
+          }
           selectEl.appendChild(opt);
         }
       } catch (err) {

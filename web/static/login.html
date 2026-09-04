@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Masuk — Peta Titik SE2026</title>
+<!-- Deliberately self-contained: style.css and the rest of /static sit
+     behind the auth gate, so a login page that linked to them would either
+     render unstyled or force those files to be public. -->
+<style>
+  :root {
+    --navy: #103a5e;
+    --navy-700: #0c2c47;
+    --orange: #d9720f;
+    --orange-600: #e8801c;
+    --text: #1f2933;
+    --text-muted: #5b6672;
+    --surface: #ffffff;
+    --border: #dfe4ea;
+    --border-strong: #c6cfd8;
+    --danger-bg: #fdecea;
+    --danger-border: #f3c2bd;
+    --danger-text: #a3342b;
+    --radius: 8px;
+    --radius-lg: 12px;
+    --shadow-lg: 0 8px 24px rgba(16, 42, 67, 0.16), 0 2px 6px rgba(16, 42, 67, 0.08);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    background: linear-gradient(160deg, var(--navy) 0%, var(--navy-700) 100%);
+  }
+
+  .card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 32px 28px;
+  }
+
+  h1 {
+    margin: 0 0 4px;
+    font-size: 20px;
+    color: var(--navy);
+  }
+
+  .sub {
+    margin: 0 0 24px;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  input {
+    width: 100%;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+    font: inherit;
+    color: var(--text);
+    background: #fff;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+  }
+
+  input:focus {
+    outline: 2px solid var(--orange);
+    outline-offset: 1px;
+    border-color: var(--orange);
+  }
+
+  button {
+    width: 100%;
+    padding: 11px 16px;
+    font: inherit;
+    font-weight: 600;
+    color: #fff;
+    background: var(--orange);
+    border: 0;
+    border-radius: var(--radius);
+    cursor: pointer;
+  }
+
+  button:hover:not(:disabled) { background: var(--orange-600); }
+  button:disabled { opacity: .6; cursor: default; }
+
+  .error {
+    margin: 0 0 16px;
+    padding: 10px 12px;
+    font-size: 13px;
+    color: var(--danger-text);
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-border);
+    border-radius: var(--radius);
+  }
+
+  .hidden { display: none; }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --text: #e6ebf1;
+      --text-muted: #a3b0bd;
+      --surface: #16222e;
+      --border-strong: #33465a;
+      --danger-bg: #3a1f1c;
+      --danger-border: #6b3630;
+      --danger-text: #f3b0a8;
+    }
+    h1 { color: #d9e6f2; }
+    input { background: #0f1a24; }
+  }
+</style>
+</head>
+<body>
+  <main class="card">
+    <h1>Peta Titik SE2026</h1>
+    <p class="sub">Masuk untuk mengakses dashboard.</p>
+
+    <p id="error" class="error hidden" role="alert"></p>
+
+    <form id="login-form" method="post" action="/api/login" autocomplete="on">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" autocomplete="username"
+             required autofocus spellcheck="false" autocapitalize="none">
+
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password"
+             autocomplete="current-password" required>
+
+      <button type="submit" id="submit-btn">Masuk</button>
+    </form>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+      const form = document.getElementById("login-form");
+      const errorEl = document.getElementById("error");
+      const btn = document.getElementById("submit-btn");
+
+      // Carried through so a session that expired mid-work returns the user
+      // to the page they were on. The server re-validates it (see safeNext)
+      // rather than trusting this value to be a same-site path.
+      const next = new URLSearchParams(location.search).get("next") || "/";
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        errorEl.classList.add("hidden");
+        btn.disabled = true;
+        btn.textContent = "Memeriksa…";
+
+        try {
+          const body = new URLSearchParams({
+            username: document.getElementById("username").value,
+            password: document.getElementById("password").value,
+            next,
+          });
+          const resp = await fetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body,
+          });
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok) throw new Error(data.error || "Gagal masuk. Coba lagi.");
+          location.replace(data.redirect || "/");
+          return;
+        } catch (err) {
+          errorEl.textContent = err.message;
+          errorEl.classList.remove("hidden");
+          // Clear only the password: retyping the username every attempt is
+          // pointless friction when it's the password that's usually wrong.
+          document.getElementById("password").value = "";
+          document.getElementById("password").focus();
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "Masuk";
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

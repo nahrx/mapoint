@@ -27,7 +27,7 @@ angka tetap akurat seiring data bertambah tanpa perlu restart server.
 ### Catatan performa (hasil pengukuran, bukan perkiraan)
 
 Tabelnya `ORDER BY (level_6_full_code, assignment_id)` tanpa partisi dan
-tanpa skip index — 2,17 juta baris / 238 MiB / 269 granul. Tiga hal berikut
+tanpa skip index — 2,17 juta baris / 238 MiB / 269 granul. Lima hal berikut
 sudah diterapkan dan diukur di data itu:
 
 1. **Filter wilayah pakai `startsWith`, bukan `substring`.** Karena kelima
@@ -58,6 +58,63 @@ sudah diterapkan dan diukur di data itu:
    (**5,8x**); aset statis 3,3–3,8x (leaflet.js 147KB → 43KB). Unduhan PDF
    dan Excel sengaja **tidak** ikut dikompres — `.xlsx` itu zip dan stream
    PDF sudah ter-deflate, jadi mengompres ulang cuma buang CPU.
+
+4. **Debounce peta 250ms → 120ms** (`LOAD_DEBOUNCE_MS` di
+   `web/static/app.js` dan `match-map.js`). Diukur dari browser, query
+   viewport-nya sendiri cuma 22ms untuk titik individual dan 76ms untuk
+   cluster se-provinsi — jadi di angka lama penantian ini **~4x lebih lama
+   daripada kerja yang ditunggunya**, dan jadi penyumbang terbesar rasa
+   lambat peta. Total yang dirasakan setelah berhenti menggeser: ~315ms →
+   ~195ms. 120ms masih cukup untuk menelan rentetan event `moveend`/
+   `zoomend` dari satu gerakan drag atau scroll, dan request yang tersusul
+   tetap dibatalkan `AbortController`.
+
+5. **Ketiga kolom dari `se2026_match`/`se2026_match_regsosek` lewat
+   dictionary ClickHouse**, bukan `IN`-subquery atau `JOIN` — DDL-nya ada
+   di `sql/dictionaries.sql`. Sebelumnya setiap query membaca ulang tabel
+   sumbernya (89rb + 167rb baris), dan itu biaya terbesar di seluruh
+   lapisan database: 43ms dari 80ms satu halaman Daftar, dan 136ms dari
+   195ms cluster peta yang difilter flag.
+
+   | satu halaman Daftar, desa terbesar | waktu | baris dibaca |
+   |---|---|---|
+   | `JOIN` + 2× `IN` penuh | 112ms | 313.288 |
+   | dictionary | **21ms** | **57.344** |
+   | pembanding: tanpa ketiga kolom itu sama sekali | 19ms | 57.344 |
+
+   Jadi ketiga kolom itu sekarang praktis gratis, dan `read_rows` kembali
+   ke sisi kiri saja — tabel sumbernya tidak disentuh lagi saat query.
+   Diukur dari browser, satu halaman Daftar di desa terbesar 100ms → 39ms,
+   dan tampilan awal tanpa filter 138ms → 84ms.
+
+   Diverifikasi setara sebelum diganti, bukan diasumsikan: `dictHas` vs
+   `IN` dan `dictGetString` vs `LEFT JOIN` dibandingkan di **seluruh
+   2.168.304 baris** — 0 flag berbeda dan 0 nilai `assignment_id_baru`
+   berbeda — lalu lewat aplikasi dicek lagi di 6 kedalaman filter (tanpa
+   filter s/d SubSLS) terhadap `IN` penuh, semuanya sama persis. Baris
+   berkunci ganda tetap menampilkan kedua nilainya.
+
+   Yang **tidak** membaik: cluster peta berfilter flag tanpa filter wilayah
+   (2,17 juta baris kiri) tetap ~255ms — di situ `dictHas` seri dengan `IN`
+   (190ms vs 193ms di sisi ClickHouse), karena lookup per baris menyaingi
+   satu kali bangun himpunan. Dictionary tidak pernah lebih lambat, tapi
+   untungnya baru terasa begitu ada filter wilayah.
+
+   **Konsekuensi operasional:** kedua dictionary itu sekarang dependensi
+   keras — kalau tidak ada, `/api/list` dan `/api/points` gagal total, bukan
+   sekadar melambat. Karena itu `Service.CheckDictionaries` dijalankan saat
+   startup dan menulis log `level=ERROR` yang menyebut nama dictionary,
+   tabel sumbernya, dan `sql/dictionaries.sql` kalau salah satu tidak bisa
+   dipakai (dicatat, bukan fatal, supaya ClickHouse yang sedang down tidak
+   menyebabkan restart loop). `LIFETIME(MIN 300 MAX 600)` berarti flag bisa
+   tertinggal maksimal 10 menit dari tabel sumber — cukup karena tabel itu
+   diisi per batch.
+
+**Yang sudah diukur dan sengaja TIDAK dikerjakan:** menjalankan `count()` dan
+query halaman secara paralel di `Service.List` (keduanya sekarang berurutan).
+`count()` cuma 2ms tanpa filter — ClickHouse menjawabnya dari metadata,
+`read_rows=1` — dan 6ms di level desa, jadi konkurensi cuma menghemat
+beberapa milidetik. Diukur dulu, baru diputuskan tidak dikerjakan.
 
 **Yang sudah dicoba dan sengaja TIDAK dipakai:** minmax skip index di
 `(latitude_ppl, longitude_ppl)`. Hipotesisnya karena data terurut kode
@@ -127,8 +184,19 @@ backend (400) kalau dikirim tanpa kecamatan.
 
 Dropdown "Kode SLS" satu tingkat lagi: nonaktif sampai desa/kelurahan
 dipilih, terisi dari 4 digit berikutnya
-(`GET /api/sls?kabkota=6472&kecamatan=061&desa=003`), label berupa kode
-("SLS 0070"), dan ditolak backend (400) kalau dikirim tanpa desa/kelurahan.
+(`GET /api/sls?kabkota=6472&kecamatan=061&desa=003`), dan ditolak backend
+(400) kalau dikirim tanpa desa/kelurahan. Labelnya menampilkan **kode
+beserta nama SLS dalam kurung** — "SLS 0001 (RT 001, 170 titik)" — dengan
+nama diambil dari kolom `nmsls` di PostGIS (`mapdb.SLSNames`). Berbeda dari
+kecamatan/desa yang namanya *menggantikan* kode, di sini kodenya
+dipertahankan karena kode SLS itu bagian dari `level_6_full_code` yang
+memang dipakai orang. Kalau PostGIS tidak dikonfigurasi atau kodenya tidak
+punya nama, labelnya kembali jadi kode saja seperti sebelumnya.
+
+*Catatan:* nama itu milik SLS, bukan SubSLS — diukur di tabel PostGIS,
+14.331 dari 14.332 SLS punya tepat satu `nmsls` untuk seluruh SubSLS-nya.
+Karena itu namanya dipasang di dropdown Kode SLS (tempat ia membedakan antar
+opsi) dan bukan di Kode SubSLS (tempat ia akan berulang sama persis).
 
 Dropdown "Kode SubSLS" adalah level terakhir: nonaktif sampai SLS dipilih,
 terisi dari 2 digit terakhir `level_6_full_code`
@@ -303,14 +371,19 @@ Kolom yang ditampilkan (label UI di kiri, kolom sumber di kanan kalau beda):
 |---|---|
 | Nama | `nama_prelist` |
 | Nama KK | `nama_kk` |
-| No KK | `no_kk` |
-| NIK KK | `nik_kk` |
 | ID SubSLS | `level_6_full_code` |
 | Match Status | `match_status` |
 | Alamat Regsosek | `alamat_gabung_regsosek` |
 | Nama Matched Regsosek | `nama_matched_regsosek` |
-| NIK Matched Regsosek | `nik_matched_regsosek` |
 | Assignment ID | `assignment_id` |
+
+**`no_kk`, `nik_kk` dan `nik_matched_regsosek` sengaja tidak ada di daftar
+itu, dan tidak ada di mana pun.** Ketiganya nomor identitas pribadi, jadi
+bukan cuma disembunyikan dari tampilan — kolomnya dibuang dari `SELECT`
+(lihat `rowColumns` di `internal/regsosek/regsosek.go`), sehingga nomornya
+tidak pernah sampai ke browser, tidak ikut ke unduhan PDF/Excel, tidak bisa
+diurutkan, dan tidak bisa dipakai sebagai kunci pencarian. `nama_kk` tetap
+ada karena itu nama, bukan nomor.
 
 Semua kolom itu bisa diklik untuk sort (naik/turun), sama seperti menu
 Daftar.
@@ -330,8 +403,8 @@ Daftar.
   `GET /api/reg2022/filter-options`. Ada opsi "(Kosong)" (`__EMPTY__`)
   seperti filter atribut di menu Daftar.
 - **Cari** — satu kotak yang mencari substring (tidak case-sensitive) di
-  **empat** kolom sekaligus: `nama_prelist`, `nama_kk`, `no_kk`, `nik_kk`.
-  Jadi mengetik nama, nomor KK, atau NIK sama-sama ketemu. Teksnya dikirim
+  **dua** kolom nama sekaligus: `nama_prelist` dan `nama_kk`.
+  Nomor KK/NIK sengaja bukan kunci cari (lihat catatan di atas). Teksnya dikirim
   lewat parameter binding (satu bind per kolom), bukan digabung ke teks SQL.
 
 Sama seperti menu Daftar, semua filter itu baru berlaku begitu tombol
@@ -367,7 +440,8 @@ tanpa alasan. Aturannya ditegakkan di server (`prepareRegsosekReport` di
 
 Isi kedua format sama, dengan dua beda yang disengaja seperti pada laporan
 Daftar: PDF membuang kolom Assignment ID (bukan info yang dibaca dari
-kertas) sementara Excel menyertakannya, dan Excel menambahkan NIK Matched.
+kertas) sementara Excel menyertakannya, dan lebar yang tersisa di PDF
+dibagi ke kolom nama.
 Keduanya memakai ulang blok "Keterangan Wilayah"/"Filter Tambahan" yang
 sama lewat `report.Region` — `match_status` menempati slot Status di blok
 itu, jadi tidak perlu menambah field yang cuma dipakai satu laporan.
@@ -416,14 +490,15 @@ unduhan PDF ("V"/"-") dan Excel ("Ya"/"Tidak"). Di peta keduanya tampil
 sebagai dua baris terakhir tooltip. Filternya (Semua / Ya / Tidak) ada di
 kedua menu dan ikut menunggu tombol Terapkan Filter.
 
-**Keduanya memakai `IN (subquery)`, bukan `JOIN`.** Ini bukan soal gaya:
-kunci di sisi kanan tidak unik (`se2026_match` punya 89.437 baris untuk
-88.636 `assignment_id_tdk` distinct), jadi `JOIN` biasa akan menggandakan
-baris di sisi kiri dan merusak total serta paginasi. `IN` adalah uji
-keanggotaan himpunan, jadi kunci yang muncul dua kali tetap menghasilkan
-satu baris. Yang dibutuhkan memang cuma "ada atau tidak" — tidak ada kolom
-lain yang diambil dari kedua tabel itu — sehingga `IN` sekaligus yang
-paling murah.
+**Keduanya lewat `dictHas` ke dictionary ClickHouse, bukan `IN` atau
+`JOIN`** — lihat butir 5 di "Catatan performa" untuk angkanya dan
+`sql/dictionaries.sql` untuk DDL-nya. Pilihan itu juga menyelesaikan soal
+kunci ganda dengan sendirinya: kunci di sisi kanan tidak unik
+(`se2026_match` punya 89.437 baris untuk 88.636 `assignment_id_tdk`
+distinct), sehingga `JOIN` biasa akan menggandakan baris di sisi kiri dan
+merusak total serta paginasi. Sumber dictionary-nya sudah di-`GROUP BY`,
+dan `dictHas` adalah uji keanggotaan, jadi kunci yang muncul dua kali tetap
+menghasilkan satu baris.
 
 Diukur, bukan diperkirakan (`assignment_id` di `se2026_titik2`):
 
@@ -434,9 +509,9 @@ Diukur, bukan diperkirakan (`assignment_id` di `se2026_titik2`):
 
 Biaya query: tiap flag membangun himpunan kunci (~89rb dan ~167rb), jadi
 kolomnya dihitung di query yang sama dengan `ORDER BY` supaya bisa di-sort.
-Pada desa terbesar (27rb baris) satu halaman Daftar naik dari 200ms ke
-271ms. Fragmen WHERE-nya cuma ditambahkan kalau filternya benar-benar
-dipakai, jadi viewport peta tanpa filter tidak membayar apa pun: diukur lewat aplikasi, cluster se-provinsi tetap ~275ms tanpa filter dan naik ke ~664ms kalau salah satu filter flag dinyalakan.
+Pada desa terbesar (27rb baris) satu halaman Daftar naik dari 21ms ke
+80ms di sisi ClickHouse. Fragmen WHERE-nya cuma ditambahkan kalau filternya benar-benar
+dipakai, jadi viewport peta tanpa filter tidak membayar apa pun: diukur dari browser, cluster se-provinsi 76ms tanpa filter. Dengan filter flag menyala biayanya lihat butir 5 di "Catatan performa".
 
 > **Penting untuk menu Peta.** Kedua tabel sumber berisi keluarga yang
 > **tidak ditemukan** saat pendataan, sehingga titik koordinatnya di
@@ -461,17 +536,17 @@ dipakai, jadi viewport peta tanpa filter tidak membayar apa pun: diukur lewat ap
 
 Menu **Daftar** menambahkan satu kolom lagi dari `se2026_match`:
 `assignment_id_baru`, lewat kunci yang sama
-(`assignment_id = assignment_id_tdk`). Berbeda dari kedua flag di atas,
-ini nilai sungguhan, jadi butuh `LEFT JOIN`, bukan `IN`. Kolomnya cuma ada
-di menu Daftar — peta tidak menjoin tabel itu, dan field-nya `omitempty`
+(`assignment_id = assignment_id_tdk`), dibaca lewat `dictGetString` dari
+dictionary yang sama dengan flag-nya. Kolomnya cuma ada
+di menu Daftar — peta tidak memintanya, dan field-nya `omitempty`
 sehingga tidak ikut terkirim di payload `/api/points`.
 
 Tiga hal yang menentukan bentuk query-nya:
 
-1. **Subquery-nya di-`GROUP BY` sebelum dijoin.** `assignment_id_tdk` tidak
-   unik (89.437 baris untuk 88.636 kunci distinct), jadi join ke tabel
-   mentahnya akan mengubah 792 baris kiri jadi 1.593 dan merusak total serta
-   paginasi. Diukur: jumlah baris tetap 2.168.304 dengan maupun tanpa join.
+1. **Sumber dictionary-nya di-`GROUP BY`.** `assignment_id_tdk` tidak
+   unik (89.437 baris untuk 88.636 kunci distinct), jadi memetakan tabel
+   mentahnya apa adanya akan membuat 792 kunci saling menimpa. Diukur:
+   jumlah baris tetap 2.168.304, sama seperti sebelum kolom ini ada.
 
 2. **Kunci ganda ditampilkan semua, bukan dipilih salah satu.** Dari 792
    kunci ganda itu, **787 punya `assignment_id_baru` yang benar-benar
@@ -480,15 +555,16 @@ Tiga hal yang menentukan bentuk query-nya:
    (`groupUniqArray` + `arrayStringConcat`), jadi baris dengan dua
    assignment baru terbaca keduanya. Ini cuma 0,9% dari baris yang cocok.
 
-3. **Flag "Ditemukan di Assignment Baru" di menu Daftar diambil dari join
-   ini**, bukan dari `IN` terpisah, supaya `se2026_match` cukup dibaca
-   sekali. Hasilnya identik — diuji ke seluruh 2.168.304 baris, 0 selisih —
-   dan query satu halaman turun dari 294ms ke 274ms. Yang dipakai adalah
-   literal `1 AS ada` di subquery, bukan tes "aid_baru tidak kosong", supaya
-   tetap benar kalau kolom itu suatu saat berisi blank. Menu Peta tetap
-   memakai `IN` karena tidak menjoin apa pun.
+3. **Flag dan nilainya datang dari dictionary yang sama** (`dict_match_tdk`),
+   jadi `se2026_match` cukup dipetakan
+   sekali. Hasilnya identik dengan `LEFT JOIN` yang dipakai sebelumnya —
+   diuji ke seluruh 2.168.304 baris, 0 selisih.
+   Flag-nya dibaca lewat `dictHas`, bukan tes "aid_baru tidak kosong",
+   supaya tetap benar kalau kolom itu suatu saat berisi blank.
 
-Biaya: pada desa terbesar (27rb baris) satu halaman Daftar jadi ~274ms.
+Biaya: pada desa terbesar (27rb baris) satu halaman Daftar 59ms diukur dari
+browser (80ms -> 64ms di sisi ClickHouse setelah butir 5 di "Catatan
+performa").
 Join-nya tidak merusak primary-key range di sisi kiri — `read_rows` naik
 dari 57.344 ke 146.781, dan selisihnya persis 89.437 baris `se2026_match`
 sendiri.
@@ -585,7 +661,70 @@ bawah (default Leaflet kiri atas — persis di bawah panel, jadi selamanya
 tertutup), dan pemilih basemap tampil terbuka di desktop tapi menciut jadi
 satu ikon di HP.
 
+## Login
+
+Seluruh website ada di balik satu akun. Kredensialnya dari `.env`:
+
+```
+AUTH_USERNAME=viewer@bps.go.id
+AUTH_PASSWORD=...
+```
+
+Keduanya **wajib** — `config.Load` menolak start kalau salah satu kosong.
+Ini disengaja: kegagalan diam-diam dari password opsional adalah dashboard
+yang terbuka untuk siapa saja, dan itu lebih buruk daripada server yang
+menolak jalan dengan pesan jelas. Untuk Docker, keduanya juga sudah
+diteruskan lewat `docker-compose.yml`.
+
+**Yang dilindungi:** semuanya kecuali `/login`, `/api/login`, `/api/logout`,
+dan `/healthz`. Gerbangnya (`requireAuth` di `internal/api/auth.go`)
+dipasang di luar mux, jadi aset statis pun ikut terlindungi — kalau hanya
+API yang dijaga, seluruh frontend masih bisa dibaca tanpa login.
+`/healthz` sengaja dibiarkan terbuka supaya monitoring tidak perlu
+kredensial; isinya cuma "ClickHouse menjawab atau tidak".
+
+**Sesi** berupa cookie bertanda tangan HMAC berisi waktu kedaluwarsa —
+`HttpOnly`, `SameSite=Lax`, dan `Secure` otomatis menyala kalau koneksinya
+HTTPS (langsung atau lewat `X-Forwarded-Proto`), jadi deployment HTTP di
+jaringan kantor tetap jalan. Berlaku 12 jam.
+
+Kuncinya diturunkan dari kredensial itu sendiri (`newAuth`), bukan secret
+terpisah. Efeknya: **mengganti `AUTH_PASSWORD` otomatis membatalkan semua
+sesi yang sedang berjalan**, tanpa perlu menyimpan daftar sesi dan tanpa
+secret tambahan yang harus dirotasi. Ini tidak membocorkan apa pun — yang
+tahu password toh bisa login. Alternatifnya (kunci acak saat startup) akan
+memaksa semua orang login ulang setiap deploy.
+
+Beberapa hal kecil yang sengaja dibuat begitu:
+
+- Perbandingan username dan password memakai `subtle.ConstantTimeCompare`,
+  dan pesan gagalnya tidak membedakan "username salah" dari "password
+  salah".
+- Percobaan login yang gagal ditulis ke log beserta username dan IP —
+  passwordnya tidak pernah.
+- Parameter `next` (supaya sesi yang habis mengembalikan Anda ke halaman
+  yang sedang dibuka) divalidasi server-side oleh `safeNext`: hanya path
+  diawali satu garis miring yang diterima, jadi form login tidak bisa
+  dipakai melempar orang ke situs lain.
+- Halaman login sengaja berdiri sendiri (CSS inline) — kalau ia menautkan
+  `style.css`, file itu harus dibuka ke publik atau halamannya tampil
+  polos.
+- Request API yang kena 401 di tengah pemakaian tidak di-retry; frontend
+  langsung mengarahkan ke `/login` sambil membawa halaman asalnya.
+
 ## Menjalankan
+
+**Sebelum pertama kali jalan:** buat dua dictionary ClickHouse yang dipakai
+kolom "Ditemukan di …" dan "Assignment ID Baru". Tanpa keduanya `/api/list`
+dan `/api/points` gagal total, bukan sekadar melambat. DDL beserta
+penjelasannya ada di `sql/dictionaries.sql`:
+
+```bash
+clickhouse-client --host <host> --database dtsen --multiquery < sql/dictionaries.sql
+```
+
+Server juga memeriksanya saat startup dan menulis log `level=ERROR` yang
+menyebut nama dictionary dan file ini kalau salah satu tidak bisa dipakai.
 
 Salin `example.env` ke `.env` lalu isi nilai aslinya:
 
@@ -664,25 +803,31 @@ Lalu buka `http://localhost:8082` di browser (dari `HTTP_ADDR=:8082` di `.env`; 
 
 ## Endpoint
 
+Semua endpoint di bawah butuh sesi login kecuali yang ditandai — lihat
+bagian "Login" di atas.
+
 - `GET /` — peta (frontend)
 - `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=&flagBaru=&flagRegsosek=` — data titik/cluster untuk satu viewport. Titik individual ikut membawa kedua flag "Ditemukan di …" untuk tooltip (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
 - `GET /api/bounds` — extent geografis + total baris valid di seluruh dataset
 - `GET /api/kabkota` — daftar kabupaten/kota yang ada di data, dengan jumlah titik & bounding box masing-masing
 - `GET /api/kecamatan?kabkota=` — daftar kecamatan di dalam satu kabupaten/kota (parameter wajib); `name` diisi dari PostGIS kalau `MAP_*` dikonfigurasi, kosong kalau tidak
 - `GET /api/desa?kabkota=&kecamatan=` — daftar desa/kelurahan di dalam satu kecamatan (kedua parameter wajib); `name` sama seperti di atas
-- `GET /api/sls?kabkota=&kecamatan=&desa=` — daftar Kode SLS di dalam satu desa/kelurahan (ketiga parameter wajib)
+- `GET /api/sls?kabkota=&kecamatan=&desa=` — daftar Kode SLS di dalam satu desa/kelurahan (ketiga parameter wajib); `name` diisi dari kolom `nmsls` di PostGIS kalau `MAP_*` dikonfigurasi, kosong kalau tidak
 - `GET /api/subsls?kabkota=&kecamatan=&desa=&sls=` — daftar Kode SubSLS di dalam satu SLS (keempat parameter wajib)
 - `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — GeoJSON batas SubSLS untuk overlay di peta (kelima parameter wajib); 503 kalau PostGIS tidak dikonfigurasi/tidak terhubung — lihat `internal/mapdb/`
 - `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&flagBaru=&flagRegsosek=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `status`, `assignment_id`, `ada_assignment_baru`, `ada_regsosek`, `assignment_id_baru` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`) semuanya opsional dan independen dari filter wilayah maupun satu sama lain — nilainya divalidasi terhadap enum tetap di `internal/points/points.go`, pakai `__EMPTY__` untuk memfilter kolom yang kosong. `flagBaru` dan `flagRegsosek` hanya menerima `""` (semua), `"1"` (ada) atau `"0"` (tidak ada) — nilai lain ditolak 400
 - `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&flagBaru=&flagRegsosek=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
 - `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&flagBaru=&flagRegsosek=&search=&sortBy=&dir=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf` (lihat `prepareReport` di `internal/api/server.go`, dipakai bareng oleh kedua handler)
-- `GET /api/reg2022?kabkota=&kecamatan=&desa=&sls=&subsls=&matchStatus=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar Reg2022 (tabel `se2026_match_regsosek`). Filter wilayah sama dengan endpoint lain; `matchStatus` divalidasi terhadap 7 nilai tetap di `internal/regsosek/regsosek.go` (pakai `__EMPTY__` untuk kolom kosong); `search` mencari substring di `nama_prelist`, `nama_kk`, `no_kk`, dan `nik_kk` sekaligus, lewat parameter binding. `sortBy` salah satu dari `nama` (default), `nama_kk`, `no_kk`, `nik_kk`, `subsls`, `keberadaan_keluarga`, `match_status`, `alamat_regsosek`, `nama_matched`, `nik_matched`, `assignment_id`
+- `GET /api/reg2022?kabkota=&kecamatan=&desa=&sls=&subsls=&matchStatus=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar Reg2022 (tabel `se2026_match_regsosek`). Filter wilayah sama dengan endpoint lain; `matchStatus` divalidasi terhadap 7 nilai tetap di `internal/regsosek/regsosek.go` (pakai `__EMPTY__` untuk kolom kosong); `search` mencari substring di `nama_prelist` dan `nama_kk` saja, lewat parameter binding — nomor KK/NIK tidak dipakai sebagai kunci cari. `sortBy` salah satu dari `nama` (default), `nama_kk`, `subsls`, `match_status`, `alamat_regsosek`, `nama_matched`, `assignment_id`
 - `GET /api/reg2022/filter-options` — daftar nilai `match_status` untuk dropdown filter menu Daftar Reg2022
 - `GET /api/reg2022/pdf?...` dan `GET /api/reg2022/xlsx?...` — laporan "Daftar Match Regsosek". Parameter filternya sama dengan `/api/reg2022`; `kabkota` dan `kecamatan` **wajib** (cakupan minimal satu kecamatan, lebih luas ditolak 400)
 - `GET /api/match-points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&...&matchStatus=&search=` — titik/cluster untuk viewport menu Peta Match Reg2022, memakai `latitude_regsosek`/`longitude_regsosek`
 - `GET /api/match-bounds?kabkota=&...&matchStatus=&search=` — extent geografis baris yang cocok dengan filter, untuk auto-zoom peta match (dihitung per request karena bergantung pada filter, bukan cuma wilayah)
 - `GET /api/filter-options` — daftar nilai enum untuk dropdown filter Jenis Prelist, Keberadaan Keluarga, dan Status (statis, bukan query ke ClickHouse)
-- `GET /healthz` — health check (ping ClickHouse)
+- `GET /healthz` — health check (ping ClickHouse); satu dari sedikit endpoint yang tidak butuh login
+- `GET /login` — halaman form login (publik)
+- `POST /api/login` — memeriksa username/password, menerbitkan cookie sesi; body `username`, `password`, opsional `next`
+- `POST /api/logout` — menghapus cookie sesi lalu redirect ke `/login`
 
 ## Catatan kualitas data
 

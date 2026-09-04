@@ -22,6 +22,13 @@ type Config struct {
 	// HTTPAddr is the address the web server listens on, e.g. ":8080".
 	HTTPAddr string
 
+	// AuthUsername and AuthPassword are the single account allowed to open
+	// the dashboard. Both are required — Load refuses to start without
+	// them rather than quietly serving the data to anyone, since every
+	// route except the login page and /healthz is behind this.
+	AuthUsername string
+	AuthPassword string
+
 	// MapHost etc. configure an optional PostgreSQL/PostGIS connection
 	// used only for SubSLS boundary polygons on the Peta map. Unlike the
 	// ClickHouse settings above, this is not required — MapHost is "" when
@@ -96,11 +103,21 @@ func Load(envPath string) (*Config, error) {
 		cfg.MapPort = mapPort
 	}
 
+	cfg.AuthUsername = get("AUTH_USERNAME", "")
+	cfg.AuthPassword = get("AUTH_PASSWORD", "")
+
 	if cfg.CHHost == "" {
 		return nil, fmt.Errorf("config: HOST is required")
 	}
 	if cfg.CHDatabase == "" {
 		return nil, fmt.Errorf("config: DATABASE is required")
+	}
+	// Deliberately fatal rather than "run without a login": the failure
+	// mode of a silently-optional password is an unprotected dashboard,
+	// which is worse than a server that refuses to start with a clear
+	// message.
+	if cfg.AuthUsername == "" || cfg.AuthPassword == "" {
+		return nil, fmt.Errorf("config: AUTH_USERNAME and AUTH_PASSWORD are required — see example.env")
 	}
 
 	return cfg, nil

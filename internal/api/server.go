@@ -40,10 +40,15 @@ type Server struct {
 	// polygon feature is optional, and handleSubSLSPolygon degrades to a
 	// clear "not configured" response rather than a nil-pointer panic.
 	mapPool *pgxpool.Pool
+
+	// auth is the single account gating every route except the login page
+	// and /healthz — see auth.go. Never nil: config.Load refuses to start
+	// without credentials.
+	auth *auth
 }
 
-func NewServer(svc *points.Service, regsvc *regsosek.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, mapPool *pgxpool.Pool, log *slog.Logger) *Server {
-	s := &Server{svc: svc, regsvc: regsvc, conn: conn, mapPool: mapPool, log: log}
+func NewServer(svc *points.Service, regsvc *regsosek.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, mapPool *pgxpool.Pool, authUsername, authPassword string, log *slog.Logger) *Server {
+	s := &Server{svc: svc, regsvc: regsvc, conn: conn, mapPool: mapPool, auth: newAuth(authUsername, authPassword), log: log}
 	s.bounds.Store(&bounds)
 	s.kabkota.Store(&kabkota)
 	return s
@@ -83,6 +88,9 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /api/match-bounds", s.handleMatchBounds)
 	mux.HandleFunc("GET /api/subsls-polygon", s.handleSubSLSPolygon)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /login", s.handleLoginPage(staticFS))
+	mux.HandleFunc("POST /api/login", s.handleLogin)
+	mux.HandleFunc("POST /api/logout", s.handleLogout)
 	// The Daftar menu has its own URL (see nav.js's use of history.pushState)
 	// so it survives a refresh or a direct link — but it's still the same
 	// single-page app, so just serve the same index.html the SPA's router
@@ -92,10 +100,13 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /peta-match", s.serveIndex(staticFS))
 	mux.Handle("/", http.FileServer(staticFS))
 
-	// gzip sits inside logging so the logged status/duration still describe
-	// the real response, and outside the mux so static assets (leaflet.js,
+	// requireAuth sits outside the mux so it covers every route including
+	// static assets — otherwise the whole frontend would be readable
+	// without signing in, and only the data behind it protected. gzip sits
+	// inside logging so the logged status/duration still describe the real
+	// response, and outside the mux so static assets (leaflet.js,
 	// style.css) get compressed too, not just the API.
-	return withLogging(s.log, withGzip(mux))
+	return withLogging(s.log, withGzip(s.requireAuth(mux)))
 }
 
 func (s *Server) serveIndex(staticFS http.FileSystem) http.HandlerFunc {
@@ -315,14 +326,31 @@ func (s *Server) handleSLS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	names := s.slsNames(r.Context(), kabkota, kecamatan, desa)
 	out := make([]points.SLSInfoJSON, len(list))
 	for i, sl := range list {
 		out[i] = points.SLSInfoJSON{
-			Code: sl.Code, Total: sl.Total,
+			Code: sl.Code, Name: names[sl.Code], Total: sl.Total,
 			MinLat: sl.MinLat, MaxLat: sl.MaxLat, MinLon: sl.MinLon, MaxLon: sl.MaxLon,
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// slsNames looks up each Kode SLS's name in PostGIS. Same shape as
+// kecamatanNames/desaNames: a nil map when PostGIS isn't configured or the
+// lookup fails, so the dropdown quietly falls back to bare codes rather
+// than the whole request failing over an optional label.
+func (s *Server) slsNames(ctx context.Context, kabkota, kecamatan, desa string) map[string]string {
+	if s.mapPool == nil {
+		return nil
+	}
+	names, err := mapdb.SLSNames(ctx, s.mapPool, kabkota, kecamatan, desa)
+	if err != nil {
+		s.log.Warn("SLS name lookup failed", "err", err)
+		return nil
+	}
+	return names
 }
 
 // maxSearchLen bounds the free-text ?search= param — generous for any

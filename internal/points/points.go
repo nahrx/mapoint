@@ -20,10 +20,9 @@ import (
 const (
 	table = "se2026_titik2"
 
-	// matchTable and regsosekTable back the two "ditemukan di …" flags.
-	// Neither is joined for its columns — only for whether a matching row
-	// exists at all — so they are used as IN-subqueries rather than joins;
-	// see flagExpr.
+	// matchTable and regsosekTable are the sources the two dictionaries are
+	// built from (see sql/dictionaries.sql). Queries never read them
+	// directly any more — they go through dictHas/dictGetString instead.
 	matchTable    = "se2026_match"
 	regsosekTable = "se2026_match_regsosek"
 
@@ -187,66 +186,72 @@ func GetFilterOptions() FilterOptions {
 	}
 }
 
-// matchKeySub and regsosekKeySub are the key sets behind the two flags.
-// se2026_match is keyed by assignment_id_tdk, se2026_match_regsosek by
-// assignment_id; both are matched against se2026_titik2.assignment_id.
+// The two flags and the joined assignment_id_baru all resolve through
+// ClickHouse dictionaries rather than IN-subqueries or a JOIN. See
+// sql/dictionaries.sql for the DDL — the app cannot serve /api/list or
+// /api/points without them.
 //
-// Measured before choosing this shape: se2026_titik2.assignment_id covers
-// 88,633 of se2026_match's 88,636 distinct keys (99.997%) and all 166,505
-// of se2026_match_regsosek's, so both flags carry real signal here. (The
-// same join against se2026_match_regsosek.assignment_id instead — a
-// different id space — overlaps se2026_match by exactly 0.)
+// Why: an IN-subquery or JOIN re-reads its source table on every single
+// query (89k rows for se2026_match, 167k for se2026_match_regsosek), and
+// that was the largest cost in the whole database layer. Measured on one
+// Daftar page over the largest desa: 112ms with JOIN + IN, 21ms with these
+// dictionaries — against 19ms for the same query carrying none of these
+// three columns at all. Both were verified equivalent across all 2,168,304
+// rows before the switch: 0 differing flags and 0 differing
+// assignment_id_baru values.
 //
-// Neither key is unique on its own side (se2026_match has 89,437 rows for
-// 88,636 keys), which would duplicate left rows under a plain JOIN and
-// corrupt the row count and pagination. IN sidesteps that entirely: it is
-// a set membership test, so a key appearing twice still yields one row.
+// The names are unqualified so they resolve against the connection's
+// database, exactly like `table` above — DATABASE in .env stays the single
+// place that decides which database is used.
 const (
-	matchKeySub    = "SELECT assignment_id_tdk FROM " + matchTable
-	regsosekKeySub = "SELECT assignment_id FROM " + regsosekTable
+	matchDict    = "dict_match_tdk"
+	regsosekDict = "dict_regsosek_key"
 )
 
-// flagExpr builds the membership test for one flag. col is the qualified
-// assignment_id to test and sub is one of the two constants above — both
-// are compile-time constants in this package, never caller input.
-func flagExpr(col, sub string) string {
-	return fmt.Sprintf("(%s IN (%s))", col, sub)
+// dictHasExpr tests membership; dictGetBaruExpr reads the matched row's
+// assignment_id_baru ("" when there is no match). Both take the column
+// holding se2026_titik2.assignment_id. tuple() is required because the
+// dictionaries are COMPLEX_KEY_* — their key is a String, and ClickHouse's
+// plain HASHED layout only accepts UInt64 keys.
+//
+// Only this package's own constants reach these format strings; col is
+// likewise a literal at every call site, never caller input.
+func dictHasExpr(dict, col string) string {
+	return fmt.Sprintf("dictHas('%s', tuple(%s))", dict, col)
 }
 
-// matchJoin attaches se2026_match's assignment_id_baru to each row. Only
-// the Daftar list uses it (see listItems); the map needs no value column
-// from that table, so queryPoints stays join-free.
-//
-// The subquery is grouped before the join, and that is load-bearing:
-// assignment_id_tdk is not unique (89,437 rows for 88,636 distinct keys),
-// so joining the raw table would turn 792 left rows into 1,593 and corrupt
-// both the row count and pagination. Grouping first keeps it one row per
-// key — verified: the count is 2,168,304 with and without the join.
-//
-// 787 of those 792 keys carry genuinely *different* assignment_id_baru
-// values, so picking one with min()/argMin() would silently show a value
-// that is wrong about half the time for them. They are concatenated
-// instead, so a row with two new assignments reads as both — rare (0.9% of
-// matched rows) and honest rather than quietly lossy.
-//
-// "1 AS ada" is what feeds Point.AdaAssignmentBaru here, replacing the IN
-// test flagExpr would otherwise build: identical results on all 2,168,304
-// rows (measured, 0 differences) while reading se2026_match once instead of
-// twice. It is a literal rather than a test on aid_baru being non-empty, so
-// it stays correct even if that column ever holds blanks.
-//
-// Aliases are deliberately not named after their source columns: an alias
-// like "AS assignment_id_baru" would shadow the column of that name inside
-// the aggregate beside it, which ClickHouse rejects as an aggregate nested
-// in an aggregate.
-const matchJoin = `LEFT JOIN (
-		SELECT
-			assignment_id_tdk,
-			1 AS ada,
-			arrayStringConcat(arraySort(groupUniqArray(assignment_id_baru)), ', ') AS aid_baru
-		FROM ` + matchTable + `
-		GROUP BY assignment_id_tdk
-	) AS m ON t.assignment_id = m.assignment_id_tdk`
+func dictGetBaruExpr(col string) string {
+	return fmt.Sprintf("dictGetString('%s', 'aid_baru', tuple(%s))", matchDict, col)
+}
+
+// dictionarySources pairs each dictionary with the table it is built from,
+// so CheckDictionaries can say which one is missing and where it comes
+// from. A slice rather than a map so the order of any startup complaint is
+// stable.
+var dictionarySources = []struct{ dict, source string }{
+	{matchDict, matchTable},
+	{regsosekDict, regsosekTable},
+}
+
+// CheckDictionaries probes every dictionary the query layer depends on.
+// Worth doing at startup because the failure mode is otherwise invisible
+// until a user hits it: a missing dictionary doesn't degrade a query, it
+// makes /api/list and /api/points fail outright. The probe uses a key that
+// matches nothing, so it costs one lookup and forces a lazy-loading
+// dictionary to actually load.
+func (s *Service) CheckDictionaries(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	for _, d := range dictionarySources {
+		var found uint8
+		q := "SELECT " + dictHasExpr(d.dict, "''")
+		if err := s.conn.QueryRow(ctx, q).Scan(&found); err != nil {
+			return fmt.Errorf("dictionary %q (built from %s) is not usable — create it with sql/dictionaries.sql: %w", d.dict, d.source, err)
+		}
+	}
+	return nil
+}
 
 // FlagYes and FlagNo are the two values a flag filter can take over the
 // wire; "" means the filter is unset. Kept as strings rather than a *bool
@@ -268,8 +273,8 @@ func ParseFlag(raw string) (string, error) {
 }
 
 // flagClause turns a validated flag value into a WHERE fragment.
-func flagClause(sub, val string) string {
-	expr := flagExpr("assignment_id", sub)
+func flagClause(dict, val string) string {
+	expr := dictHasExpr(dict, "assignment_id")
 	if val == FlagNo {
 		return "NOT " + expr
 	}
@@ -412,14 +417,14 @@ func (f Filter) clause() (string, []any) {
 	if f.Status != "" {
 		parts = append(parts, attrClause("assignment_status_alias", f.Status))
 	}
-	// Both flags cost a set build (~90k and ~167k keys), so the fragment is
-	// only added when the filter is actually on — an unfiltered viewport
-	// query pays nothing for these.
+	// Both are dictionary lookups now, so they no longer carry a per-query
+	// set build — the fragment is still only added when the filter is on,
+	// simply because an absent filter has nothing to say.
 	if f.FlagBaru != "" {
-		parts = append(parts, flagClause(matchKeySub, f.FlagBaru))
+		parts = append(parts, flagClause(matchDict, f.FlagBaru))
 	}
 	if f.FlagRegsosek != "" {
-		parts = append(parts, flagClause(regsosekKeySub, f.FlagRegsosek))
+		parts = append(parts, flagClause(regsosekDict, f.FlagRegsosek))
 	}
 	if f.Search != "" {
 		// positionCaseInsensitive is a plain substring search, not a LIKE
@@ -488,9 +493,9 @@ type Point struct {
 	AdaAssignmentBaru bool `json:"ada_assignment_baru"`
 	AdaRegsosek       bool `json:"ada_regsosek"`
 	// AssignmentIDBaru is se2026_match.assignment_id_baru for this row, or
-	// "" when there is none. Only populated by the Daftar list path (see
-	// matchJoin) — /api/points doesn't join that table, so it's omitted
-	// from the map payload rather than shipped empty on every marker. For
+	// "" when there is none. Only populated by the Daftar list path —
+	// /api/points doesn't select it, so it is omitted from the map payload
+	// rather than shipped empty on every marker. For
 	// the 0.9% of matched rows whose key maps to more than one new
 	// assignment, this holds all of them, comma-separated.
 	AssignmentIDBaru string `json:"assignment_id_baru,omitempty"`
@@ -629,7 +634,7 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 	FROM %s
 	WHERE %s AND %s AND %s
 	LIMIT %d`,
-		flagExpr("assignment_id", matchKeySub), flagExpr("assignment_id", regsosekKeySub),
+		dictHasExpr(matchDict, "assignment_id"), dictHasExpr(regsosekDict, "assignment_id"),
 		table, validCoords, bboxClause(b), where, IndividualLimit)
 
 	rows, err := s.conn.Query(ctx, q, args...)
@@ -907,9 +912,9 @@ func (s *Service) DesaList(ctx context.Context, kabkota, kecamatan string) ([]De
 
 // SLSInfo describes one Kode SLS filter option within a desa/kelurahan:
 // its 4-digit code, row count, and a bounding box (same 1st/99th-percentile
-// approach as KabKotaInfo). No name reference table exists for SLS either
-// (it's an enumeration-area code, not a named place), so the code is the
-// label — frontend renders it as "SLS <code>".
+// approach as KabKotaInfo). ClickHouse holds no name for it, but the
+// optional PostGIS table does (nmsls, e.g. "RT 051 DUSUN IV") — the API
+// attaches it to SLSInfoJSON so the dropdown reads "SLS 0051 (RT 051)".
 type SLSInfo struct {
 	Code                           string `json:"code"`
 	Total                          uint64 `json:"total"`
@@ -917,7 +922,11 @@ type SLSInfo struct {
 }
 
 type SLSInfoJSON struct {
-	Code   string  `json:"code"`
+	Code string `json:"code"`
+	// Name is nmsls from PostGIS, or "" when PostGIS isn't configured or
+	// has no name for this code — the frontend then shows the code alone,
+	// exactly as before.
+	Name   string  `json:"name"`
 	Total  uint64  `json:"total"`
 	MinLat float64 `json:"min_lat"`
 	MaxLat float64 `json:"max_lat"`
@@ -1075,23 +1084,14 @@ var listSortColumns = map[string]string{
 	"status":              "assignment_status_alias",
 	"assignment_id":       "assignment_id",
 
-	// Columns that only exist in the list query's SELECT: the two
-	// membership flags and the joined assignment_id_baru. listItems must
-	// resolve them in the same SELECT the ORDER BY applies to — see the
-	// comment there. ada_assignment_baru reads from matchJoin rather than
-	// an IN test, since that query already joins se2026_match.
-	"ada_assignment_baru": "m.ada",
-	"ada_regsosek":        flagSortExpr(regsosekKeySub),
-	"assignment_id_baru":  "m.aid_baru",
-}
-
-// flagSortExpr exists so listSortColumns can hold the flag expressions as
-// values: they are built from this package's own constants, exactly like
-// the plain column names beside them, and never from caller input. Only a
-// value of this map ever reaches the SQL text — ParseSortColumn already
-// reduced the caller's sortBy to one of its keys.
-func flagSortExpr(sub string) string {
-	return flagExpr("assignment_id", sub)
+	// The three dictionary-backed columns. They are expressions rather than
+	// stored columns, so listItems resolves them in the same SELECT the
+	// ORDER BY applies to — see the comment there. Like every other value
+	// in this map they are built from this package's own constants, never
+	// from caller input.
+	"ada_assignment_baru": dictHasExpr(matchDict, "assignment_id"),
+	"ada_regsosek":        dictHasExpr(regsosekDict, "assignment_id"),
+	"assignment_id_baru":  dictGetBaruExpr("assignment_id"),
 }
 
 // DefaultSortColumn is used by ParseSortColumn when sortBy is empty or not
@@ -1192,27 +1192,27 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 	if !ok {
 		sortCol = listSortColumns[DefaultSortColumn]
 	}
-	cols := "t.assignment_id, t.nama_assignment, t.alamat, t.level_6_full_code, t.jenis_prelist_root, t.jumlah_usaha, t.nomor_bangunan, t.keberadaan_keluarga, t.assignment_status_alias, t.latitude_ppl, t.longitude_ppl"
+	cols := "assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root, jumlah_usaha, nomor_bangunan, keberadaan_keluarga, assignment_status_alias, latitude_ppl, longitude_ppl"
 	if includeCatatan {
-		cols += ", t.catatan"
+		cols += ", catatan"
 	}
-	// The joined/flag columns are resolved here rather than over the
-	// already-paged rows, which would be ~25% faster: sorting by one of
-	// them needs them available before ORDER BY/LIMIT, and one query shape
-	// means they sort exactly like every other column. Measured on the
-	// largest desa (27k rows), the whole page query goes 200ms -> 274ms.
-	// The join keeps the left side's primary-key range intact — read_rows
-	// goes 57,344 -> 146,781, and the difference is exactly se2026_match's
-	// own 89,437 rows.
-	cols += fmt.Sprintf(", m.ada, %s, m.aid_baru", flagExpr("t.assignment_id", regsosekKeySub))
+	// Three dictionary lookups, in the same SELECT the ORDER BY applies to
+	// so they sort exactly like every other column. They cost almost
+	// nothing: this page query measures 21ms on the largest desa against
+	// 19ms without these columns at all, and read_rows stays at the left
+	// side's own 57,344 — the dictionaries are already in memory, so
+	// neither source table is touched.
+	cols += fmt.Sprintf(", %s, %s, %s",
+		dictHasExpr(matchDict, "assignment_id"),
+		dictHasExpr(regsosekDict, "assignment_id"),
+		dictGetBaruExpr("assignment_id"))
 	where, args := filter.clause()
 	q := fmt.Sprintf(`SELECT
 		%s
-	FROM %s AS t
-	%s
+	FROM %s
 	WHERE %s
 	ORDER BY %s %s
-	LIMIT %d OFFSET %d`, cols, table, matchJoin, where, sortCol, dir.SQL(), pageSize, offset)
+	LIMIT %d OFFSET %d`, cols, table, where, sortCol, dir.SQL(), pageSize, offset)
 
 	rows, err := s.conn.Query(ctx, q, args...)
 	if err != nil {
@@ -1232,8 +1232,7 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 			dest = append(dest, &p.Catatan)
 		}
 		// UInt8 in ClickHouse, bool in Point — same as queryPoints.
-		// adaBaru comes from matchJoin's literal, so a LEFT JOIN miss
-		// scans as UInt8's zero value.
+		// dictHas returns UInt8, so a miss scans as 0.
 		var adaBaru, adaRegsosek uint8
 		dest = append(dest, &adaBaru, &adaRegsosek, &p.AssignmentIDBaru)
 		if err := rows.Scan(dest...); err != nil {

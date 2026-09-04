@@ -50,6 +50,19 @@ func run(log *slog.Logger) error {
 	svc := points.NewService(conn)
 	regsvc := regsosek.NewService(conn)
 
+	// Logged rather than fatal, on purpose: the rest of the app already
+	// tolerates ClickHouse being briefly unavailable at startup, and making
+	// this fatal would turn a blip into a restart loop. But a missing
+	// dictionary breaks /api/list and /api/points completely, so it has to
+	// be loud here instead of showing up later as a stream of 500s.
+	dictCtx, dictCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	if err := svc.CheckDictionaries(dictCtx); err != nil {
+		log.Error("clickhouse dictionary check FAILED — /api/list and /api/points will not work", "err", err)
+	} else {
+		log.Info("clickhouse dictionaries ok")
+	}
+	dictCancel()
+
 	log.Info("computing dataset bounds (one-time full scan)")
 	boundsCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	bounds, err := svc.DatasetBounds(boundsCtx)
@@ -98,7 +111,7 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	srv := api.NewServer(svc, regsvc, conn, bounds, kabkotaList, mapPool, log)
+	srv := api.NewServer(svc, regsvc, conn, bounds, kabkotaList, mapPool, cfg.AuthUsername, cfg.AuthPassword, log)
 	go refreshBoundsPeriodically(ctx, svc, srv, log)
 
 	httpServer := &http.Server{
