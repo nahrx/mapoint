@@ -23,6 +23,14 @@ import (
 
 const sheetName = "Daftar Hasil Pendataan"
 
+// flagWord renders one of the two membership flags for a spreadsheet cell.
+func flagWord(ada bool) string {
+	if ada {
+		return "Ya"
+	}
+	return "Tidak"
+}
+
 var columns = []struct {
 	header string
 	width  float64
@@ -36,6 +44,9 @@ var columns = []struct {
 	{"Keberadaan Keluarga", 34},
 	{"Status", 34},
 	{"Assignment ID", 38},
+	{"Ditemukan di Assignment Baru", 24},
+	{"Assignment ID Baru", 38},
+	{"Ditemukan di Regsosek", 21},
 	{"Catatan", 40},
 }
 
@@ -221,6 +232,12 @@ func writeTable(f *excelize.File, sheet string, st styles, headerRow int, items 
 			report.DashIfEmpty(p.KeberadaanKeluarga),
 			report.DashIfEmpty(p.Status),
 			report.DashIfEmpty(p.AssignmentID),
+			// Spelled out rather than a checkmark glyph: these two columns
+			// are meant to be filtered and pivoted on in Excel, where a
+			// word sorts and groups more usefully than a symbol.
+			flagWord(p.AdaAssignmentBaru),
+			report.DashIfEmpty(p.AssignmentIDBaru),
+			flagWord(p.AdaRegsosek),
 			report.DashIfEmpty(p.Catatan),
 		}
 		for ci, v := range values {

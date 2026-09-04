@@ -983,6 +983,61 @@ body {
    confidence (see MATCH_COLORS in reg2022.js): green for an exact NIK or
    name hit, blue for an SLS-name hit, and warmer shades as the number of
    typo'd NIK digits grows. */
+/* The three columns that come from se2026_match / se2026_match_regsosek
+   share one tint (.col-joined) so they read as a single block appended to
+   the row rather than three more ordinary columns. Same tint family as
+   .col-match below, which serves the same purpose in the other table.
+   Assignment ID Baru sits between the two flags, so the tint has to cover
+   it too or the block would look striped.
+
+   .col-flag is the narrower rule for the two flag columns only: their
+   content is a single glyph, so it's centered. The ID column keeps the
+   default left alignment. */
+.list-table th.col-joined,
+.list-table td.col-joined {
+  background: #eef3f8;
+}
+
+.list-table tbody tr:nth-child(even) td.col-joined {
+  background: #e8eef5;
+}
+
+.list-table tbody tr:hover td.col-joined {
+  background: #e2ebf4;
+}
+
+.list-table th.col-flag,
+.list-table td.col-flag {
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* Nomor bangunan drawn beside each point at SubSLS level. pointer-events
+   is off so the label never intercepts the hover meant for the point
+   underneath it — the marker pane sits above the canvas the points are
+   drawn on, so without this the tooltip would die wherever a label
+   overlaps a dot. White halo instead of a filled box so a dense cluster of
+   labels stays readable without hiding the map. */
+.bangunan-label {
+  pointer-events: none;
+  white-space: nowrap;
+  font: 700 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #1a3f66;
+  text-shadow:
+    -1.5px -1.5px 0 #fff, 1.5px -1.5px 0 #fff,
+    -1.5px 1.5px 0 #fff, 1.5px 1.5px 0 #fff,
+    0 0 3px #fff;
+}
+
+.check-yes {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.check-no {
+  color: var(--text-faint);
+}
+
 .list-table th.col-match,
 .list-table td.col-match {
   background: #eef3f8;

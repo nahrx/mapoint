@@ -31,6 +31,25 @@ type Region struct {
 	KeberadaanKeluarga string
 	Status             string
 	Search             string
+
+	// FlagBaru and FlagRegsosek are the raw points.FlagYes/FlagNo values of
+	// the two membership filters, or "" when that filter was off. Rendered
+	// by FlagLabel.
+	FlagBaru     string
+	FlagRegsosek string
+}
+
+// FlagLabel renders one of the two membership filter values for a report
+// header. Anything other than the two known values reads as unset, which
+// only reachable if a caller skips points.ParseFlag.
+func FlagLabel(val string) string {
+	switch val {
+	case points.FlagYes:
+		return "Ya"
+	case points.FlagNo:
+		return "Tidak"
+	}
+	return ""
 }
 
 // FullCode joins the wilayah codes that are set into the longest prefix
@@ -95,6 +114,12 @@ func (r Region) ExtraFilters() [][2]string {
 	}
 	if r.Search != "" {
 		extra = append(extra, [2]string{"Cari Nama", r.Search})
+	}
+	if lbl := FlagLabel(r.FlagBaru); lbl != "" {
+		extra = append(extra, [2]string{"Ditemukan di Assignment Baru", lbl})
+	}
+	if lbl := FlagLabel(r.FlagRegsosek); lbl != "" {
+		extra = append(extra, [2]string{"Ditemukan di Regsosek", lbl})
 	}
 	return extra
 }

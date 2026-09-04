@@ -188,7 +188,8 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
 
 - **Sort by kolom apa saja** — klik header kolom mana pun (Nama, Alamat, ID
   SUBSLS, Jenis Prelist, Nomor Bangunan, Keberadaan Keluarga, Status,
-  Assignment ID) untuk mengurutkan tabel berdasarkan kolom itu; klik lagi
+  Assignment ID, Ditemukan di Assignment Baru, Assignment ID Baru,
+  Ditemukan di Regsosek) untuk mengurutkan tabel berdasarkan kolom itu; klik lagi
   kolom yang sama untuk membalik arah (naik/turun), klik kolom lain untuk
   pindah kolom urut (default naik). Panah kecil di header cuma muncul di
   kolom yang sedang aktif. Nama kolom di query string (`sortBy=nama`,
@@ -399,6 +400,145 @@ Bedanya dari peta utama: extent untuk auto-zoom dihitung per request lewat
 saat startup. Itu karena di sini extent-nya ikut berubah oleh filter Match
 Status dan pencarian, bukan cuma oleh wilayah.
 
+### Kolom "Ditemukan di …" (join ke `se2026_match` & `se2026_match_regsosek`)
+
+Menu **Daftar** dan menu **Peta** masing-masing menambahkan dua kolom flag,
+dihitung dari `se2026_titik2.assignment_id`:
+
+| Kolom | Sumber | Kunci |
+| --- | --- | --- |
+| **Ditemukan di Assignment Baru** | `se2026_match` | `assignment_id = assignment_id_tdk` |
+| **Ditemukan di Regsosek** | `se2026_match_regsosek` | `assignment_id = assignment_id` |
+
+Di tabel Daftar keduanya tampil sebagai centang (✓) atau strip (–) di kolom
+bertint sendiri, ikut bisa di-sort seperti kolom lain, dan ikut terbawa ke
+unduhan PDF ("V"/"-") dan Excel ("Ya"/"Tidak"). Di peta keduanya tampil
+sebagai dua baris terakhir tooltip. Filternya (Semua / Ya / Tidak) ada di
+kedua menu dan ikut menunggu tombol Terapkan Filter.
+
+**Keduanya memakai `IN (subquery)`, bukan `JOIN`.** Ini bukan soal gaya:
+kunci di sisi kanan tidak unik (`se2026_match` punya 89.437 baris untuk
+88.636 `assignment_id_tdk` distinct), jadi `JOIN` biasa akan menggandakan
+baris di sisi kiri dan merusak total serta paginasi. `IN` adalah uji
+keanggotaan himpunan, jadi kunci yang muncul dua kali tetap menghasilkan
+satu baris. Yang dibutuhkan memang cuma "ada atau tidak" — tidak ada kolom
+lain yang diambil dari kedua tabel itu — sehingga `IN` sekaligus yang
+paling murah.
+
+Diukur, bukan diperkirakan (`assignment_id` di `se2026_titik2`):
+
+| | Kunci distinct di tabel sumber | Yang ketemu di `se2026_titik2` |
+| --- | --- | --- |
+| `se2026_match.assignment_id_tdk` | 88.636 | 88.633 (99,997%) |
+| `se2026_match_regsosek.assignment_id` | 166.505 | 166.505 (100%) |
+
+Biaya query: tiap flag membangun himpunan kunci (~89rb dan ~167rb), jadi
+kolomnya dihitung di query yang sama dengan `ORDER BY` supaya bisa di-sort.
+Pada desa terbesar (27rb baris) satu halaman Daftar naik dari 200ms ke
+271ms. Fragmen WHERE-nya cuma ditambahkan kalau filternya benar-benar
+dipakai, jadi viewport peta tanpa filter tidak membayar apa pun: diukur lewat aplikasi, cluster se-provinsi tetap ~275ms tanpa filter dan naik ke ~664ms kalau salah satu filter flag dinyalakan.
+
+> **Penting untuk menu Peta.** Kedua tabel sumber berisi keluarga yang
+> **tidak ditemukan** saat pendataan, sehingga titik koordinatnya di
+> `se2026_titik2` hampir tidak pernah terekam. Diukur:
+>
+> | Kelompok | Baris | Punya `latitude_ppl`/`longitude_ppl` terpakai |
+> | --- | --- | --- |
+> | Semua `se2026_titik2` | 2.168.304 | 1.238.096 |
+> | Ada di `se2026_match` | 88.638 | **1** |
+> | Ada di `se2026_match_regsosek` | 166.507 | **21** |
+>
+> Jadi di menu Peta, filter "Ditemukan di … = Ya" wajar kalau cuma
+> memunculkan segelintir titik — itu bukan bug, tapi memang isi datanya.
+> Di menu **Daftar** kedua flag tetap penuh (88.638 dan 166.507 baris),
+> karena Daftar tidak menyaring baris berdasarkan koordinat. Untuk melihat
+> baris-baris ini di atas peta, pakai menu **Peta Match Reg2022**, yang
+> memakai `latitude_regsosek`/`longitude_regsosek` dan bukan koordinat
+> `se2026_titik2`.
+
+
+#### Kolom "Assignment ID Baru" (khusus menu Daftar)
+
+Menu **Daftar** menambahkan satu kolom lagi dari `se2026_match`:
+`assignment_id_baru`, lewat kunci yang sama
+(`assignment_id = assignment_id_tdk`). Berbeda dari kedua flag di atas,
+ini nilai sungguhan, jadi butuh `LEFT JOIN`, bukan `IN`. Kolomnya cuma ada
+di menu Daftar — peta tidak menjoin tabel itu, dan field-nya `omitempty`
+sehingga tidak ikut terkirim di payload `/api/points`.
+
+Tiga hal yang menentukan bentuk query-nya:
+
+1. **Subquery-nya di-`GROUP BY` sebelum dijoin.** `assignment_id_tdk` tidak
+   unik (89.437 baris untuk 88.636 kunci distinct), jadi join ke tabel
+   mentahnya akan mengubah 792 baris kiri jadi 1.593 dan merusak total serta
+   paginasi. Diukur: jumlah baris tetap 2.168.304 dengan maupun tanpa join.
+
+2. **Kunci ganda ditampilkan semua, bukan dipilih salah satu.** Dari 792
+   kunci ganda itu, **787 punya `assignment_id_baru` yang benar-benar
+   berbeda** — jadi `min()`/`argMin()` akan menampilkan nilai yang salah
+   pada sekitar separuh baris tersebut. Nilainya digabung dengan koma
+   (`groupUniqArray` + `arrayStringConcat`), jadi baris dengan dua
+   assignment baru terbaca keduanya. Ini cuma 0,9% dari baris yang cocok.
+
+3. **Flag "Ditemukan di Assignment Baru" di menu Daftar diambil dari join
+   ini**, bukan dari `IN` terpisah, supaya `se2026_match` cukup dibaca
+   sekali. Hasilnya identik — diuji ke seluruh 2.168.304 baris, 0 selisih —
+   dan query satu halaman turun dari 294ms ke 274ms. Yang dipakai adalah
+   literal `1 AS ada` di subquery, bukan tes "aid_baru tidak kosong", supaya
+   tetap benar kalau kolom itu suatu saat berisi blank. Menu Peta tetap
+   memakai `IN` karena tidak menjoin apa pun.
+
+Biaya: pada desa terbesar (27rb baris) satu halaman Daftar jadi ~274ms.
+Join-nya tidak merusak primary-key range di sisi kiri — `read_rows` naik
+dari 57.344 ke 146.781, dan selisihnya persis 89.437 baris `se2026_match`
+sendiri.
+
+Kolom ini ikut ke **unduhan Excel**, tapi **tidak ke PDF**. Alasannya sama
+dengan kolom Assignment ID yang sudah ada: PDF Daftar memang tidak memuat
+kolom ID sama sekali (bukan info yang dibaca dari kertas), dan kedua set
+kolomnya sudah di 275–276mm dari 277mm yang tersedia di A4 landscape —
+tidak ada ruang untuk UUID 36 karakter tanpa memangkas Nama/Alamat/Catatan.
+### Label nomor bangunan di peta (level SubSLS)
+
+Begitu filter peta diturunkan sampai **SubSLS**, tiap titik individual
+mendapat label kecil berisi `nomor_bangunan` di sisi kanan-atasnya —
+berjarak 1px dari tepi titik, dengan sisi bawah teks sejajar garis tengah
+titik, teks biru berhalo putih (bukan kotak, supaya tidak menutupi peta).
+Diimplementasikan sebagai `L.divIcon` non-interaktif per titik di
+`web/static/app.js` (`addBangunanLabel`).
+
+Dua penjaga, keduanya dari hasil pengukuran:
+
+1. **Hanya di level SubSLS.** Satu SubSLS berisi 70 titik di median, 229 di
+   p99, dan 889 di yang terbesar — jumlah elemen DOM yang wajar. Satu desa
+   atau lebih luas akan menghasilkan ribuan label yang saling tumpang
+   tindih.
+
+2. **Hanya dari zoom 16 ke atas** (`BANGUNAN_LABEL_MIN_ZOOM`). Di bawah itu
+   titik-titiknya terlalu rapat sehingga label tidak lagi menunjuk apa pun.
+
+Label juga dilewati untuk nilai yang bukan nomor bangunan sungguhan: 1.770
+baris bernilai `0`, 2 negatif, dan 3 bernilai `2147483647` (sentinel int32).
+Titiknya tetap digambar dan tooltip tetap menampilkan nilai mentahnya —
+yang dilewati cuma labelnya. Sisanya, 1.236.321 baris (99,86%), punya nilai
+wajar, dan 99,7% di antaranya cuma 1–3 digit sehingga labelnya pendek.
+
+**Kalau filter sudah di SubSLS tapi label belum muncul, itu soal zoom.**
+Auto-fit ke satu SubSLS mendarat di zoom 18 untuk SubSLS biasa, tapi
+**3.219 dari 15.722 SubSLS (20,5%)** titiknya tersebar cukup luas sehingga
+auto-fit-nya di bawah zoom 16. Supaya tidak terlihat seperti fitur yang
+rusak, panel statistik menampilkan baris "Perbesar peta untuk melihat label
+nomor bangunan." tepat pada kondisi itu, dan baris itu hilang begitu
+labelnya muncul.
+
+Catatan implementasi: label berada di `leaflet-marker-pane`, yang posisinya
+**di atas** canvas tempat titik digambar. Tanpa penanganan, label akan
+menelan hover yang dibutuhkan tooltip — persis masalah yang dulu terjadi
+dengan polygon SubSLS. Karena itu markernya `interactive: false` *dan*
+kelas `.bangunan-label` di-set `pointer-events: none`. Sudah diuji di
+browser: dengan 89 label aktif, hover ke titik tetap memunculkan tooltip
+lengkap.
+
 ### Tampilan & responsif
 
 Warna, jarak, radius, dan bayangan didefinisikan sekali sebagai CSS custom
@@ -525,7 +665,7 @@ Lalu buka `http://localhost:8082` di browser (dari `HTTP_ADDR=:8082` di `.env`; 
 ## Endpoint
 
 - `GET /` — peta (frontend)
-- `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=` — data titik/cluster untuk satu viewport (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
+- `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=&flagBaru=&flagRegsosek=` — data titik/cluster untuk satu viewport. Titik individual ikut membawa kedua flag "Ditemukan di …" untuk tooltip (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
 - `GET /api/bounds` — extent geografis + total baris valid di seluruh dataset
 - `GET /api/kabkota` — daftar kabupaten/kota yang ada di data, dengan jumlah titik & bounding box masing-masing
 - `GET /api/kecamatan?kabkota=` — daftar kecamatan di dalam satu kabupaten/kota (parameter wajib); `name` diisi dari PostGIS kalau `MAP_*` dikonfigurasi, kosong kalau tidak
@@ -533,9 +673,9 @@ Lalu buka `http://localhost:8082` di browser (dari `HTTP_ADDR=:8082` di `.env`; 
 - `GET /api/sls?kabkota=&kecamatan=&desa=` — daftar Kode SLS di dalam satu desa/kelurahan (ketiga parameter wajib)
 - `GET /api/subsls?kabkota=&kecamatan=&desa=&sls=` — daftar Kode SubSLS di dalam satu SLS (keempat parameter wajib)
 - `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — GeoJSON batas SubSLS untuk overlay di peta (kelima parameter wajib); 503 kalau PostGIS tidak dikonfigurasi/tidak terhubung — lihat `internal/mapdb/`
-- `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `status`, `assignment_id` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`) semuanya opsional dan independen dari filter wilayah maupun satu sama lain — nilainya divalidasi terhadap enum tetap di `internal/points/points.go`, pakai `__EMPTY__` untuk memfilter kolom yang kosong
-- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
-- `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&sortBy=&dir=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf` (lihat `prepareReport` di `internal/api/server.go`, dipakai bareng oleh kedua handler)
+- `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&flagBaru=&flagRegsosek=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `status`, `assignment_id`, `ada_assignment_baru`, `ada_regsosek`, `assignment_id_baru` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`) semuanya opsional dan independen dari filter wilayah maupun satu sama lain — nilainya divalidasi terhadap enum tetap di `internal/points/points.go`, pakai `__EMPTY__` untuk memfilter kolom yang kosong. `flagBaru` dan `flagRegsosek` hanya menerima `""` (semua), `"1"` (ada) atau `"0"` (tidak ada) — nilai lain ditolak 400
+- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&flagBaru=&flagRegsosek=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
+- `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&flagBaru=&flagRegsosek=&search=&sortBy=&dir=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf` (lihat `prepareReport` di `internal/api/server.go`, dipakai bareng oleh kedua handler)
 - `GET /api/reg2022?kabkota=&kecamatan=&desa=&sls=&subsls=&matchStatus=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar Reg2022 (tabel `se2026_match_regsosek`). Filter wilayah sama dengan endpoint lain; `matchStatus` divalidasi terhadap 7 nilai tetap di `internal/regsosek/regsosek.go` (pakai `__EMPTY__` untuk kolom kosong); `search` mencari substring di `nama_prelist`, `nama_kk`, `no_kk`, dan `nik_kk` sekaligus, lewat parameter binding. `sortBy` salah satu dari `nama` (default), `nama_kk`, `no_kk`, `nik_kk`, `subsls`, `keberadaan_keluarga`, `match_status`, `alamat_regsosek`, `nama_matched`, `nik_matched`, `assignment_id`
 - `GET /api/reg2022/filter-options` — daftar nilai `match_status` untuk dropdown filter menu Daftar Reg2022
 - `GET /api/reg2022/pdf?...` dan `GET /api/reg2022/xlsx?...` — laporan "Daftar Match Regsosek". Parameter filternya sama dengan `/api/reg2022`; `kabkota` dan `kecamatan` **wajib** (cakupan minimal satu kecamatan, lebih luas ditolak 400)

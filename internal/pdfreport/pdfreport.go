@@ -36,34 +36,48 @@ var (
 	// subslsColumns is used when the report covers exactly one SubSLS: the
 	// ID SUBSLS is identical on every row there, so the header states it
 	// once (see report.Region.WilayahRows) and the table spends the space
-	// on Nama/Alamat/Catatan instead. Total: 255mm.
+	// on Nama/Alamat/Catatan instead. Total: 276mm.
 	subslsColumns = []column{
 		{"No", 8},
-		{"Nama", 38},
-		{"Alamat", 42},
-		{"Nomor Bangunan", 18},
-		{"Jenis Prelist", 20},
-		{"Keberadaan Keluarga", 36},
-		{"Status", 33},
+		{"Nama", 36},
+		{"Alamat", 40},
+		{"Nomor Bangunan", 16},
+		{"Jenis Prelist", 18},
+		{"Keberadaan Keluarga", 34},
+		{"Status", 30},
+		{"Ass. Baru", 17},
+		{"Regsosek", 17},
 		{"Catatan", 60},
 	}
 
 	// wideColumns is used for anything broader than one SubSLS (a whole
 	// desa/kelurahan, or an SLS): level_6_full_code then differs from row
 	// to row, so it has to be a column of its own or the report couldn't
-	// tell you which SubSLS a given row belongs to. Total: 250mm.
+	// tell you which SubSLS a given row belongs to. Total: 275mm.
 	wideColumns = []column{
 		{"No", 8},
-		{"Nama", 34},
-		{"Alamat", 36},
+		{"Nama", 32},
+		{"Alamat", 33},
 		{"ID SUBSLS", 26},
-		{"Nomor Bangunan", 16},
-		{"Jenis Prelist", 18},
-		{"Keberadaan Keluarga", 32},
-		{"Status", 30},
-		{"Catatan", 50},
+		{"Nomor Bangunan", 15},
+		{"Jenis Prelist", 17},
+		{"Keberadaan Keluarga", 30},
+		{"Status", 28},
+		{"Ass. Baru", 17},
+		{"Regsosek", 17},
+		{"Catatan", 52},
 	}
 )
+
+// flagMark is the printable stand-in for the checkmark the web table
+// shows. fpdf writes cp1252, which has no U+2713, so a "V" is used rather
+// than letting the glyph silently drop out of the PDF.
+func flagMark(ada bool) string {
+	if ada {
+		return "V"
+	}
+	return "-"
+}
 
 // columnsFor picks the column set matching the report's scope, and rowFor
 // must stay in step with it — both switch on the same condition.
@@ -89,6 +103,8 @@ func rowFor(region Region, no int, p points.Point) []string {
 			report.DashIfEmpty(p.JenisPrelist),
 			report.DashIfEmpty(p.KeberadaanKeluarga),
 			report.DashIfEmpty(p.Status),
+			flagMark(p.AdaAssignmentBaru),
+			flagMark(p.AdaRegsosek),
 			report.DashIfEmpty(p.Catatan),
 		}
 	}
@@ -101,6 +117,8 @@ func rowFor(region Region, no int, p points.Point) []string {
 		report.DashIfEmpty(p.JenisPrelist),
 		report.DashIfEmpty(p.KeberadaanKeluarga),
 		report.DashIfEmpty(p.Status),
+		flagMark(p.AdaAssignmentBaru),
+		flagMark(p.AdaRegsosek),
 		report.DashIfEmpty(p.Catatan),
 	}
 }

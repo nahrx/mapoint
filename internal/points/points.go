@@ -20,6 +20,13 @@ import (
 const (
 	table = "se2026_titik2"
 
+	// matchTable and regsosekTable back the two "ditemukan di …" flags.
+	// Neither is joined for its columns — only for whether a matching row
+	// exists at all — so they are used as IN-subqueries rather than joins;
+	// see flagExpr.
+	matchTable    = "se2026_match"
+	regsosekTable = "se2026_match_regsosek"
+
 	// IndividualLimit is the max rows returned as raw points for one
 	// request. Below this the viewport is "sparse" and every point is
 	// shown individually with full tooltip data.
@@ -180,6 +187,95 @@ func GetFilterOptions() FilterOptions {
 	}
 }
 
+// matchKeySub and regsosekKeySub are the key sets behind the two flags.
+// se2026_match is keyed by assignment_id_tdk, se2026_match_regsosek by
+// assignment_id; both are matched against se2026_titik2.assignment_id.
+//
+// Measured before choosing this shape: se2026_titik2.assignment_id covers
+// 88,633 of se2026_match's 88,636 distinct keys (99.997%) and all 166,505
+// of se2026_match_regsosek's, so both flags carry real signal here. (The
+// same join against se2026_match_regsosek.assignment_id instead — a
+// different id space — overlaps se2026_match by exactly 0.)
+//
+// Neither key is unique on its own side (se2026_match has 89,437 rows for
+// 88,636 keys), which would duplicate left rows under a plain JOIN and
+// corrupt the row count and pagination. IN sidesteps that entirely: it is
+// a set membership test, so a key appearing twice still yields one row.
+const (
+	matchKeySub    = "SELECT assignment_id_tdk FROM " + matchTable
+	regsosekKeySub = "SELECT assignment_id FROM " + regsosekTable
+)
+
+// flagExpr builds the membership test for one flag. col is the qualified
+// assignment_id to test and sub is one of the two constants above — both
+// are compile-time constants in this package, never caller input.
+func flagExpr(col, sub string) string {
+	return fmt.Sprintf("(%s IN (%s))", col, sub)
+}
+
+// matchJoin attaches se2026_match's assignment_id_baru to each row. Only
+// the Daftar list uses it (see listItems); the map needs no value column
+// from that table, so queryPoints stays join-free.
+//
+// The subquery is grouped before the join, and that is load-bearing:
+// assignment_id_tdk is not unique (89,437 rows for 88,636 distinct keys),
+// so joining the raw table would turn 792 left rows into 1,593 and corrupt
+// both the row count and pagination. Grouping first keeps it one row per
+// key — verified: the count is 2,168,304 with and without the join.
+//
+// 787 of those 792 keys carry genuinely *different* assignment_id_baru
+// values, so picking one with min()/argMin() would silently show a value
+// that is wrong about half the time for them. They are concatenated
+// instead, so a row with two new assignments reads as both — rare (0.9% of
+// matched rows) and honest rather than quietly lossy.
+//
+// "1 AS ada" is what feeds Point.AdaAssignmentBaru here, replacing the IN
+// test flagExpr would otherwise build: identical results on all 2,168,304
+// rows (measured, 0 differences) while reading se2026_match once instead of
+// twice. It is a literal rather than a test on aid_baru being non-empty, so
+// it stays correct even if that column ever holds blanks.
+//
+// Aliases are deliberately not named after their source columns: an alias
+// like "AS assignment_id_baru" would shadow the column of that name inside
+// the aggregate beside it, which ClickHouse rejects as an aggregate nested
+// in an aggregate.
+const matchJoin = `LEFT JOIN (
+		SELECT
+			assignment_id_tdk,
+			1 AS ada,
+			arrayStringConcat(arraySort(groupUniqArray(assignment_id_baru)), ', ') AS aid_baru
+		FROM ` + matchTable + `
+		GROUP BY assignment_id_tdk
+	) AS m ON t.assignment_id = m.assignment_id_tdk`
+
+// FlagYes and FlagNo are the two values a flag filter can take over the
+// wire; "" means the filter is unset. Kept as strings rather than a *bool
+// so the filter reads the same as every other optional filter here.
+const (
+	FlagYes = "1"
+	FlagNo  = "0"
+)
+
+// ParseFlag validates one of the two "ditemukan di …" filter values.
+// Anything other than "", "1" or "0" is rejected rather than coerced, so a
+// typo surfaces as a 400 instead of silently filtering the wrong way.
+func ParseFlag(raw string) (string, error) {
+	switch raw {
+	case "", FlagYes, FlagNo:
+		return raw, nil
+	}
+	return "", fmt.Errorf("invalid flag filter value %q: expected %q or %q", raw, FlagYes, FlagNo)
+}
+
+// flagClause turns a validated flag value into a WHERE fragment.
+func flagClause(sub, val string) string {
+	expr := flagExpr("assignment_id", sub)
+	if val == FlagNo {
+		return "NOT " + expr
+	}
+	return expr
+}
+
 // EmptyValue is the sentinel a caller passes to explicitly filter for rows
 // where the column itself is blank, as distinct from leaving the filter
 // unset entirely. Parse*'s zero value ("") already means "no filter", so
@@ -240,6 +336,12 @@ type Filter struct {
 	JenisPrelist       string
 	KeberadaanKeluarga string
 	Status             string
+
+	// FlagBaru and FlagRegsosek filter on the two membership flags:
+	// FlagYes keeps only rows found in that table, FlagNo only rows not
+	// found in it, "" leaves the filter off. Validated by ParseFlag.
+	FlagBaru     string
+	FlagRegsosek string
 
 	// Search is free-text user input matched against nama_assignment
 	// (see clause). Unlike every other field above, it is never validated
@@ -310,6 +412,15 @@ func (f Filter) clause() (string, []any) {
 	if f.Status != "" {
 		parts = append(parts, attrClause("assignment_status_alias", f.Status))
 	}
+	// Both flags cost a set build (~90k and ~167k keys), so the fragment is
+	// only added when the filter is actually on — an unfiltered viewport
+	// query pays nothing for these.
+	if f.FlagBaru != "" {
+		parts = append(parts, flagClause(matchKeySub, f.FlagBaru))
+	}
+	if f.FlagRegsosek != "" {
+		parts = append(parts, flagClause(regsosekKeySub, f.FlagRegsosek))
+	}
 	if f.Search != "" {
 		// positionCaseInsensitive is a plain substring search, not a LIKE
 		// pattern, so there's no %/_ wildcard to escape on top of the bind
@@ -370,6 +481,19 @@ type Point struct {
 	NomorBangunan      int32  `json:"nomor_bangunan"`
 	KeberadaanKeluarga string `json:"keberadaan_keluarga"`
 	Status             string `json:"status"`
+	// AdaAssignmentBaru and AdaRegsosek report whether this row's
+	// assignment_id appears in se2026_match (as assignment_id_tdk) and in
+	// se2026_match_regsosek respectively. They are presence flags only —
+	// neither source table contributes any other column here.
+	AdaAssignmentBaru bool `json:"ada_assignment_baru"`
+	AdaRegsosek       bool `json:"ada_regsosek"`
+	// AssignmentIDBaru is se2026_match.assignment_id_baru for this row, or
+	// "" when there is none. Only populated by the Daftar list path (see
+	// matchJoin) — /api/points doesn't join that table, so it's omitted
+	// from the map payload rather than shipped empty on every marker. For
+	// the 0.9% of matched rows whose key maps to more than one new
+	// assignment, this holds all of them, comma-separated.
+	AssignmentIDBaru string `json:"assignment_id_baru,omitempty"`
 	// Catatan is free-text field notes — only populated by ListAll (the
 	// PDF/Excel report path, via listItems' includeCatatan). Left "" for
 	// /api/points and /api/list, which don't select this column at all:
@@ -500,10 +624,13 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 	q := fmt.Sprintf(`SELECT
 		assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root,
 		jumlah_usaha, nomor_bangunan, keberadaan_keluarga, assignment_status_alias,
-		latitude_ppl, longitude_ppl
+		latitude_ppl, longitude_ppl,
+		%s, %s
 	FROM %s
 	WHERE %s AND %s AND %s
-	LIMIT %d`, table, validCoords, bboxClause(b), where, IndividualLimit)
+	LIMIT %d`,
+		flagExpr("assignment_id", matchKeySub), flagExpr("assignment_id", regsosekKeySub),
+		table, validCoords, bboxClause(b), where, IndividualLimit)
 
 	rows, err := s.conn.Query(ctx, q, args...)
 	if err != nil {
@@ -514,13 +641,18 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 	pts := make([]Point, 0, 512)
 	for rows.Next() {
 		var p Point
+		// ClickHouse types an IN expression as UInt8, which the driver
+		// won't scan straight into a bool — hence the two temporaries.
+		var adaBaru, adaRegsosek uint8
 		if err := rows.Scan(
 			&p.AssignmentID, &p.Nama, &p.Alamat, &p.SubSLS, &p.JenisPrelist,
 			&p.KeberadaanUsaha, &p.NomorBangunan, &p.KeberadaanKeluarga, &p.Status,
-			&p.Lat, &p.Lon,
+			&p.Lat, &p.Lon, &adaBaru, &adaRegsosek,
 		); err != nil {
 			return nil, err
 		}
+		p.AdaAssignmentBaru = adaBaru == 1
+		p.AdaRegsosek = adaRegsosek == 1
 		pts = append(pts, p)
 	}
 	return pts, rows.Err()
@@ -942,6 +1074,24 @@ var listSortColumns = map[string]string{
 	"keberadaan_keluarga": "keberadaan_keluarga",
 	"status":              "assignment_status_alias",
 	"assignment_id":       "assignment_id",
+
+	// Columns that only exist in the list query's SELECT: the two
+	// membership flags and the joined assignment_id_baru. listItems must
+	// resolve them in the same SELECT the ORDER BY applies to — see the
+	// comment there. ada_assignment_baru reads from matchJoin rather than
+	// an IN test, since that query already joins se2026_match.
+	"ada_assignment_baru": "m.ada",
+	"ada_regsosek":        flagSortExpr(regsosekKeySub),
+	"assignment_id_baru":  "m.aid_baru",
+}
+
+// flagSortExpr exists so listSortColumns can hold the flag expressions as
+// values: they are built from this package's own constants, exactly like
+// the plain column names beside them, and never from caller input. Only a
+// value of this map ever reaches the SQL text — ParseSortColumn already
+// reduced the caller's sortBy to one of its keys.
+func flagSortExpr(sub string) string {
+	return flagExpr("assignment_id", sub)
 }
 
 // DefaultSortColumn is used by ParseSortColumn when sortBy is empty or not
@@ -1042,17 +1192,27 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 	if !ok {
 		sortCol = listSortColumns[DefaultSortColumn]
 	}
-	cols := "assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root, jumlah_usaha, nomor_bangunan, keberadaan_keluarga, assignment_status_alias, latitude_ppl, longitude_ppl"
+	cols := "t.assignment_id, t.nama_assignment, t.alamat, t.level_6_full_code, t.jenis_prelist_root, t.jumlah_usaha, t.nomor_bangunan, t.keberadaan_keluarga, t.assignment_status_alias, t.latitude_ppl, t.longitude_ppl"
 	if includeCatatan {
-		cols += ", catatan"
+		cols += ", t.catatan"
 	}
+	// The joined/flag columns are resolved here rather than over the
+	// already-paged rows, which would be ~25% faster: sorting by one of
+	// them needs them available before ORDER BY/LIMIT, and one query shape
+	// means they sort exactly like every other column. Measured on the
+	// largest desa (27k rows), the whole page query goes 200ms -> 274ms.
+	// The join keeps the left side's primary-key range intact — read_rows
+	// goes 57,344 -> 146,781, and the difference is exactly se2026_match's
+	// own 89,437 rows.
+	cols += fmt.Sprintf(", m.ada, %s, m.aid_baru", flagExpr("t.assignment_id", regsosekKeySub))
 	where, args := filter.clause()
 	q := fmt.Sprintf(`SELECT
 		%s
-	FROM %s
+	FROM %s AS t
+	%s
 	WHERE %s
 	ORDER BY %s %s
-	LIMIT %d OFFSET %d`, cols, table, where, sortCol, dir.SQL(), pageSize, offset)
+	LIMIT %d OFFSET %d`, cols, table, matchJoin, where, sortCol, dir.SQL(), pageSize, offset)
 
 	rows, err := s.conn.Query(ctx, q, args...)
 	if err != nil {
@@ -1071,9 +1231,16 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 		if includeCatatan {
 			dest = append(dest, &p.Catatan)
 		}
+		// UInt8 in ClickHouse, bool in Point — same as queryPoints.
+		// adaBaru comes from matchJoin's literal, so a LEFT JOIN miss
+		// scans as UInt8's zero value.
+		var adaBaru, adaRegsosek uint8
+		dest = append(dest, &adaBaru, &adaRegsosek, &p.AssignmentIDBaru)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
+		p.AdaAssignmentBaru = adaBaru == 1
+		p.AdaRegsosek = adaRegsosek == 1
 		items = append(items, p)
 	}
 	return items, rows.Err()

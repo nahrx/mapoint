@@ -10,6 +10,8 @@
   const desaSelect = document.getElementById("desa-select");
   const slsSelect = document.getElementById("sls-select");
   const subslsSelect = document.getElementById("subsls-select");
+  const flagBaruSelect = document.getElementById("flagbaru-select");
+  const flagRegsosekSelect = document.getElementById("flagregsosek-select");
   const applyFilterBtn = document.getElementById("apply-filter-btn");
 
   // Phone-sized screens get the compact (icon) basemap switcher and a
@@ -178,6 +180,8 @@
   let appliedDesa = "";
   let appliedSls = "";
   let appliedSubsls = "";
+  let appliedFlagBaru = "";
+  let appliedFlagRegsosek = "";
 
   // --- status labels -------------------------------------------------
 
@@ -212,7 +216,70 @@
         <div><b>Nomor Bangunan:</b> ${esc(p.nomor_bangunan)}</div>
         <div><b>Keberadaan Keluarga:</b> ${esc(p.keberadaan_keluarga)}</div>
         <div><b>Status:</b> ${esc(p.status)}</div>
+        <div><b>Ditemukan di Assignment Baru:</b> ${flagText(p.ada_assignment_baru)}</div>
+        <div><b>Ditemukan di Regsosek:</b> ${flagText(p.ada_regsosek)}</div>
       </div>`;
+  }
+
+  // --- label nomor bangunan ---------------------------------------------
+
+  // Nomor bangunan labels are drawn next to each point once the filter is
+  // pinned all the way down to one SubSLS. Two guards, both from measuring
+  // the data:
+  //
+  //  - Only at SubSLS level. A SubSLS holds 70 points at the median and 889
+  //    at the largest, which is a sane number of DOM labels; a whole desa or
+  //    wider would be thousands of overlapping ones.
+  //  - Only from BANGUNAN_LABEL_MIN_ZOOM in. Applying a SubSLS filter
+  //    auto-fits the map well past this, so labels appear immediately; the
+  //    threshold only takes them away again if the user deliberately zooms
+  //    back out, where the points are too close together for a label to
+  //    point at anything.
+  const BANGUNAN_LABEL_MIN_ZOOM = 16;
+
+  // 2147483647 is int32's max, which this column uses as a sentinel on 3
+  // rows; 1,770 more hold 0 and 2 are negative. None of those is a building
+  // number anyone would want printed on the map, so they get no label — the
+  // point itself still renders, and the tooltip still shows the raw value.
+  const NOMOR_BANGUNAN_SENTINEL = 2147483647;
+
+  function shouldLabelBangunan() {
+    return !!appliedSubsls && map.getZoom() >= BANGUNAN_LABEL_MIN_ZOOM;
+  }
+
+  function addBangunanLabel(p) {
+    const n = p.nomor_bangunan;
+    if (!(n > 0) || n >= NOMOR_BANGUNAN_SENTINEL) return;
+    L.marker([p.lat, p.lon], {
+      icon: L.divIcon({
+        className: "bangunan-label",
+        html: esc(String(n)),
+        // Null size lets CSS size the box to the digits. Leaflet negates
+        // iconAnchor into margins, so [-7, 11] puts the label's top-left
+        // 7px right of the dot's centre and 11px above it — up and to the
+        // right, with the 11px-tall text ending level with the dot's
+        // centre line. The 7px keeps it a single pixel clear of the dot
+        // (radius 5 + 1px stroke), which is the binding constraint at the
+        // label's bottom-left corner.
+        iconSize: null,
+        iconAnchor: [-7, 11],
+      }),
+      // The label sits in the marker pane, which is above the canvas the
+      // points are drawn on, so an interactive label would swallow the
+      // hover the tooltip needs. interactive:false plus pointer-events:none
+      // in the CSS (belt and braces — see .bangunan-label in style.css).
+      interactive: false,
+      keyboard: false,
+    }).addTo(layer);
+  }
+
+  // Both flags are always shown, unlike a value that can be blank: "Tidak"
+  // is genuine information here (the point exists in neither table), so
+  // hiding the row would lose it.
+  function flagText(ada) {
+    return ada
+      ? `<span class="check-yes">&#10003; Ya</span>`
+      : `<span class="check-no">&#8211; Tidak</span>`;
   }
 
   // --- fetching --------------------------------------------------------
@@ -245,6 +312,8 @@
     if (appliedDesa) params.set("desa", appliedDesa);
     if (appliedSls) params.set("sls", appliedSls);
     if (appliedSubsls) params.set("subsls", appliedSubsls);
+    if (appliedFlagBaru) params.set("flagBaru", appliedFlagBaru);
+    if (appliedFlagRegsosek) params.set("flagRegsosek", appliedFlagRegsosek);
 
     setLoading(true);
     try {
@@ -269,6 +338,8 @@
   function render(resp) {
     layer.clearLayers();
 
+    const showLabels = shouldLabelBangunan();
+
     if (resp.type === "points") {
       for (const p of resp.points || []) {
         const marker = L.circleMarker([p.lat, p.lon], {
@@ -281,6 +352,7 @@
         });
         marker.bindTooltip(tooltipHTML(p), { sticky: true, direction: "top" });
         marker.addTo(layer);
+        if (showLabels) addBangunanLabel(p);
       }
     } else {
       for (const c of resp.clusters || []) {
@@ -328,8 +400,21 @@
       if (appliedSubsls) line += ` / SubSLS ${appliedSubsls}`;
       lines.push(line);
     }
+    if (appliedFlagBaru) {
+      lines.push(`Assignment baru: ${appliedFlagBaru === "1" ? "hanya yang ditemukan" : "hanya yang tidak ditemukan"}`);
+    }
+    if (appliedFlagRegsosek) {
+      lines.push(`Regsosek: ${appliedFlagRegsosek === "1" ? "hanya yang ditemukan" : "hanya yang tidak ditemukan"}`);
+    }
     lines.push(`Di area ini: ${resp.total.toLocaleString("id-ID")} titik`);
     lines.push(`Ditampilkan: ${shown.toLocaleString("id-ID")} ${kind}`);
+    // Roughly 1 SubSLS in 5 (3,219 of 15,722, measured) is spread widely
+    // enough that auto-fit lands below BANGUNAN_LABEL_MIN_ZOOM, so the
+    // labels a SubSLS filter is supposed to bring don't appear. Say why,
+    // rather than leaving it looking broken.
+    if (appliedSubsls && resp.type === "points" && !shouldLabelBangunan()) {
+      lines.push("Perbesar peta untuk melihat label nomor bangunan.");
+    }
     statsEl.textContent = lines.join("\n");
   }
 
@@ -458,6 +543,8 @@
     appliedDesa = desaSelect.value;
     appliedSls = slsSelect.value;
     appliedSubsls = subslsSelect.value;
+    appliedFlagBaru = flagBaruSelect.value;
+    appliedFlagRegsosek = flagRegsosekSelect.value;
 
     fitTo(currentBounds());
     // fitBounds triggers moveend -> scheduleLoad already; force an

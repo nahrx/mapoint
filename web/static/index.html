@@ -57,6 +57,22 @@
             <option value="">Semua SubSLS</option>
           </select>
         </div>
+        <div class="filter-row">
+          <label for="flagbaru-select">Ditemukan di Assignment Baru:</label>
+          <select id="flagbaru-select">
+            <option value="">Semua</option>
+            <option value="1">Ya</option>
+            <option value="0">Tidak</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="flagregsosek-select">Ditemukan di Regsosek:</label>
+          <select id="flagregsosek-select">
+            <option value="">Semua</option>
+            <option value="1">Ya</option>
+            <option value="0">Tidak</option>
+          </select>
+        </div>
         <div class="filter-row" id="apply-filter-row">
           <button id="apply-filter-btn" class="apply-filter-btn" type="button">Terapkan Filter</button>
         </div>
@@ -133,6 +149,22 @@
             <option value="">Semua Status</option>
           </select>
         </div>
+        <div class="filter-row">
+          <label for="flagbaru-select-list">Ditemukan di Assignment Baru:</label>
+          <select id="flagbaru-select-list">
+            <option value="">Semua</option>
+            <option value="1">Ya</option>
+            <option value="0">Tidak</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="flagregsosek-select-list">Ditemukan di Regsosek:</label>
+          <select id="flagregsosek-select-list">
+            <option value="">Semua</option>
+            <option value="1">Ya</option>
+            <option value="0">Tidak</option>
+          </select>
+        </div>
         <div id="daftar-actions" class="list-actions">
           <button id="apply-filter-btn-list" class="apply-filter-btn" type="button">Terapkan Filter</button>
           <div id="download-btn-group" class="download-btn-group">
@@ -176,6 +208,9 @@
               <th class="sortable" data-sort="keberadaan_keluarga">Keberadaan Keluarga<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="status">Status<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="assignment_id">Assignment ID<span class="sort-arrow"></span></th>
+              <th class="sortable col-joined col-flag" data-sort="ada_assignment_baru">Ditemukan di<br>Assignment Baru<span class="sort-arrow"></span></th>
+              <th class="sortable col-joined" data-sort="assignment_id_baru">Assignment ID Baru<span class="sort-arrow"></span></th>
+              <th class="sortable col-joined col-flag" data-sort="ada_regsosek">Ditemukan di<br>Regsosek<span class="sort-arrow"></span></th>
             </tr>
           </thead>
           <tbody id="daftar-tbody"></tbody>

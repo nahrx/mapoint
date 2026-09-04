@@ -11,6 +11,8 @@
   const jenisPrelistSelect = document.getElementById("jenisprelist-select-list");
   const keberadaanKeluargaSelect = document.getElementById("keberadaankeluarga-select-list");
   const statusSelect = document.getElementById("status-select-list");
+  const flagBaruSelect = document.getElementById("flagbaru-select-list");
+  const flagRegsosekSelect = document.getElementById("flagregsosek-select-list");
   const searchInput = document.getElementById("daftar-search");
   const tbody = document.getElementById("daftar-tbody");
   const loadingEl = document.getElementById("daftar-loading");
@@ -47,6 +49,8 @@
   let appliedJenisPrelist = "";
   let appliedKeberadaanKeluarga = "";
   let appliedStatus = "";
+  let appliedFlagBaru = "";
+  let appliedFlagRegsosek = "";
   let appliedSearch = "";
 
   // Must match points.EmptyValue on the server — the sentinel a dropdown
@@ -88,7 +92,19 @@
         <td>${esc(p.keberadaan_keluarga)}</td>
         <td><span class="status-dot" style="background:${color}"></span>${esc(p.status)}</td>
         <td class="mono">${esc(p.assignment_id)}</td>
+        <td class="col-joined col-flag">${flagCell(p.ada_assignment_baru)}</td>
+        <td class="col-joined mono">${esc(p.assignment_id_baru || "-")}</td>
+        <td class="col-joined col-flag">${flagCell(p.ada_regsosek)}</td>
       </tr>`;
+  }
+
+  // A checkmark for found, an en dash for not — the title attribute
+  // carries the meaning for anyone hovering or using a screen reader,
+  // since the glyph alone doesn't say which table was matched.
+  function flagCell(ada) {
+    return ada
+      ? `<span class="check-yes" title="Ditemukan">&#10003;</span>`
+      : `<span class="check-no" title="Tidak ditemukan">&#8211;</span>`;
   }
 
   function setLoading(v) {
@@ -108,6 +124,8 @@
     if (appliedJenisPrelist) params.set("jenisPrelist", appliedJenisPrelist);
     if (appliedKeberadaanKeluarga) params.set("keberadaanKeluarga", appliedKeberadaanKeluarga);
     if (appliedStatus) params.set("status", appliedStatus);
+    if (appliedFlagBaru) params.set("flagBaru", appliedFlagBaru);
+    if (appliedFlagRegsosek) params.set("flagRegsosek", appliedFlagRegsosek);
     if (appliedSearch) params.set("search", appliedSearch);
     return params;
   }
@@ -153,7 +171,7 @@
     const startRow = (resp.page - 1) * resp.page_size + 1;
     tbody.innerHTML = resp.items.length
       ? resp.items.map((p, i) => rowHTML(p, startRow + i)).join("")
-      : `<tr><td colspan="9" class="empty-row">Tidak ada data yang cocok dengan filter ini.</td></tr>`;
+      : `<tr><td colspan="12" class="empty-row">Tidak ada data yang cocok dengan filter ini.</td></tr>`;
 
     const totalPages = Math.max(1, Math.ceil(resp.total / resp.page_size));
     pageInfoEl.textContent = `Halaman ${resp.page.toLocaleString("id-ID")} dari ${totalPages.toLocaleString("id-ID")} (${resp.total.toLocaleString("id-ID")} data)`;
@@ -340,6 +358,8 @@
     appliedJenisPrelist = jenisPrelistSelect.value;
     appliedKeberadaanKeluarga = keberadaanKeluargaSelect.value;
     appliedStatus = statusSelect.value;
+    appliedFlagBaru = flagBaruSelect.value;
+    appliedFlagRegsosek = flagRegsosekSelect.value;
     appliedSearch = searchInput.value.trim();
 
     updateDownloadButtonState();
