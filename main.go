@@ -21,6 +21,7 @@ import (
 	"se2026-titik-maps/internal/config"
 	"se2026-titik-maps/internal/mapdb"
 	"se2026-titik-maps/internal/points"
+	"se2026-titik-maps/internal/regsosek"
 	"se2026-titik-maps/web"
 )
 
@@ -47,6 +48,7 @@ func run(log *slog.Logger) error {
 	defer conn.Close()
 
 	svc := points.NewService(conn)
+	regsvc := regsosek.NewService(conn)
 
 	log.Info("computing dataset bounds (one-time full scan)")
 	boundsCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -96,7 +98,7 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	srv := api.NewServer(svc, conn, bounds, kabkotaList, mapPool, log)
+	srv := api.NewServer(svc, regsvc, conn, bounds, kabkotaList, mapPool, log)
 	go refreshBoundsPeriodically(ctx, svc, srv, log)
 
 	httpServer := &http.Server{

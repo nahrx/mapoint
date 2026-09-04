@@ -287,6 +287,118 @@ lambat, itu batasan `LIMIT/OFFSET` yang umum di database kolom manapun;
 solusinya persempit dulu pakai filter wilayah sebelum menjelajahi halaman
 jauh.
 
+### Menu Daftar Match Regsosek
+
+Menu ketiga (`/reg2022`) menampilkan tabel `dtsen.se2026_match_regsosek` —
+keluarga SE2026 yang statusnya tidak ditemukan saat pendataan, tapi
+ketemu di data Regsosek 2022. Keterangan itu juga dicetak di layar, di
+PDF, dan di Excel supaya salinan yang beredar bisa berdiri sendiri.
+166.507 baris / 32 MiB, tabel terpisah dengan kolom sendiri, jadi ditangani
+paket sendiri (`internal/regsosek/`) alih-alih digabung ke `internal/points`.
+
+Kolom yang ditampilkan (label UI di kiri, kolom sumber di kanan kalau beda):
+
+| Kolom di layar | Kolom database |
+|---|---|
+| Nama | `nama_prelist` |
+| Nama KK | `nama_kk` |
+| No KK | `no_kk` |
+| NIK KK | `nik_kk` |
+| ID SubSLS | `level_6_full_code` |
+| Match Status | `match_status` |
+| Alamat Regsosek | `alamat_gabung_regsosek` |
+| Nama Matched Regsosek | `nama_matched_regsosek` |
+| NIK Matched Regsosek | `nik_matched_regsosek` |
+| Assignment ID | `assignment_id` |
+
+Semua kolom itu bisa diklik untuk sort (naik/turun), sama seperti menu
+Daftar.
+
+**Filter:**
+
+- **Wilayah** kabupaten/kota → kecamatan → desa/kelurahan → SLS → SubSLS,
+  cascading persis seperti menu lain. Dropdown-nya sengaja memakai ulang
+  endpoint `/api/kecamatan`, `/api/desa`, dst. yang sudah ada, bukan bikin
+  baru: tabel ini pakai `level_6_full_code` dengan format 16 digit yang
+  sama, dan dicek langsung ke data — 10 kabupaten/kota-nya sama persis dan
+  **tidak ada satu pun desa yang cuma ada di sini** tapi tidak ada di
+  `se2026_titik2`. Konsekuensinya, angka "(N titik)" pada label dropdown
+  berasal dari tabel titik, bukan dari tabel ini.
+- **Match Status** — dropdown dari 7 nilai yang benar-benar ada di data
+  (`matchStatusValues` di `internal/regsosek/regsosek.go`), diserve lewat
+  `GET /api/reg2022/filter-options`. Ada opsi "(Kosong)" (`__EMPTY__`)
+  seperti filter atribut di menu Daftar.
+- **Cari** — satu kotak yang mencari substring (tidak case-sensitive) di
+  **empat** kolom sekaligus: `nama_prelist`, `nama_kk`, `no_kk`, `nik_kk`.
+  Jadi mengetik nama, nomor KK, atau NIK sama-sama ketemu. Teksnya dikirim
+  lewat parameter binding (satu bind per kolom), bukan digabung ke teks SQL.
+
+Sama seperti menu Daftar, semua filter itu baru berlaku begitu tombol
+**Terapkan Filter** diklik (atau Enter di kotak cari) — lihat bagian
+"Tombol Terapkan Filter" di atas.
+
+**Kolom Match Status di-highlight**: kolomnya diberi latar berbeda dan tiap
+nilai tampil sebagai badge berwarna menurut kekuatan pemadanan — hijau
+untuk kecocokan NIK persis, biru untuk kecocokan nama dalam satu SLS, dan
+makin hangat (oranye ke merah) seiring bertambahnya digit NIK yang salah
+ketik. Lihat `MATCH_COLORS` di `web/static/reg2022.js`.
+
+Kolom `ada_keluarga_label` sempat ditampilkan lalu dihapus: isinya cuma
+satu nilai untuk seluruh 166.507 baris ("0. Tidak Ditemukan (STOP)"), jadi
+tidak membedakan apa pun.
+
+**Catatan performa:** tabel ini `ORDER BY assignment_id`, bukan
+`level_6_full_code`, jadi filter wilayahnya **tidak** kena primary index
+(beda dengan `se2026_titik2`, lihat "Catatan performa" di atas) dan selalu
+full scan. Di 166 ribu baris / 32 MiB itu cuma beberapa milidetik, jadi
+dibiarkan — kodenya tetap ditulis pakai `startsWith` supaya konsisten dan
+otomatis ikut cepat kalau tabelnya suatu saat di-sort ulang.
+
+
+**Unduh PDF & Excel** — dua tombol di baris aksi, sama seperti menu Daftar,
+tapi **syaratnya minimal Kecamatan, bukan Desa/Kelurahan**. Alasannya
+diukur dari data: tabel ini jauh lebih kecil per wilayah daripada tabel
+titik — kecamatan terbesar di sini berisi 7.431 baris (median 970),
+sementara desa terbesar di `se2026_titik2` berisi 27.146 — jadi memaksa
+level desa (median 57 baris) akan menghasilkan laporan yang terlalu tipis
+tanpa alasan. Aturannya ditegakkan di server (`prepareRegsosekReport` di
+`internal/api/server.go`), bukan cuma oleh tombol yang di-disable.
+
+Isi kedua format sama, dengan dua beda yang disengaja seperti pada laporan
+Daftar: PDF membuang kolom Assignment ID (bukan info yang dibaca dari
+kertas) sementara Excel menyertakannya, dan Excel menambahkan NIK Matched.
+Keduanya memakai ulang blok "Keterangan Wilayah"/"Filter Tambahan" yang
+sama lewat `report.Region` — `match_status` menempati slot Status di blok
+itu, jadi tidak perlu menambah field yang cuma dipakai satu laporan.
+Digenerate lewat `internal/pdfreport/regsosek.go` dan
+`internal/xlsxreport/regsosek.go`, yang memakai ulang helper tata letak
+paket masing-masing sehingga pemenggalan halaman, pembungkusan baris, dan
+gaya tabelnya identik dengan laporan yang sudah ada.
+
+### Menu Peta Match Reg2022
+
+Menu keempat (`/peta-match`) memetakan baris yang sama dengan menu di atas,
+memakai koordinat Regsosek-nya (`latitude_regsosek`/`longitude_regsosek`).
+Dicek ke data: **seluruh 166.507 baris punya koordinat terpakai** (tidak ada
+yang nol atau non-finite, semuanya dalam rentang Kalimantan), jadi tidak ada
+predikat validitas koordinat seperti di peta utama.
+
+Tooltip tiap titik menampilkan empat hal: Nama Prelist, Nama KK, ID SubSLS,
+dan Alamat. *Catatan:* `alamat_gabung_regsosek` cuma terisi pada 4,5% baris
+(7.575 dari 166.507), jadi Alamat sering tampil "-".
+
+Filternya persis sama dengan menu Daftar Match Regsosek (wilayah berjenjang
++ Match Status + cari di empat kolom) dan sama-sama menunggu tombol
+Terapkan Filter. Clustering-nya memakai ambang dan ukuran sel yang sama
+dengan peta utama (`points.IndividualLimit`, `points.CellSizeForZoom`),
+termasuk pola cluster-dulu yang menghitung total dari jumlah per sel
+sehingga viewport padat cukup satu query — lihat "Catatan performa" di atas.
+
+Bedanya dari peta utama: extent untuk auto-zoom dihitung per request lewat
+`GET /api/match-bounds`, bukan dari bounding box per wilayah yang di-cache
+saat startup. Itu karena di sini extent-nya ikut berubah oleh filter Match
+Status dan pencarian, bukan cuma oleh wilayah.
+
 ### Tampilan & responsif
 
 Warna, jarak, radius, dan bayangan didefinisikan sekali sebagai CSS custom
@@ -424,6 +536,11 @@ Lalu buka `http://localhost:8082` di browser (dari `HTTP_ADDR=:8082` di `.env`; 
 - `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `status`, `assignment_id` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`) semuanya opsional dan independen dari filter wilayah maupun satu sama lain — nilainya divalidasi terhadap enum tetap di `internal/points/points.go`, pakai `__EMPTY__` untuk memfilter kolom yang kosong
 - `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
 - `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&search=&sortBy=&dir=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf` (lihat `prepareReport` di `internal/api/server.go`, dipakai bareng oleh kedua handler)
+- `GET /api/reg2022?kabkota=&kecamatan=&desa=&sls=&subsls=&matchStatus=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar Reg2022 (tabel `se2026_match_regsosek`). Filter wilayah sama dengan endpoint lain; `matchStatus` divalidasi terhadap 7 nilai tetap di `internal/regsosek/regsosek.go` (pakai `__EMPTY__` untuk kolom kosong); `search` mencari substring di `nama_prelist`, `nama_kk`, `no_kk`, dan `nik_kk` sekaligus, lewat parameter binding. `sortBy` salah satu dari `nama` (default), `nama_kk`, `no_kk`, `nik_kk`, `subsls`, `keberadaan_keluarga`, `match_status`, `alamat_regsosek`, `nama_matched`, `nik_matched`, `assignment_id`
+- `GET /api/reg2022/filter-options` — daftar nilai `match_status` untuk dropdown filter menu Daftar Reg2022
+- `GET /api/reg2022/pdf?...` dan `GET /api/reg2022/xlsx?...` — laporan "Daftar Match Regsosek". Parameter filternya sama dengan `/api/reg2022`; `kabkota` dan `kecamatan` **wajib** (cakupan minimal satu kecamatan, lebih luas ditolak 400)
+- `GET /api/match-points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&...&matchStatus=&search=` — titik/cluster untuk viewport menu Peta Match Reg2022, memakai `latitude_regsosek`/`longitude_regsosek`
+- `GET /api/match-bounds?kabkota=&...&matchStatus=&search=` — extent geografis baris yang cocok dengan filter, untuk auto-zoom peta match (dihitung per request karena bergantung pada filter, bukan cuma wilayah)
 - `GET /api/filter-options` — daftar nilai enum untuk dropdown filter Jenis Prelist, Keberadaan Keluarga, dan Status (statis, bukan query ke ClickHouse)
 - `GET /healthz` — health check (ping ClickHouse)
 
@@ -487,6 +604,7 @@ internal/config/           parsing .env
 internal/chdb/             koneksi & pool ClickHouse
 internal/mapdb/            koneksi PostGIS opsional + query polygon batas SubSLS
 internal/points/           query viewport → individual points / clusters
+internal/regsosek/         query tabel se2026_match_regsosek (menu Daftar Match Regsosek & Peta Match Reg2022)
 internal/report/           metadata wilayah/filter (Region) dipakai bareng pdfreport & xlsxreport
 internal/pdfreport/        generate PDF "Daftar Hasil Pendataan" (pakai go-pdf/fpdf)
 internal/xlsxreport/       generate Excel "Daftar Hasil Pendataan" (pakai excelize/v2)
@@ -496,6 +614,8 @@ web/static/                frontend (Leaflet, di-embed ke binary via go:embed)
   common.js                 helper bersama (fetch-with-retry, dropdown wilayah cascading)
   app.js                    logika menu Peta
   daftar.js                 logika menu Daftar (tabel, sort, paginasi)
+  reg2022.js                logika menu Daftar Match Regsosek
+  match-map.js              logika menu Peta Match Reg2022
   nav.js                    switching antar menu
 Dockerfile                 build multi-stage → binary statis di image Alpine
 docker-compose.yml         menjalankan image di atas, baca env dari .env

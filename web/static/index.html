@@ -12,19 +12,21 @@
     <span id="brand">Titik SE2026</span>
     <button id="nav-peta" class="nav-btn active">Peta</button>
     <button id="nav-daftar" class="nav-btn">Daftar</button>
+    <button id="nav-reg2022" class="nav-btn">Daftar Match Regsosek</button>
+    <button id="nav-petamatch" class="nav-btn">Peta Match Reg2022</button>
   </nav>
 
   <section id="view-peta" class="view active">
     <div id="map"></div>
 
-    <div id="panel">
-      <div id="panel-header">
+    <div id="panel" class="map-panel">
+      <div id="panel-header" class="map-panel-header">
         <h1>Peta Titik SE2026</h1>
-        <button id="panel-toggle" type="button" aria-expanded="true" aria-controls="panel-body" title="Sembunyikan filter">
+        <button id="panel-toggle" class="map-panel-toggle" type="button" aria-expanded="true" aria-controls="panel-body" title="Sembunyikan filter">
           <span aria-hidden="true">&#9650;</span>
         </button>
       </div>
-      <div id="panel-body">
+      <div id="panel-body" class="map-panel-body">
         <div class="filter-row">
           <label for="kabkota-select">Kabupaten/Kota:</label>
           <select id="kabkota-select">
@@ -58,27 +60,27 @@
         <div class="filter-row" id="apply-filter-row">
           <button id="apply-filter-btn" class="apply-filter-btn" type="button">Terapkan Filter</button>
         </div>
-        <div id="stats">Memuat statistik…</div>
-        <div id="legend">
+        <div id="stats" class="map-stats">Memuat statistik…</div>
+        <div id="legend" class="map-legend">
           <div class="legend-row"><span class="dot dot-point"></span> Titik individual</div>
           <div class="legend-row"><span class="dot dot-cluster"></span> Kelompok (angka = jumlah titik)</div>
         </div>
       </div>
     </div>
 
-    <div id="loading" class="hidden">Memuat data…</div>
+    <div id="loading" class="map-loading hidden">Memuat data…</div>
   </section>
 
   <section id="view-daftar" class="view">
-    <div id="daftar-container">
-      <div id="daftar-head">
+    <div id="daftar-container" class="list-container">
+      <div id="daftar-head" class="list-head">
         <h1>Daftar Titik SE2026</h1>
-        <button id="daftar-filter-toggle" type="button" aria-expanded="true" aria-controls="daftar-filters">
+        <button id="daftar-filter-toggle" class="list-filter-toggle" type="button" aria-expanded="true" aria-controls="daftar-filters">
           Filter <span aria-hidden="true">&#9650;</span>
         </button>
       </div>
 
-      <div id="daftar-filters">
+      <div id="daftar-filters" class="list-filters">
         <div class="filter-row">
           <label for="daftar-search">Cari Nama:</label>
           <input type="text" id="daftar-search" placeholder="Cari nama responden…" autocomplete="off">
@@ -131,26 +133,26 @@
             <option value="">Semua Status</option>
           </select>
         </div>
-        <div id="daftar-actions">
+        <div id="daftar-actions" class="list-actions">
           <button id="apply-filter-btn-list" class="apply-filter-btn" type="button">Terapkan Filter</button>
-          <div id="download-btn-group">
-            <button id="download-pdf-btn" disabled title="Pilih filter minimal sampai Desa/Kelurahan untuk mengunduh">
+          <div id="download-btn-group" class="download-btn-group">
+            <button id="download-pdf-btn" class="download-pdf" disabled title="Pilih filter minimal sampai Desa/Kelurahan untuk mengunduh">
               Unduh PDF
             </button>
-            <button id="download-xlsx-btn" disabled title="Pilih filter minimal sampai Desa/Kelurahan untuk mengunduh">
+            <button id="download-xlsx-btn" class="download-xlsx" disabled title="Pilih filter minimal sampai Desa/Kelurahan untuk mengunduh">
               Unduh Excel
             </button>
           </div>
         </div>
       </div>
 
-      <div id="daftar-toolbar">
-        <span id="daftar-page-info">Memuat…</span>
-        <div id="daftar-pagination">
+      <div id="daftar-toolbar" class="list-toolbar">
+        <span id="daftar-page-info" class="list-page-info">Memuat…</span>
+        <div id="daftar-pagination" class="list-pagination">
           <button id="daftar-prev">&laquo; Sebelumnya</button>
           <button id="daftar-next">Selanjutnya &raquo;</button>
           <label for="daftar-pagesize">Baris/halaman:</label>
-          <select id="daftar-pagesize">
+          <select id="daftar-pagesize" class="list-pagesize">
             <option value="25">25</option>
             <option value="50" selected>50</option>
             <option value="100">100</option>
@@ -159,10 +161,10 @@
         </div>
       </div>
 
-      <div id="daftar-error" class="hidden"></div>
+      <div id="daftar-error" class="list-error hidden"></div>
 
-      <div id="daftar-table-wrap">
-        <table id="daftar-table">
+      <div id="daftar-table-wrap" class="list-table-wrap">
+        <table id="daftar-table" class="list-table">
           <thead>
             <tr>
               <th class="num">No</th>
@@ -181,13 +183,189 @@
       </div>
     </div>
 
-    <div id="daftar-loading" class="hidden">Memuat data…</div>
+    <div id="daftar-loading" class="list-loading hidden">Memuat data…</div>
   </section>
 
+
+  <section id="view-reg2022" class="view">
+    <div id="reg2022-container" class="list-container">
+      <div id="reg2022-head" class="list-head">
+        <h1>Daftar Match Regsosek</h1>
+        <button id="reg2022-filter-toggle" class="list-filter-toggle" type="button" aria-expanded="true" aria-controls="reg2022-filters">
+          Filter <span aria-hidden="true">&#9650;</span>
+        </button>
+      </div>
+
+      <p class="list-note">Daftar ini menampilkan daftar keluarga SE2026 dengan status tidak ditemukan, tapi ditemukan di Reg2022.</p>
+
+      <div id="reg2022-filters" class="list-filters">
+        <div class="filter-row">
+          <label for="reg2022-search">Cari:</label>
+          <input type="text" id="reg2022-search" placeholder="Nama / Nama KK / No KK / NIK KK…" autocomplete="off">
+        </div>
+        <div class="filter-row">
+          <label for="kabkota-select-reg">Kabupaten/Kota:</label>
+          <select id="kabkota-select-reg">
+            <option value="">Semua Kabupaten/Kota</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="kecamatan-select-reg">Kecamatan:</label>
+          <select id="kecamatan-select-reg" disabled>
+            <option value="">Semua Kecamatan</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="desa-select-reg">Desa/Kelurahan:</label>
+          <select id="desa-select-reg" disabled>
+            <option value="">Semua Desa/Kelurahan</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="sls-select-reg">Kode SLS:</label>
+          <select id="sls-select-reg" disabled>
+            <option value="">Semua SLS</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="subsls-select-reg">Kode SubSLS:</label>
+          <select id="subsls-select-reg" disabled>
+            <option value="">Semua SubSLS</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="matchstatus-select-reg">Match Status:</label>
+          <select id="matchstatus-select-reg">
+            <option value="">Semua Match Status</option>
+          </select>
+        </div>
+        <div id="reg2022-actions" class="list-actions">
+          <button id="apply-filter-btn-reg" class="apply-filter-btn" type="button">Terapkan Filter</button>
+          <div id="reg2022-download-group" class="download-btn-group">
+            <button id="download-pdf-btn-reg" class="download-pdf" disabled title="Pilih filter minimal sampai Kecamatan untuk mengunduh">
+              Unduh PDF
+            </button>
+            <button id="download-xlsx-btn-reg" class="download-xlsx" disabled title="Pilih filter minimal sampai Kecamatan untuk mengunduh">
+              Unduh Excel
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="reg2022-toolbar" class="list-toolbar">
+        <span id="reg2022-page-info" class="list-page-info">Memuat…</span>
+        <div id="reg2022-pagination" class="list-pagination">
+          <button id="reg2022-prev">&laquo; Sebelumnya</button>
+          <button id="reg2022-next">Selanjutnya &raquo;</button>
+          <label for="reg2022-pagesize">Baris/halaman:</label>
+          <select id="reg2022-pagesize" class="list-pagesize">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="reg2022-error" class="list-error hidden"></div>
+
+      <div id="reg2022-table-wrap" class="list-table-wrap">
+        <table id="reg2022-table" class="list-table">
+          <thead>
+            <tr>
+              <th class="num">No</th>
+              <th class="sortable" data-sort="nama">Nama<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="nama_kk">Nama KK<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="no_kk">No KK<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="nik_kk">NIK KK<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="subsls">ID SubSLS<span class="sort-arrow"></span></th>
+              <th class="sortable col-match" data-sort="match_status">Match Status<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="alamat_regsosek">Alamat Regsosek<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="nama_matched">Nama Matched Regsosek<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="nik_matched">NIK Matched Regsosek<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="assignment_id">Assignment ID<span class="sort-arrow"></span></th>
+            </tr>
+          </thead>
+          <tbody id="reg2022-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="reg2022-loading" class="list-loading hidden">Memuat data…</div>
+  </section>
+
+
+  <section id="view-petamatch" class="view">
+    <div id="matchmap"></div>
+
+    <div id="match-panel" class="map-panel">
+      <div id="match-panel-header" class="map-panel-header">
+        <h1>Peta Match Reg2022</h1>
+        <button id="match-panel-toggle" class="map-panel-toggle" type="button" aria-expanded="true" aria-controls="match-panel-body" title="Sembunyikan filter">
+          <span aria-hidden="true">&#9650;</span>
+        </button>
+      </div>
+      <div id="match-panel-body" class="map-panel-body">
+        <p class="list-note">Titik koordinat Regsosek 2022 dari keluarga SE2026 berstatus tidak ditemukan.</p>
+        <div class="filter-row">
+          <label for="match-search">Cari:</label>
+          <input type="text" id="match-search" placeholder="Nama / Nama KK / No KK / NIK KK…" autocomplete="off">
+        </div>
+        <div class="filter-row">
+          <label for="kabkota-select-match">Kabupaten/Kota:</label>
+          <select id="kabkota-select-match">
+            <option value="">Semua Kabupaten/Kota</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="kecamatan-select-match">Kecamatan:</label>
+          <select id="kecamatan-select-match" disabled>
+            <option value="">Semua Kecamatan</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="desa-select-match">Desa/Kelurahan:</label>
+          <select id="desa-select-match" disabled>
+            <option value="">Semua Desa/Kelurahan</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="sls-select-match">Kode SLS:</label>
+          <select id="sls-select-match" disabled>
+            <option value="">Semua SLS</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="subsls-select-match">Kode SubSLS:</label>
+          <select id="subsls-select-match" disabled>
+            <option value="">Semua SubSLS</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="matchstatus-select-match">Match Status:</label>
+          <select id="matchstatus-select-match">
+            <option value="">Semua Match Status</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <button id="apply-filter-btn-match" class="apply-filter-btn" type="button">Terapkan Filter</button>
+        </div>
+        <div id="match-stats" class="map-stats">Memuat statistik…</div>
+        <div id="match-legend" class="map-legend">
+          <div class="legend-row"><span class="dot dot-match"></span> Titik individual</div>
+          <div class="legend-row"><span class="dot dot-cluster"></span> Kelompok (angka = jumlah titik)</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="match-loading" class="map-loading hidden">Memuat data…</div>
+  </section>
   <script src="/vendor/leaflet/leaflet.js"></script>
   <script src="/common.js"></script>
   <script src="/app.js"></script>
   <script src="/daftar.js"></script>
+  <script src="/reg2022.js"></script>
+  <script src="/match-map.js"></script>
   <script src="/nav.js"></script>
 </body>
 </html>

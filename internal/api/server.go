@@ -1,6 +1,6 @@
 // Package api wires up the HTTP handlers: static frontend, /api/points,
 // /api/bounds, /api/kabkota, /api/kecamatan, /api/desa, /api/sls,
-// /api/subsls, /api/list, /api/list/pdf, /api/list/xlsx,
+// /api/subsls, /api/list, /api/list/pdf, /api/list/xlsx, /api/reg2022,
 // /api/subsls-polygon and /healthz.
 package api
 
@@ -23,12 +23,14 @@ import (
 	"se2026-titik-maps/internal/mapdb"
 	"se2026-titik-maps/internal/pdfreport"
 	"se2026-titik-maps/internal/points"
+	"se2026-titik-maps/internal/regsosek"
 	"se2026-titik-maps/internal/report"
 	"se2026-titik-maps/internal/xlsxreport"
 )
 
 type Server struct {
 	svc     *points.Service
+	regsvc  *regsosek.Service
 	conn    driver.Conn
 	bounds  atomic.Pointer[points.Bounds]
 	kabkota atomic.Pointer[[]points.KabKotaInfo]
@@ -40,8 +42,8 @@ type Server struct {
 	mapPool *pgxpool.Pool
 }
 
-func NewServer(svc *points.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, mapPool *pgxpool.Pool, log *slog.Logger) *Server {
-	s := &Server{svc: svc, conn: conn, mapPool: mapPool, log: log}
+func NewServer(svc *points.Service, regsvc *regsosek.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, mapPool *pgxpool.Pool, log *slog.Logger) *Server {
+	s := &Server{svc: svc, regsvc: regsvc, conn: conn, mapPool: mapPool, log: log}
 	s.bounds.Store(&bounds)
 	s.kabkota.Store(&kabkota)
 	return s
@@ -73,6 +75,12 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /api/list/pdf", s.handleListPDF)
 	mux.HandleFunc("GET /api/list/xlsx", s.handleListXLSX)
 	mux.HandleFunc("GET /api/filter-options", s.handleFilterOptions)
+	mux.HandleFunc("GET /api/reg2022", s.handleReg2022)
+	mux.HandleFunc("GET /api/reg2022/filter-options", s.handleReg2022FilterOptions)
+	mux.HandleFunc("GET /api/reg2022/pdf", s.handleRegsosekPDF)
+	mux.HandleFunc("GET /api/reg2022/xlsx", s.handleRegsosekXLSX)
+	mux.HandleFunc("GET /api/match-points", s.handleMatchPoints)
+	mux.HandleFunc("GET /api/match-bounds", s.handleMatchBounds)
 	mux.HandleFunc("GET /api/subsls-polygon", s.handleSubSLSPolygon)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	// The Daftar menu has its own URL (see nav.js's use of history.pushState)
@@ -80,6 +88,8 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	// single-page app, so just serve the same index.html the SPA's router
 	// (nav.js) uses to pick the right view on load.
 	mux.HandleFunc("GET /daftar", s.serveIndex(staticFS))
+	mux.HandleFunc("GET /reg2022", s.serveIndex(staticFS))
+	mux.HandleFunc("GET /peta-match", s.serveIndex(staticFS))
 	mux.Handle("/", http.FileServer(staticFS))
 
 	// gzip sits inside logging so the logged status/duration still describe
@@ -320,10 +330,12 @@ func (s *Server) handleSLS(w http.ResponseWriter, r *http.Request) {
 // ClickHouse.
 const maxSearchLen = 200
 
-// parseFilter reads the kabkota/kecamatan/desa/sls/subsls wilayah filter
-// shared by /api/points and /api/list, and checks that each level is only
-// set when its parent is too.
-func parseFilter(q url.Values) (points.Filter, error) {
+// parseWilayah reads just the kabkota/kecamatan/desa/sls/subsls levels and
+// checks that each is only set when its parent is too. Shared by every
+// menu: /api/points and /api/list build on it via parseFilter, and
+// /api/reg2022 uses it directly (that table has the same
+// level_6_full_code, but none of the other filters).
+func parseWilayah(q url.Values) (points.Filter, error) {
 	kabkota, err := points.ParseKabKota(q.Get("kabkota"))
 	if err != nil {
 		return points.Filter{}, err
@@ -344,6 +356,29 @@ func parseFilter(q url.Values) (points.Filter, error) {
 	if err != nil {
 		return points.Filter{}, err
 	}
+	w := points.Filter{KabKota: kabkota, Kecamatan: kecamatan, Desa: desa, SLS: sls, SubSLS: subsls}
+	if err := w.Validate(); err != nil {
+		return points.Filter{}, err
+	}
+	return w, nil
+}
+
+// parseSearch reads and length-checks the free-text ?search= param.
+func parseSearch(q url.Values) (string, error) {
+	s := strings.TrimSpace(q.Get("search"))
+	if len(s) > maxSearchLen {
+		return "", fmt.Errorf("search term is too long (max %d characters)", maxSearchLen)
+	}
+	return s, nil
+}
+
+// parseFilter is parseWilayah plus the attribute filters and name search
+// that only the Peta/Daftar menus have.
+func parseFilter(q url.Values) (points.Filter, error) {
+	filter, err := parseWilayah(q)
+	if err != nil {
+		return points.Filter{}, err
+	}
 	jenisPrelist, err := points.ParseJenisPrelist(q.Get("jenisPrelist"))
 	if err != nil {
 		return points.Filter{}, err
@@ -356,18 +391,14 @@ func parseFilter(q url.Values) (points.Filter, error) {
 	if err != nil {
 		return points.Filter{}, err
 	}
-	search := strings.TrimSpace(q.Get("search"))
-	if len(search) > maxSearchLen {
-		return points.Filter{}, fmt.Errorf("search term is too long (max %d characters)", maxSearchLen)
-	}
-	filter := points.Filter{
-		KabKota: kabkota, Kecamatan: kecamatan, Desa: desa, SLS: sls, SubSLS: subsls,
-		JenisPrelist: jenisPrelist, KeberadaanKeluarga: keberadaanKeluarga, Status: status,
-		Search: search,
-	}
-	if err := filter.Validate(); err != nil {
+	search, err := parseSearch(q)
+	if err != nil {
 		return points.Filter{}, err
 	}
+	filter.JenisPrelist = jenisPrelist
+	filter.KeberadaanKeluarga = keberadaanKeluarga
+	filter.Status = status
+	filter.Search = search
 	return filter, nil
 }
 
@@ -617,4 +648,220 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// handleReg2022FilterOptions serves the match_status dropdown choices for
+// the Daftar Reg2022 menu — a fixed, closed set (see
+// regsosek.GetFilterOptions), not a database query.
+func (s *Server) handleReg2022FilterOptions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, regsosek.GetFilterOptions())
+}
+
+// handleReg2022 serves one page of the Daftar Reg2022 table. The wilayah
+// filter is the same one the other menus use (se2026_match_regsosek shares
+// level_6_full_code), so it reuses parseWilayah — and the frontend reuses
+// the existing /api/kecamatan etc. cascade endpoints to populate those
+// dropdowns, since every wilayah in this table also exists in the points
+// table.
+func (s *Server) handleReg2022(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	filter, _, err := regsosekFilter(q)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	page := 1
+	if v := q.Get("page"); v != "" {
+		parsed, err := strconv.Atoi(v)
+		if err != nil || parsed < 1 {
+			writeError(w, http.StatusBadRequest, "invalid page")
+			return
+		}
+		page = parsed
+	}
+
+	pageSize := points.DefaultPageSize
+	if v := q.Get("pageSize"); v != "" {
+		parsed, err := strconv.Atoi(v)
+		if err != nil || parsed < 1 {
+			writeError(w, http.StatusBadRequest, "invalid pageSize")
+			return
+		}
+		pageSize = parsed
+	}
+
+	resp, err := s.regsvc.List(
+		r.Context(), filter, page, pageSize,
+		regsosek.ParseSortColumn(q.Get("sortBy")), points.ParseSortDir(q.Get("dir")),
+	)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		s.log.Error("reg2022 query failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// regsosekFilter parses everything the two match menus filter on: the
+// shared wilayah levels, match_status, and the free-text search.
+func regsosekFilter(q url.Values) (regsosek.Filter, points.Filter, error) {
+	wilayah, err := parseWilayah(q)
+	if err != nil {
+		return regsosek.Filter{}, points.Filter{}, err
+	}
+	matchStatus, err := regsosek.ParseMatchStatus(q.Get("matchStatus"))
+	if err != nil {
+		return regsosek.Filter{}, points.Filter{}, err
+	}
+	search, err := parseSearch(q)
+	if err != nil {
+		return regsosek.Filter{}, points.Filter{}, err
+	}
+	return regsosek.Filter{
+		WilayahPrefix: wilayah.FullCode(),
+		MatchStatus:   matchStatus,
+		Search:        search,
+	}, wilayah, nil
+}
+
+// prepareRegsosekReport gathers the rows and scope description for the
+// Daftar Match Regsosek downloads. Unlike the other report it only
+// requires a kecamatan, not a desa/kelurahan: this table is far smaller
+// (the largest kecamatan in it holds ~7.4k rows against ~27k for the
+// largest desa in the points table), so a desa-level floor would be
+// needlessly restrictive here. ok is false when an error response has
+// already been written.
+func (s *Server) prepareRegsosekReport(w http.ResponseWriter, r *http.Request, kind string) (report.Region, []regsosek.Row, bool, bool) {
+	q := r.URL.Query()
+
+	filter, wilayah, err := regsosekFilter(q)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return report.Region{}, nil, false, false
+	}
+	if wilayah.KabKota == "" || wilayah.Kecamatan == "" {
+		writeError(w, http.StatusBadRequest, kind+" download requires filtering at least down to Kecamatan")
+		return report.Region{}, nil, false, false
+	}
+
+	rows, err := s.regsvc.ListAll(
+		r.Context(), filter,
+		regsosek.ParseSortColumn(q.Get("sortBy")), points.ParseSortDir(q.Get("dir")),
+	)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return report.Region{}, nil, false, false
+		}
+		s.log.Error("regsosek report query failed", "err", err, "format", kind)
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return report.Region{}, nil, false, false
+	}
+
+	region := report.Region{
+		KabKotaCode: wilayah.KabKota,
+		KabKotaName: points.KabKotaName(wilayah.KabKota),
+		Kecamatan:   wilayah.Kecamatan,
+		Desa:        wilayah.Desa,
+		SLS:         wilayah.SLS,
+		SubSLS:      wilayah.SubSLS,
+
+		// Reusing the shared "Filter Tambahan" block: match_status is this
+		// menu's one attribute filter, so it goes in the Status slot rather
+		// than growing Region a field only one report would use.
+		Status: filter.MatchStatus,
+		Search: filter.Search,
+	}
+	return region, rows, len(rows) >= regsosek.ReportMaxRows, true
+}
+
+func (s *Server) handleRegsosekPDF(w http.ResponseWriter, r *http.Request) {
+	region, rows, truncated, ok := s.prepareRegsosekReport(w, r, "PDF")
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="daftar-match-regsosek-%s.pdf"`, region.FullCode()))
+	w.Header().Set("Cache-Control", "no-store")
+	if err := pdfreport.GenerateRegsosek(w, region, rows, truncated); err != nil {
+		s.log.Error("regsosek pdf generation failed", "err", err)
+	}
+}
+
+func (s *Server) handleRegsosekXLSX(w http.ResponseWriter, r *http.Request) {
+	region, rows, truncated, ok := s.prepareRegsosekReport(w, r, "Excel")
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="daftar-match-regsosek-%s.xlsx"`, region.FullCode()))
+	w.Header().Set("Cache-Control", "no-store")
+	if err := xlsxreport.GenerateRegsosek(w, region, rows, truncated); err != nil {
+		s.log.Error("regsosek xlsx generation failed", "err", err)
+	}
+}
+
+// handleMatchPoints serves the Peta Match Reg2022 viewport: the same rows
+// as the Daftar Match Regsosek table, plotted on their Regsosek
+// coordinates, clustered by the same rules /api/points uses.
+func (s *Server) handleMatchPoints(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	bbox, err := points.ParseBBox(q.Get("minLat"), q.Get("maxLat"), q.Get("minLon"), q.Get("maxLon"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	zoom := 0
+	if z := q.Get("zoom"); z != "" {
+		parsed, err := strconv.Atoi(z)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid zoom")
+			return
+		}
+		zoom = parsed
+	}
+	filter, _, err := regsosekFilter(q)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	resp, err := s.regsvc.Query(r.Context(), bbox, zoom, filter)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		s.log.Error("match points query failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleMatchBounds gives the match map an extent to fit to for whatever
+// filter is applied — the equivalent of /api/bounds, but computed per
+// request since it depends on the filter rather than being a fixed
+// dataset-wide value.
+func (s *Server) handleMatchBounds(w http.ResponseWriter, r *http.Request) {
+	filter, _, err := regsosekFilter(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	b, err := s.regsvc.BoundsFor(r.Context(), filter)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		s.log.Error("match bounds query failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, b)
 }

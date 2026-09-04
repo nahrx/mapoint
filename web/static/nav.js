@@ -4,6 +4,8 @@
   const tabs = [
     { btn: document.getElementById("nav-peta"), view: document.getElementById("view-peta"), name: "peta", path: "/" },
     { btn: document.getElementById("nav-daftar"), view: document.getElementById("view-daftar"), name: "daftar", path: "/daftar" },
+    { btn: document.getElementById("nav-reg2022"), view: document.getElementById("view-reg2022"), name: "reg2022", path: "/reg2022" },
+    { btn: document.getElementById("nav-petamatch"), view: document.getElementById("view-petamatch"), name: "petamatch", path: "/peta-match" },
   ];
 
   function tabForPath(path) {
@@ -39,6 +41,7 @@
   });
 
   // Respect whatever URL the page was actually loaded on — a direct visit
-  // or refresh of /daftar should land on Daftar, not always default to Peta.
+  // or refresh of /daftar or /reg2022 should land on that view, not always
+  // default to Peta.
   show(tabForPath(window.location.pathname).name, { pushState: false });
 })();

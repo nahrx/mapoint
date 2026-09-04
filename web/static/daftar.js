@@ -365,10 +365,21 @@
 
   // Applying a filter on a phone means you're done choosing — fold the
   // panel away so the results you just asked for are what's on screen.
-  if (window.matchMedia("(max-width: 600px)").matches) {
-    setFiltersCollapsed(true);
-    applyFilterBtn.addEventListener("click", () => setFiltersCollapsed(true));
-  }
+  // The toggle is hidden above 600px (see .list-filter-toggle in
+  // style.css), so a panel left collapsed at that width could never be
+  // reopened. Track the breakpoint rather than reading it once at load:
+  // the page can start narrow and then be widened (window resize, phone
+  // rotation), and that used to strand the user with no filters and no
+  // way to get them back.
+  const narrowQuery = window.matchMedia("(max-width: 600px)");
+  narrowQuery.addEventListener("change", (e) => setFiltersCollapsed(e.matches));
+  setFiltersCollapsed(narrowQuery.matches);
+
+  // Applying on a phone means you are done choosing — fold the panel away
+  // so the results are what fills the screen.
+  applyFilterBtn.addEventListener("click", () => {
+    if (narrowQuery.matches) setFiltersCollapsed(true);
+  });
 
   // --- PDF / Excel download ----------------------------------------------
 

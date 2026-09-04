@@ -526,10 +526,11 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 	return pts, rows.Err()
 }
 
-// cellSizeForZoom returns a grid cell size, in degrees of longitude, tuned
+// CellSizeForZoom returns a grid cell size, in degrees of longitude, tuned
 // so each cluster covers roughly 60 screen pixels at that Leaflet zoom
-// level (256px tiles, doubling every zoom level).
-func cellSizeForZoom(zoom int) float64 {
+// level (256px tiles, doubling every zoom level). Exported so the match
+// map in internal/regsosek clusters at exactly the same scale as this one.
+func CellSizeForZoom(zoom int) float64 {
 	if zoom < 0 {
 		zoom = 0
 	}
@@ -541,7 +542,7 @@ func cellSizeForZoom(zoom int) float64 {
 }
 
 func (s *Service) queryClusters(ctx context.Context, b BBox, zoom int, filter Filter) ([]Cluster, error) {
-	cell := cellSizeForZoom(zoom)
+	cell := CellSizeForZoom(zoom)
 	cellStr := fFloat(cell)
 
 	where, args := filter.clause()
@@ -916,7 +917,10 @@ func ParseSortDir(v string) SortDir {
 	return SortAsc
 }
 
-func (d SortDir) sql() string {
+// SQL renders the direction as the ASC/DESC keyword for an ORDER BY.
+// Exported because internal/regsosek builds its own list query with the
+// same sort semantics.
+func (d SortDir) SQL() string {
 	if d == SortDesc {
 		return "DESC"
 	}
@@ -1048,7 +1052,7 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 	FROM %s
 	WHERE %s
 	ORDER BY %s %s
-	LIMIT %d OFFSET %d`, cols, table, where, sortCol, dir.sql(), pageSize, offset)
+	LIMIT %d OFFSET %d`, cols, table, where, sortCol, dir.SQL(), pageSize, offset)
 
 	rows, err := s.conn.Query(ctx, q, args...)
 	if err != nil {
