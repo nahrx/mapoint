@@ -663,18 +663,27 @@ satu ikon di HP.
 
 ## Login
 
-Seluruh website ada di balik satu akun. Kredensialnya dari `.env`:
+Seluruh website ada di balik login. Daftar akunnya dari `.env`, dipisah
+koma, tiap entri `username:password`:
 
 ```
-AUTH_USERNAME=viewer@bps.go.id
-AUTH_PASSWORD=...
+AUTH_USERS=viewer@bps.go.id:rahasia,mitra:rahasia2
 ```
 
-Keduanya **wajib** — `config.Load` menolak start kalau salah satu kosong.
+Yang memisahkan cuma titik dua **pertama**, jadi password boleh mengandung
+titik dua. Password **tidak boleh** mengandung koma — itu pemisah antar
+akun, dan password yang mengandungnya akan terpotong diam-diam.
+
+Bentuk lama satu akun (`AUTH_USERNAME` + `AUTH_PASSWORD`) masih diterima
+kalau `AUTH_USERS` kosong, supaya deployment yang sudah jalan tidak putus;
+`AUTH_USERS` menang kalau keduanya diisi.
+
+Minimal satu akun **wajib** — `config.Load` menolak start kalau tidak ada.
 Ini disengaja: kegagalan diam-diam dari password opsional adalah dashboard
 yang terbuka untuk siapa saja, dan itu lebih buruk daripada server yang
-menolak jalan dengan pesan jelas. Untuk Docker, keduanya juga sudah
-diteruskan lewat `docker-compose.yml`.
+menolak jalan dengan pesan jelas. Entri yang salah bentuk, username
+duplikat, atau password kosong juga ditolak saat startup. Untuk Docker,
+`AUTH_USERS` sudah diteruskan lewat `docker-compose.yml`.
 
 **Yang dilindungi:** semuanya kecuali `/login`, `/api/login`, `/api/logout`,
 dan `/healthz`. Gerbangnya (`requireAuth` di `internal/api/auth.go`)
@@ -683,23 +692,35 @@ API yang dijaga, seluruh frontend masih bisa dibaca tanpa login.
 `/healthz` sengaja dibiarkan terbuka supaya monitoring tidak perlu
 kredensial; isinya cuma "ClickHouse menjawab atau tidak".
 
-**Sesi** berupa cookie bertanda tangan HMAC berisi waktu kedaluwarsa —
-`HttpOnly`, `SameSite=Lax`, dan `Secure` otomatis menyala kalau koneksinya
-HTTPS (langsung atau lewat `X-Forwarded-Proto`), jadi deployment HTTP di
-jaringan kantor tetap jalan. Berlaku 12 jam.
+**Sesi** berupa cookie bertanda tangan HMAC berisi waktu kedaluwarsa dan
+username pemiliknya — `HttpOnly`, `SameSite=Lax`, dan `Secure` otomatis
+menyala kalau koneksinya HTTPS (langsung atau lewat `X-Forwarded-Proto`),
+jadi deployment HTTP di jaringan kantor tetap jalan. Berlaku 12 jam.
 
-Kuncinya diturunkan dari kredensial itu sendiri (`newAuth`), bukan secret
-terpisah. Efeknya: **mengganti `AUTH_PASSWORD` otomatis membatalkan semua
-sesi yang sedang berjalan**, tanpa perlu menyimpan daftar sesi dan tanpa
-secret tambahan yang harus dirotasi. Ini tidak membocorkan apa pun — yang
-tahu password toh bisa login. Alternatifnya (kunci acak saat startup) akan
-memaksa semua orang login ulang setiap deploy.
+Kuncinya diturunkan dari kredensial akun itu sendiri (`newAuth`), **satu
+kunci per akun**, bukan satu secret bersama. Dua sifat lahir dari situ dan
+keduanya sudah diuji:
+
+- **Mengganti password satu akun membatalkan sesi akun itu saja.** Diuji:
+  setelah password `mitra6400` diubah, sesi `mitra6400` yang sedang
+  berjalan langsung 401 sementara sesi `viewer6400@bps.go.id` tetap 200.
+  Kalau kuncinya dibagi bersama, menambah akun baru pun akan menendang
+  keluar semua orang.
+- **Menghapus akun dari `.env` langsung mematikan sesinya**, karena tidak
+  ada lagi kunci untuk memverifikasi tokennya.
+
+Tidak ada penyimpanan sesi dan tidak ada secret tambahan yang harus
+dirotasi. Ini tidak membocorkan apa pun — yang tahu password toh bisa
+login. Alternatifnya (kunci acak saat startup) akan memaksa semua orang
+login ulang setiap deploy.
 
 Beberapa hal kecil yang sengaja dibuat begitu:
 
 - Perbandingan username dan password memakai `subtle.ConstantTimeCompare`,
   dan pesan gagalnya tidak membedakan "username salah" dari "password
-  salah".
+  salah". Perulangan pemeriksaan akun juga sengaja tidak berhenti begitu
+  ketemu — kalau berhenti lebih awal, tebakan yang mengenai akun pertama
+  jadi terukur lebih cepat daripada yang mengenai akun terakhir.
 - Percobaan login yang gagal ditulis ke log beserta username dan IP —
   passwordnya tidak pernah.
 - Parameter `next` (supaya sesi yang habis mengembalikan Anda ke halaman

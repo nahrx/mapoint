@@ -41,14 +41,14 @@ type Server struct {
 	// clear "not configured" response rather than a nil-pointer panic.
 	mapPool *pgxpool.Pool
 
-	// auth is the single account gating every route except the login page
-	// and /healthz — see auth.go. Never nil: config.Load refuses to start
-	// without credentials.
+	// auth holds the accounts gating every route except the login page and
+	// /healthz — see auth.go. Never empty: config.Load refuses to start
+	// without at least one.
 	auth *auth
 }
 
-func NewServer(svc *points.Service, regsvc *regsosek.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, mapPool *pgxpool.Pool, authUsername, authPassword string, log *slog.Logger) *Server {
-	s := &Server{svc: svc, regsvc: regsvc, conn: conn, mapPool: mapPool, auth: newAuth(authUsername, authPassword), log: log}
+func NewServer(svc *points.Service, regsvc *regsosek.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, mapPool *pgxpool.Pool, accounts []Account, log *slog.Logger) *Server {
+	s := &Server{svc: svc, regsvc: regsvc, conn: conn, mapPool: mapPool, auth: newAuth(accounts), log: log}
 	s.bounds.Store(&bounds)
 	s.kabkota.Store(&kabkota)
 	return s

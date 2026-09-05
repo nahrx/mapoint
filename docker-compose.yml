@@ -18,8 +18,11 @@ services:
       - MAP_DATABASE=${MAP_DATABASE}
       - MAP_USERNAME=${MAP_USERNAME}
       - MAP_PASSWORD=${MAP_PASSWORD}
-      # Login akun tunggal dashboard. Wajib — container menolak start
-      # tanpa keduanya, supaya tidak ada deploy yang diam-diam terbuka.
+      # Daftar akun login dashboard ("user:pass" dipisah koma). Wajib —
+      # container menolak start tanpa satu pun akun, supaya tidak ada
+      # deploy yang diam-diam terbuka. AUTH_USERNAME/AUTH_PASSWORD masih
+      # diteruskan sebagai bentuk lama untuk satu akun.
+      - AUTH_USERS=${AUTH_USERS}
       - AUTH_USERNAME=${AUTH_USERNAME}
       - AUTH_PASSWORD=${AUTH_PASSWORD}
     healthcheck:

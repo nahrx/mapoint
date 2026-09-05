@@ -111,7 +111,15 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	srv := api.NewServer(svc, regsvc, conn, bounds, kabkotaList, mapPool, cfg.AuthUsername, cfg.AuthPassword, log)
+	// config.Account -> api.Account: the api package deliberately doesn't
+	// import config, so the two carry the same shape separately.
+	accounts := make([]api.Account, len(cfg.AuthUsers))
+	for i, u := range cfg.AuthUsers {
+		accounts[i] = api.Account{Username: u.Username, Password: u.Password}
+	}
+	log.Info("dashboard accounts loaded", "count", len(accounts))
+
+	srv := api.NewServer(svc, regsvc, conn, bounds, kabkotaList, mapPool, accounts, log)
 	go refreshBoundsPeriodically(ctx, svc, srv, log)
 
 	httpServer := &http.Server{

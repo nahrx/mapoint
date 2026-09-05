@@ -22,12 +22,11 @@ type Config struct {
 	// HTTPAddr is the address the web server listens on, e.g. ":8080".
 	HTTPAddr string
 
-	// AuthUsername and AuthPassword are the single account allowed to open
-	// the dashboard. Both are required — Load refuses to start without
-	// them rather than quietly serving the data to anyone, since every
-	// route except the login page and /healthz is behind this.
-	AuthUsername string
-	AuthPassword string
+	// AuthUsers are the accounts allowed to open the dashboard. At least
+	// one is required — Load refuses to start without any rather than
+	// quietly serving the data to anyone, since every route except the
+	// login page and /healthz is behind this.
+	AuthUsers []Account
 
 	// MapHost etc. configure an optional PostgreSQL/PostGIS connection
 	// used only for SubSLS boundary polygons on the Peta map. Unlike the
@@ -103,8 +102,10 @@ func Load(envPath string) (*Config, error) {
 		cfg.MapPort = mapPort
 	}
 
-	cfg.AuthUsername = get("AUTH_USERNAME", "")
-	cfg.AuthPassword = get("AUTH_PASSWORD", "")
+	cfg.AuthUsers, err = parseAuthUsers(get("AUTH_USERS", ""), get("AUTH_USERNAME", ""), get("AUTH_PASSWORD", ""))
+	if err != nil {
+		return nil, err
+	}
 
 	if cfg.CHHost == "" {
 		return nil, fmt.Errorf("config: HOST is required")
@@ -116,11 +117,60 @@ func Load(envPath string) (*Config, error) {
 	// mode of a silently-optional password is an unprotected dashboard,
 	// which is worse than a server that refuses to start with a clear
 	// message.
-	if cfg.AuthUsername == "" || cfg.AuthPassword == "" {
-		return nil, fmt.Errorf("config: AUTH_USERNAME and AUTH_PASSWORD are required — see example.env")
+	if len(cfg.AuthUsers) == 0 {
+		return nil, fmt.Errorf("config: no dashboard account configured — set AUTH_USERS (or AUTH_USERNAME + AUTH_PASSWORD), see example.env")
 	}
 
 	return cfg, nil
+}
+
+// Account is one dashboard login.
+type Account struct {
+	Username string
+	Password string
+}
+
+// parseAuthUsers reads the account list from AUTH_USERS, a comma-separated
+// list of "username:password" pairs:
+//
+//	AUTH_USERS=viewer6400@bps.go.id:rahasia,mitra6400:rahasia2
+//
+// Only the FIRST colon in an entry separates the two, so a password may
+// contain colons. It may not contain a comma — that's the entry separator,
+// and a password containing one would be silently truncated, so this is
+// documented in example.env rather than guessed at.
+//
+// singleUser/singlePass are the older AUTH_USERNAME/AUTH_PASSWORD pair,
+// still accepted as shorthand for one account so an existing deployment
+// keeps working. AUTH_USERS wins when both are set.
+func parseAuthUsers(list, singleUser, singlePass string) ([]Account, error) {
+	if strings.TrimSpace(list) == "" {
+		if singleUser == "" || singlePass == "" {
+			return nil, nil
+		}
+		return []Account{{Username: singleUser, Password: singlePass}}, nil
+	}
+
+	var accounts []Account
+	seen := make(map[string]bool)
+	for _, entry := range strings.Split(list, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		user, pass, ok := strings.Cut(entry, ":")
+		user = strings.TrimSpace(user)
+		if !ok || user == "" || pass == "" {
+			// The password is never echoed, here or anywhere else.
+			return nil, fmt.Errorf("config: AUTH_USERS entry for %q must be \"username:password\"", user)
+		}
+		if seen[user] {
+			return nil, fmt.Errorf("config: AUTH_USERS lists %q twice", user)
+		}
+		seen[user] = true
+		accounts = append(accounts, Account{Username: user, Password: pass})
+	}
+	return accounts, nil
 }
 
 // parseDotEnv parses a simple KEY=VALUE .env file, ignoring blank lines and
