@@ -8,6 +8,7 @@ package report
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"se2026-titik-maps/internal/points"
 )
@@ -15,10 +16,10 @@ import (
 // Region describes the wilayah — and, optionally, the extra attribute
 // filters — a report is scoped to. All fields are expected to be
 // already-validated (see points.Parse*) — this package only formats them,
-// it doesn't validate. JenisPrelist, KeberadaanKeluarga and Status are ""
-// when that filter wasn't applied; a set filter's raw value (including
-// points.EmptyValue for "filter for a blank column") is rendered via
-// AttrLabel. Search is "" when no name search was applied.
+// it doesn't validate. JenisPrelist, KeberadaanKeluarga and Status are
+// empty when that filter wasn't applied; their raw values (including
+// points.EmptyValue for "filter for a blank column") are rendered via
+// AttrLabels. Search is "" when no name search was applied.
 type Region struct {
 	KabKotaCode string
 	KabKotaName string
@@ -27,9 +28,13 @@ type Region struct {
 	SLS         string
 	SubSLS      string
 
-	JenisPrelist       string
-	KeberadaanKeluarga string
-	Status             string
+	// JenisPrelist, KeberadaanKeluarga and Status are multi-select: each
+	// holds every value the user picked, or is empty when that filter is
+	// off. Rendered as one comma-separated line by AttrLabels.
+	JenisPrelist       []string
+	KeberadaanKeluarga []string
+	Status             []string
+	PenggunaanBangunan []string
 	Search             string
 
 	// FlagBaru and FlagRegsosek are the raw points.FlagYes/FlagNo values of
@@ -103,14 +108,17 @@ func allIfEmpty(s string) string {
 // when none of them were.
 func (r Region) ExtraFilters() [][2]string {
 	var extra [][2]string
-	if r.JenisPrelist != "" {
-		extra = append(extra, [2]string{"Jenis Prelist", AttrLabel(r.JenisPrelist)})
+	if len(r.JenisPrelist) > 0 {
+		extra = append(extra, [2]string{"Jenis Prelist", AttrLabels(r.JenisPrelist)})
 	}
-	if r.KeberadaanKeluarga != "" {
-		extra = append(extra, [2]string{"Keberadaan Keluarga", AttrLabel(r.KeberadaanKeluarga)})
+	if len(r.KeberadaanKeluarga) > 0 {
+		extra = append(extra, [2]string{"Keberadaan Keluarga", AttrLabels(r.KeberadaanKeluarga)})
 	}
-	if r.Status != "" {
-		extra = append(extra, [2]string{"Status", AttrLabel(r.Status)})
+	if len(r.Status) > 0 {
+		extra = append(extra, [2]string{"Status", AttrLabels(r.Status)})
+	}
+	if len(r.PenggunaanBangunan) > 0 {
+		extra = append(extra, [2]string{"Penggunaan Bangunan", AttrLabels(r.PenggunaanBangunan)})
 	}
 	if r.Search != "" {
 		extra = append(extra, [2]string{"Cari Nama", r.Search})
@@ -132,6 +140,17 @@ func AttrLabel(val string) string {
 		return "(Kosong)"
 	}
 	return val
+}
+
+// AttrLabels renders every picked value of one multi-select attribute
+// filter as a single comma-separated line, so a report header shows what
+// was actually selected rather than just "3 dipilih".
+func AttrLabels(vals []string) string {
+	out := make([]string, len(vals))
+	for i, v := range vals {
+		out[i] = AttrLabel(v)
+	}
+	return strings.Join(out, ", ")
 }
 
 // DashIfEmpty renders "" as "-" — used for table cells so an empty value

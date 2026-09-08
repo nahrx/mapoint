@@ -1,16 +1,17 @@
 (() => {
   "use strict";
 
-  const { fetchWithRetry, makeCascadingLevel, esc } = App;
+  const { fetchWithRetry, makeCascadingLevel, makeMultiSelect, esc } = App;
 
   const kabkotaSelect = document.getElementById("kabkota-select-list");
   const kecamatanSelect = document.getElementById("kecamatan-select-list");
   const desaSelect = document.getElementById("desa-select-list");
   const slsSelect = document.getElementById("sls-select-list");
   const subslsSelect = document.getElementById("subsls-select-list");
-  const jenisPrelistSelect = document.getElementById("jenisprelist-select-list");
-  const keberadaanKeluargaSelect = document.getElementById("keberadaankeluarga-select-list");
-  const statusSelect = document.getElementById("status-select-list");
+  const jenisPrelistMS = makeMultiSelect(document.getElementById("jenisprelist-ms-list"));
+  const keberadaanKeluargaMS = makeMultiSelect(document.getElementById("keberadaankeluarga-ms-list"));
+  const statusMS = makeMultiSelect(document.getElementById("status-ms-list"));
+  const penggunaanMS = makeMultiSelect(document.getElementById("penggunaan-ms-list"));
   const flagBaruSelect = document.getElementById("flagbaru-select-list");
   const flagRegsosekSelect = document.getElementById("flagregsosek-select-list");
   const searchInput = document.getElementById("daftar-search");
@@ -27,6 +28,7 @@
   const applyFilterBtn = document.getElementById("apply-filter-btn-list");
   const filtersEl = document.getElementById("daftar-filters");
   const filterToggleBtn = document.getElementById("daftar-filter-toggle");
+  const updatedEl = document.getElementById("daftar-updated");
 
   let kabkotaByCode = new Map();
   let kecamatanByCode = new Map();
@@ -46,9 +48,12 @@
   let appliedDesa = "";
   let appliedSls = "";
   let appliedSubsls = "";
-  let appliedJenisPrelist = "";
-  let appliedKeberadaanKeluarga = "";
-  let appliedStatus = "";
+  // Arrays now: these three filters are multi-select, and every picked
+  // value goes out as its own repeated query parameter.
+  let appliedJenisPrelist = [];
+  let appliedKeberadaanKeluarga = [];
+  let appliedStatus = [];
+  let appliedPenggunaan = [];
   let appliedFlagBaru = "";
   let appliedFlagRegsosek = "";
   let appliedSearch = "";
@@ -88,6 +93,7 @@
         <td class="addr" title="${esc(p.alamat)}">${esc(p.alamat)}</td>
         <td>${esc(p.subsls)}</td>
         <td>${esc(p.jenis_prelist)}</td>
+        <td>${esc(p.penggunaan_bangunan)}</td>
         <td class="num">${esc(p.nomor_bangunan)}</td>
         <td>${esc(p.keberadaan_keluarga)}</td>
         <td><span class="status-dot" style="background:${color}"></span>${esc(p.status)}</td>
@@ -121,9 +127,12 @@
     if (appliedDesa) params.set("desa", appliedDesa);
     if (appliedSls) params.set("sls", appliedSls);
     if (appliedSubsls) params.set("subsls", appliedSubsls);
-    if (appliedJenisPrelist) params.set("jenisPrelist", appliedJenisPrelist);
-    if (appliedKeberadaanKeluarga) params.set("keberadaanKeluarga", appliedKeberadaanKeluarga);
-    if (appliedStatus) params.set("status", appliedStatus);
+    // append, not set: one parameter per picked value, which is what
+    // the server reads with q["status"] and turns into a SQL IN list.
+    for (const v of appliedJenisPrelist) params.append("jenisPrelist", v);
+    for (const v of appliedKeberadaanKeluarga) params.append("keberadaanKeluarga", v);
+    for (const v of appliedStatus) params.append("status", v);
+    for (const v of appliedPenggunaan) params.append("penggunaanBangunan", v);
     if (appliedFlagBaru) params.set("flagBaru", appliedFlagBaru);
     if (appliedFlagRegsosek) params.set("flagRegsosek", appliedFlagRegsosek);
     if (appliedSearch) params.set("search", appliedSearch);
@@ -171,7 +180,7 @@
     const startRow = (resp.page - 1) * resp.page_size + 1;
     tbody.innerHTML = resp.items.length
       ? resp.items.map((p, i) => rowHTML(p, startRow + i)).join("")
-      : `<tr><td colspan="12" class="empty-row">Tidak ada data yang cocok dengan filter ini.</td></tr>`;
+      : `<tr><td colspan="13" class="empty-row">Tidak ada data yang cocok dengan filter ini.</td></tr>`;
 
     const totalPages = Math.max(1, Math.ceil(resp.total / resp.page_size));
     pageInfoEl.textContent = `Halaman ${resp.page.toLocaleString("id-ID")} dari ${totalPages.toLocaleString("id-ID")} (${resp.total.toLocaleString("id-ID")} data)`;
@@ -233,17 +242,31 @@
   // --- wilayah filter (kabkota -> kecamatan -> desa -> sls) -------------
 
   const kecamatanLevel = makeCascadingLevel({
-    selectEl: kecamatanSelect, placeholder: "Semua Kecamatan", byCode: kecamatanByCode, labelPrefix: "Kec. ",
+    selectEl: kecamatanSelect, placeholder: "Semua Kecamatan", byCode: kecamatanByCode, labelPrefix: "Kec. ", countNoun: "data",
   });
   const desaLevel = makeCascadingLevel({
-    selectEl: desaSelect, placeholder: "Semua Desa/Kelurahan", byCode: desaByCode, labelPrefix: "Desa/Kel. ",
+    selectEl: desaSelect, placeholder: "Semua Desa/Kelurahan", byCode: desaByCode, labelPrefix: "Desa/Kel. ", countNoun: "data",
   });
   const slsLevel = makeCascadingLevel({
-    selectEl: slsSelect, placeholder: "Semua SLS", byCode: slsByCode, labelPrefix: "SLS ", keepCode: true,
+    selectEl: slsSelect, placeholder: "Semua SLS", byCode: slsByCode, labelPrefix: "SLS ", keepCode: true, countNoun: "data",
   });
   const subslsLevel = makeCascadingLevel({
-    selectEl: subslsSelect, placeholder: "Semua SubSLS", byCode: subslsByCode, labelPrefix: "SubSLS ",
+    selectEl: subslsSelect, placeholder: "Semua SubSLS", byCode: subslsByCode, labelPrefix: "SubSLS ", countNoun: "data",
   });
+
+  // The stamp is optional configuration, so anything other than a non-empty
+  // string leaves the line hidden — a blank or half-rendered "Data terakhir
+  // diperbarui:" would be worse than saying nothing.
+  async function loadDataUpdatedAt() {
+    try {
+      const meta = await fetchWithRetry("/api/meta", undefined);
+      if (!meta.data_updated_at) return;
+      updatedEl.textContent = `Data terakhir diperbarui: ${meta.data_updated_at}`;
+      updatedEl.classList.remove("hidden");
+    } catch (err) {
+      console.error("failed to load meta", err);
+    }
+  }
 
   async function loadKabKotaOptions() {
     try {
@@ -252,7 +275,10 @@
         kabkotaByCode.set(k.code, k);
         const opt = document.createElement("option");
         opt.value = k.code;
-        opt.textContent = `${k.name} (${k.total.toLocaleString("id-ID")} titik)`;
+        // "data", not "titik": this count is every row in the kabupaten/kota,
+        // including rows with no usable coordinate. Same reasoning as
+        // countNoun in makeCascadingLevel — the map menus keep "titik".
+        opt.textContent = `${k.name} (${k.total.toLocaleString("id-ID")} data)`;
         kabkotaSelect.appendChild(opt);
       }
     } catch (err) {
@@ -264,25 +290,13 @@
   // Independent of the wilayah cascade and of each other — no parent/child
   // resetting needed, just a value change and a reload.
 
-  function fillAttrSelect(selectEl, values) {
-    for (const v of values) {
-      const opt = document.createElement("option");
-      opt.value = v;
-      opt.textContent = v;
-      selectEl.appendChild(opt);
-    }
-    const blank = document.createElement("option");
-    blank.value = EMPTY_VALUE;
-    blank.textContent = "(Kosong)";
-    selectEl.appendChild(blank);
-  }
-
   async function loadFilterOptions() {
     try {
       const opts = await fetchWithRetry("/api/filter-options", undefined);
-      fillAttrSelect(jenisPrelistSelect, opts.jenis_prelist || []);
-      fillAttrSelect(keberadaanKeluargaSelect, opts.keberadaan_keluarga || []);
-      fillAttrSelect(statusSelect, opts.status || []);
+      jenisPrelistMS.setOptions(opts.jenis_prelist || []);
+      keberadaanKeluargaMS.setOptions(opts.keberadaan_keluarga || []);
+      statusMS.setOptions(opts.status || []);
+      penggunaanMS.setOptions(opts.penggunaan_bangunan || []);
     } catch (err) {
       console.error("failed to load filter options", err);
     }
@@ -355,9 +369,10 @@
     appliedDesa = desaSelect.value;
     appliedSls = slsSelect.value;
     appliedSubsls = subslsSelect.value;
-    appliedJenisPrelist = jenisPrelistSelect.value;
-    appliedKeberadaanKeluarga = keberadaanKeluargaSelect.value;
-    appliedStatus = statusSelect.value;
+    appliedJenisPrelist = jenisPrelistMS.getValues();
+    appliedKeberadaanKeluarga = keberadaanKeluargaMS.getValues();
+    appliedStatus = statusMS.getValues();
+    appliedPenggunaan = penggunaanMS.getValues();
     appliedFlagBaru = flagBaruSelect.value;
     appliedFlagRegsosek = flagRegsosekSelect.value;
     appliedSearch = searchInput.value.trim();
@@ -436,6 +451,7 @@
     updateSortHeaderUI();
     loadKabKotaOptions();
     loadFilterOptions();
+    loadDataUpdatedAt();
     loadPage();
   });
 })();

@@ -22,6 +22,14 @@ type Config struct {
 	// HTTPAddr is the address the web server listens on, e.g. ":8080".
 	HTTPAddr string
 
+	// DataUpdatedAt is the free-text "data terakhir diperbarui" stamp shown
+	// above the Daftar filters, e.g. "8 September 2026 pukul 08.00 WITA".
+	// Deliberately configuration rather than a literal in the HTML: the
+	// data is reloaded periodically, and a hardcoded date would need a
+	// rebuild and redeploy every time. Empty hides the line entirely, which
+	// is better than showing a stamp nobody has updated.
+	DataUpdatedAt string
+
 	// AuthUsers are the accounts allowed to open the dashboard. At least
 	// one is required — Load refuses to start without any rather than
 	// quietly serving the data to anyone, since every route except the
@@ -101,6 +109,8 @@ func Load(envPath string) (*Config, error) {
 		}
 		cfg.MapPort = mapPort
 	}
+
+	cfg.DataUpdatedAt = get("DATA_UPDATED_AT", "")
 
 	cfg.AuthUsers, err = parseAuthUsers(get("AUTH_USERS", ""), get("AUTH_USERNAME", ""), get("AUTH_PASSWORD", ""))
 	if err != nil {

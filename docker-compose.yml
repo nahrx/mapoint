@@ -18,6 +18,9 @@ services:
       - MAP_DATABASE=${MAP_DATABASE}
       - MAP_USERNAME=${MAP_USERNAME}
       - MAP_PASSWORD=${MAP_PASSWORD}
+      # Keterangan "data terakhir diperbarui" di atas filter menu Daftar.
+      # Opsional — kosong berarti barisnya tidak ditampilkan.
+      - DATA_UPDATED_AT=${DATA_UPDATED_AT}
       # Daftar akun login dashboard ("user:pass" dipisah koma). Wajib —
       # container menolak start tanpa satu pun akun, supaya tidak ada
       # deploy yang diam-diam terbuka. AUTH_USERNAME/AUTH_PASSWORD masih

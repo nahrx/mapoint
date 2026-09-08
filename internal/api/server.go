@@ -41,14 +41,18 @@ type Server struct {
 	// clear "not configured" response rather than a nil-pointer panic.
 	mapPool *pgxpool.Pool
 
+	// dataUpdatedAt is the free-text stamp shown above the Daftar filters,
+	// or "" when DATA_UPDATED_AT isn't set — see config.Config.
+	dataUpdatedAt string
+
 	// auth holds the accounts gating every route except the login page and
 	// /healthz — see auth.go. Never empty: config.Load refuses to start
 	// without at least one.
 	auth *auth
 }
 
-func NewServer(svc *points.Service, regsvc *regsosek.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, mapPool *pgxpool.Pool, accounts []Account, log *slog.Logger) *Server {
-	s := &Server{svc: svc, regsvc: regsvc, conn: conn, mapPool: mapPool, auth: newAuth(accounts), log: log}
+func NewServer(svc *points.Service, regsvc *regsosek.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, mapPool *pgxpool.Pool, accounts []Account, dataUpdatedAt string, log *slog.Logger) *Server {
+	s := &Server{svc: svc, regsvc: regsvc, conn: conn, mapPool: mapPool, auth: newAuth(accounts), dataUpdatedAt: dataUpdatedAt, log: log}
 	s.bounds.Store(&bounds)
 	s.kabkota.Store(&kabkota)
 	return s
@@ -71,6 +75,7 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 
 	mux.HandleFunc("GET /api/points", s.handlePoints)
 	mux.HandleFunc("GET /api/bounds", s.handleBounds)
+	mux.HandleFunc("GET /api/points-bounds", s.handlePointsBounds)
 	mux.HandleFunc("GET /api/kabkota", s.handleKabKota)
 	mux.HandleFunc("GET /api/kecamatan", s.handleKecamatan)
 	mux.HandleFunc("GET /api/desa", s.handleDesa)
@@ -80,6 +85,7 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /api/list/pdf", s.handleListPDF)
 	mux.HandleFunc("GET /api/list/xlsx", s.handleListXLSX)
 	mux.HandleFunc("GET /api/filter-options", s.handleFilterOptions)
+	mux.HandleFunc("GET /api/meta", s.handleMeta)
 	mux.HandleFunc("GET /api/reg2022", s.handleReg2022)
 	mux.HandleFunc("GET /api/reg2022/filter-options", s.handleReg2022FilterOptions)
 	mux.HandleFunc("GET /api/reg2022/pdf", s.handleRegsosekPDF)
@@ -175,16 +181,58 @@ func (s *Server) handleBounds(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handlePointsBounds returns the extent of whatever the filter matches,
+// so the Peta menu can zoom onto a name search's results. Separate from
+// /api/bounds, which is the whole dataset's extent cached at startup and
+// takes no filter at all.
+//
+// MinLat..MaxLon come back as NaN when nothing matches; they are omitted
+// from the JSON in that case (see points.FiniteOrNil), and the frontend's
+// Number.isFinite guard then leaves the map where it is.
+func (s *Server) handlePointsBounds(w http.ResponseWriter, r *http.Request) {
+	filter, err := parseFilter(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	b, err := s.svc.FilteredBounds(r.Context(), filter)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		s.log.Error("points bounds query failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"min_lat": points.FiniteOrNil(b.MinLat),
+		"max_lat": points.FiniteOrNil(b.MaxLat),
+		"min_lon": points.FiniteOrNil(b.MinLon),
+		"max_lon": points.FiniteOrNil(b.MaxLon),
+		"total":   b.Total,
+	})
+}
+
 func (s *Server) handleKabKota(w http.ResponseWriter, r *http.Request) {
 	list := *s.kabkota.Load()
 	out := make([]points.KabKotaInfoJSON, len(list))
 	for i, k := range list {
 		out[i] = points.KabKotaInfoJSON{
 			Code: k.Code, Name: k.Name, Total: k.Total,
-			MinLat: k.MinLat, MaxLat: k.MaxLat, MinLon: k.MinLon, MaxLon: k.MaxLon,
+			MinLat: points.FiniteOrNil(k.MinLat), MaxLat: points.FiniteOrNil(k.MaxLat), MinLon: points.FiniteOrNil(k.MinLon), MaxLon: points.FiniteOrNil(k.MaxLon),
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleMeta serves dataset-level metadata the frontend displays but
+// doesn't query on — currently just the "data terakhir diperbarui" stamp.
+// Its own endpoint rather than a field bolted onto /api/bounds or
+// /api/filter-options, neither of which is about provenance.
+func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"data_updated_at": s.dataUpdatedAt})
 }
 
 // handleFilterOptions serves the fixed dropdown choices for the Daftar
@@ -221,7 +269,7 @@ func (s *Server) handleKecamatan(w http.ResponseWriter, r *http.Request) {
 	for i, k := range list {
 		out[i] = points.KecamatanInfoJSON{
 			Code: k.Code, Name: names[k.Code], Total: k.Total,
-			MinLat: k.MinLat, MaxLat: k.MaxLat, MinLon: k.MinLon, MaxLon: k.MaxLon,
+			MinLat: points.FiniteOrNil(k.MinLat), MaxLat: points.FiniteOrNil(k.MaxLat), MinLon: points.FiniteOrNil(k.MinLon), MaxLon: points.FiniteOrNil(k.MaxLon),
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -274,7 +322,7 @@ func (s *Server) handleDesa(w http.ResponseWriter, r *http.Request) {
 	for i, d := range list {
 		out[i] = points.DesaInfoJSON{
 			Code: d.Code, Name: names[d.Code], Total: d.Total,
-			MinLat: d.MinLat, MaxLat: d.MaxLat, MinLon: d.MinLon, MaxLon: d.MaxLon,
+			MinLat: points.FiniteOrNil(d.MinLat), MaxLat: points.FiniteOrNil(d.MaxLat), MinLon: points.FiniteOrNil(d.MinLon), MaxLon: points.FiniteOrNil(d.MaxLon),
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -331,7 +379,7 @@ func (s *Server) handleSLS(w http.ResponseWriter, r *http.Request) {
 	for i, sl := range list {
 		out[i] = points.SLSInfoJSON{
 			Code: sl.Code, Name: names[sl.Code], Total: sl.Total,
-			MinLat: sl.MinLat, MaxLat: sl.MaxLat, MinLon: sl.MinLon, MaxLon: sl.MaxLon,
+			MinLat: points.FiniteOrNil(sl.MinLat), MaxLat: points.FiniteOrNil(sl.MaxLat), MinLon: points.FiniteOrNil(sl.MinLon), MaxLon: points.FiniteOrNil(sl.MaxLon),
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -407,15 +455,19 @@ func parseFilter(q url.Values) (points.Filter, error) {
 	if err != nil {
 		return points.Filter{}, err
 	}
-	jenisPrelist, err := points.ParseJenisPrelist(q.Get("jenisPrelist"))
+	jenisPrelist, err := points.ParseJenisPrelist(q["jenisPrelist"])
 	if err != nil {
 		return points.Filter{}, err
 	}
-	keberadaanKeluarga, err := points.ParseKeberadaanKeluarga(q.Get("keberadaanKeluarga"))
+	keberadaanKeluarga, err := points.ParseKeberadaanKeluarga(q["keberadaanKeluarga"])
 	if err != nil {
 		return points.Filter{}, err
 	}
-	status, err := points.ParseStatus(q.Get("status"))
+	status, err := points.ParseStatus(q["status"])
+	if err != nil {
+		return points.Filter{}, err
+	}
+	penggunaanBangunan, err := points.ParsePenggunaanBangunan(q["penggunaanBangunan"])
 	if err != nil {
 		return points.Filter{}, err
 	}
@@ -434,6 +486,7 @@ func parseFilter(q url.Values) (points.Filter, error) {
 	filter.JenisPrelist = jenisPrelist
 	filter.KeberadaanKeluarga = keberadaanKeluarga
 	filter.Status = status
+	filter.PenggunaanBangunan = penggunaanBangunan
 	filter.FlagBaru = flagBaru
 	filter.FlagRegsosek = flagRegsosek
 	filter.Search = search
@@ -481,7 +534,7 @@ func (s *Server) handleSubSLS(w http.ResponseWriter, r *http.Request) {
 	for i, sub := range list {
 		out[i] = points.SubSLSInfoJSON{
 			Code: sub.Code, Total: sub.Total,
-			MinLat: sub.MinLat, MaxLat: sub.MaxLat, MinLon: sub.MinLon, MaxLon: sub.MaxLon,
+			MinLat: points.FiniteOrNil(sub.MinLat), MaxLat: points.FiniteOrNil(sub.MaxLat), MinLon: points.FiniteOrNil(sub.MinLon), MaxLon: points.FiniteOrNil(sub.MaxLon),
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -585,6 +638,7 @@ func (s *Server) prepareReport(w http.ResponseWriter, r *http.Request, q url.Val
 		JenisPrelist:       filter.JenisPrelist,
 		KeberadaanKeluarga: filter.KeberadaanKeluarga,
 		Status:             filter.Status,
+		PenggunaanBangunan: filter.PenggunaanBangunan,
 		Search:             filter.Search,
 		FlagBaru:           filter.FlagBaru,
 		FlagRegsosek:       filter.FlagRegsosek,
@@ -813,8 +867,10 @@ func (s *Server) prepareRegsosekReport(w http.ResponseWriter, r *http.Request, k
 
 		// Reusing the shared "Filter Tambahan" block: match_status is this
 		// menu's one attribute filter, so it goes in the Status slot rather
-		// than growing Region a field only one report would use.
-		Status: filter.MatchStatus,
+		// than growing Region a field only one report would use. Wrapped in
+		// a slice because the Daftar menu's version of that slot is
+		// multi-select; this menu's Match Status filter is still single.
+		Status: sliceIfSet(filter.MatchStatus),
 		Search: filter.Search,
 	}
 	return region, rows, len(rows) >= regsosek.ReportMaxRows, true
@@ -904,4 +960,14 @@ func (s *Server) handleMatchBounds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, b)
+}
+
+// sliceIfSet wraps a single optional filter value for a Region field that
+// is a slice because the Daftar menu's equivalent filter is multi-select.
+// An unset value stays nil, so ExtraFilters skips the row entirely.
+func sliceIfSet(v string) []string {
+	if v == "" {
+		return nil
+	}
+	return []string{v}
 }

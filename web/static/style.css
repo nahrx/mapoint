@@ -189,7 +189,11 @@ body {
   min-width: 0; /* lets a long <option> shrink instead of stretching the grid */
 }
 
-.filter-row label {
+/* .filter-label is the <span> the multi-select rows use in place of a
+   <label> — see the .multiselect block below for why. Styled by the same
+   rule so the two are indistinguishable. */
+.filter-row label,
+.filter-row .filter-label {
   font-size: 11px;
   font-weight: 550;
   letter-spacing: 0.02em;
@@ -986,6 +990,19 @@ body {
    ===================================================================== */
 
 /* The one-line explanation of what a list or map actually contains. */
+/* Provenance, not instruction — deliberately lighter than .list-note so it
+   reads as a footnote above the filters rather than competing with them.
+   Needs its own .hidden rule: this stylesheet has no generic one. */
+.list-updated {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.list-updated.hidden {
+  display: none;
+}
+
 .list-note {
   margin: 0 0 12px;
   font-size: 12.5px;
@@ -1054,6 +1071,130 @@ body {
     -1.5px 1.5px 0 #fff, 1.5px 1.5px 0 #fff,
     0 0 3px #fff;
 }
+
+/* Multi-select filter (Jenis Prelist / Keberadaan Keluarga / Status).
+   The toggle deliberately copies the <select> styling in this panel so the
+   three multi-selects sit in the same grid without looking like a
+   different kind of control. */
+.multiselect {
+  position: relative;
+}
+
+.multiselect-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.multiselect-toggle:hover {
+  border-color: var(--navy-600);
+}
+
+.multiselect-value {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Matches the muted look of a <select> sitting on its placeholder option. */
+.multiselect-value.is-placeholder {
+  color: var(--text-faint);
+}
+
+.multiselect-caret {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.multiselect-menu {
+  position: absolute;
+  z-index: 1200;
+  top: calc(100% + 4px);
+  left: 0;
+  /* Wide enough for its longest option, never narrower than the toggle it
+     hangs off, and hard-capped so it can't run off-screen — the longest
+     Penggunaan Bangunan label is ~100 characters, which unconstrained
+     measures ~620px. Deliberately width+max-width rather than
+     min-width: max-content, which was the first attempt: min-width beats
+     max-width in the cascade, so the cap never applied. */
+  width: max-content;
+  min-width: 100%;
+  max-width: min(420px, 88vw);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+
+/* This stylesheet has no generic .hidden rule — only scoped ones like
+   .list-loading.hidden — so the menu needs its own, or it would sit
+   permanently open. */
+.multiselect-menu.hidden {
+  display: none;
+}
+
+.multiselect-option {
+  display: flex;
+  /* flex-start, not center: a label long enough to wrap should line up
+     with the top of its checkbox rather than float beside its middle.
+     white-space stays default so those long labels can wrap at all — the
+     menu's max-width is what keeps them from running off-screen. */
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.multiselect-option:hover {
+  background: var(--surface-sunken);
+}
+
+.multiselect-option input {
+  flex-shrink: 0;
+  margin: 2px 0 0;
+  cursor: pointer;
+}
+
+.multiselect-clear {
+  width: 100%;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.multiselect-clear:hover {
+  color: var(--text);
+  background: var(--surface-sunken);
+}
+
+/* A <span> standing in for the <label> the other filter rows use — a
+   multi-select has no single form control for `for` to point at, so the
+   toggle references this by id via aria-labelledby instead. Styled from
+   the same rule as .filter-row label so the two are indistinguishable;
+   .filter-row already supplies the gap, so no margin here. */
 
 .check-yes {
   color: var(--green);

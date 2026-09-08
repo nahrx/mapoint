@@ -166,6 +166,22 @@ var (
 		"EDITED BY Admin Kabupaten", "COMPLETED BY Admin Kabupaten",
 		"REVOKED BY Admin Kabupaten",
 	}
+	// kode_penggunaan_bangunan_label, listed in the source's own numeric
+	// order rather than by frequency so the dropdown reads like the form it
+	// came from. Blank is by far the most common value (42% of rows at the
+	// time of writing) but isn't listed here — it reaches the filter as
+	// EmptyValue, the same as every other attribute filter.
+	penggunaanBangunanValues = []string{
+		"1. Bangunan Khusus Usaha",
+		"2. Bangunan Campuran",
+		"3. Bangunan Tempat Tinggal",
+		"4. Tempat ibadah, kantor organisasi (profesi, kemasyarakatan, sosial, politik)",
+		"5. Kantor pemerintah, kedutaan/konsulat",
+		"6. Bangunan Lainnya yang Tidak Tercakup (Tempat Judi, Tempat Layanan Kencan, Bangunan Kosong/ Rusak)",
+		"7. Virtual Office (VO)",
+		"8. Panti asuhan, panti jompo(yang tidak berbayar), lapas (lembaga pemasyarakatan), barak militer",
+		"9. Non Respon",
+	}
 )
 
 // FilterOptions is the payload for GET /api/filter-options: the fixed
@@ -175,6 +191,7 @@ type FilterOptions struct {
 	JenisPrelist       []string `json:"jenis_prelist"`
 	KeberadaanKeluarga []string `json:"keberadaan_keluarga"`
 	Status             []string `json:"status"`
+	PenggunaanBangunan []string `json:"penggunaan_bangunan"`
 }
 
 // GetFilterOptions returns the attribute filter dropdown choices.
@@ -183,6 +200,7 @@ func GetFilterOptions() FilterOptions {
 		JenisPrelist:       jenisPrelistValues,
 		KeberadaanKeluarga: keberadaanKeluargaValues,
 		Status:             statusValues,
+		PenggunaanBangunan: penggunaanBangunanValues,
 	}
 }
 
@@ -289,38 +307,70 @@ func flagClause(dict, val string) string {
 const EmptyValue = "__EMPTY__"
 
 // parseEnumFilter validates raw against allowed, the closed set of values
-// its target column can hold. Empty input means "no filter"; EmptyValue
-// means "filter for a blank column"; anything else must match allowed
-// exactly, since only whitelisted strings ever reach the SQL WHERE clause
-// this feeds — see (Filter).clause.
-func parseEnumFilter(raw string, allowed []string) (string, error) {
-	if raw == "" {
-		return "", nil
+// its target column can hold. An empty or all-blank list means "no
+// filter"; EmptyValue means "filter for a blank column" and may be
+// combined with real values; anything else must match allowed exactly,
+// since only whitelisted strings ever reach the SQL WHERE clause this
+// feeds — see (Filter).clause.
+//
+// Duplicates are collapsed so a repeated query parameter can't inflate the
+// IN list, and the original order is kept so a report header lists the
+// values the way the user picked them.
+func parseEnumFilter(raw []string, allowed []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
 	}
-	if raw == EmptyValue {
-		return EmptyValue, nil
-	}
-	for _, v := range allowed {
-		if raw == v {
-			return raw, nil
+	out := make([]string, 0, len(raw))
+	seen := make(map[string]bool, len(raw))
+	for _, v := range raw {
+		if v == "" {
+			// The "Semua" option submits an empty value; ignoring it lets a
+			// form post a blank alongside real picks without meaning
+			// "match rows whose column is blank" — that's EmptyValue.
+			continue
 		}
+		if seen[v] {
+			continue
+		}
+		if v != EmptyValue {
+			ok := false
+			for _, a := range allowed {
+				if v == a {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				return nil, fmt.Errorf("invalid filter value %q", v)
+			}
+		}
+		seen[v] = true
+		out = append(out, v)
 	}
-	return "", fmt.Errorf("invalid filter value %q", raw)
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
-// ParseJenisPrelist validates a Jenis Prelist filter value.
-func ParseJenisPrelist(raw string) (string, error) {
+// ParseJenisPrelist validates the Jenis Prelist filter values.
+func ParseJenisPrelist(raw []string) ([]string, error) {
 	return parseEnumFilter(raw, jenisPrelistValues)
 }
 
-// ParseKeberadaanKeluarga validates a Keberadaan Keluarga filter value.
-func ParseKeberadaanKeluarga(raw string) (string, error) {
+// ParseKeberadaanKeluarga validates the Keberadaan Keluarga filter values.
+func ParseKeberadaanKeluarga(raw []string) ([]string, error) {
 	return parseEnumFilter(raw, keberadaanKeluargaValues)
 }
 
-// ParseStatus validates a Status filter value.
-func ParseStatus(raw string) (string, error) {
+// ParseStatus validates the Status filter values.
+func ParseStatus(raw []string) ([]string, error) {
 	return parseEnumFilter(raw, statusValues)
+}
+
+// ParsePenggunaanBangunan validates the Penggunaan Bangunan filter values.
+func ParsePenggunaanBangunan(raw []string) ([]string, error) {
+	return parseEnumFilter(raw, penggunaanBangunanValues)
 }
 
 // Filter narrows a query down to a wilayah and, optionally, a handful of
@@ -329,8 +379,10 @@ func ParseStatus(raw string) (string, error) {
 // characters 8-10, SLS is characters 11-14, SubSLS is characters 15-16
 // (its last two). Each is meaningless without the one above it — see
 // Validate. JenisPrelist, KeberadaanKeluarga and Status are independent of
-// wilayah and of each other: "" (unset), EmptyValue (blank column), or one
-// of that column's known values (see the Parse* functions above).
+// wilayah and of each other, and each holds a *set* of accepted values:
+// empty (unset), or any mix of that column's known values and EmptyValue
+// (blank column) — see the Parse* functions above. Values within one
+// filter are OR-ed; the filters themselves are AND-ed together.
 type Filter struct {
 	KabKota   string
 	Kecamatan string
@@ -338,9 +390,10 @@ type Filter struct {
 	SLS       string
 	SubSLS    string
 
-	JenisPrelist       string
-	KeberadaanKeluarga string
-	Status             string
+	JenisPrelist       []string
+	KeberadaanKeluarga []string
+	Status             []string
+	PenggunaanBangunan []string
 
 	// FlagBaru and FlagRegsosek filter on the two membership flags:
 	// FlagYes keeps only rows found in that table, FlagNo only rows not
@@ -408,14 +461,17 @@ func (f Filter) clause() (string, []any) {
 	if prefix := f.FullCode(); prefix != "" {
 		parts = append(parts, fmt.Sprintf("startsWith(level_6_full_code, '%s')", prefix))
 	}
-	if f.JenisPrelist != "" {
+	if len(f.JenisPrelist) > 0 {
 		parts = append(parts, attrClause("jenis_prelist_root", f.JenisPrelist))
 	}
-	if f.KeberadaanKeluarga != "" {
+	if len(f.KeberadaanKeluarga) > 0 {
 		parts = append(parts, attrClause("keberadaan_keluarga", f.KeberadaanKeluarga))
 	}
-	if f.Status != "" {
+	if len(f.Status) > 0 {
 		parts = append(parts, attrClause("assignment_status_alias", f.Status))
+	}
+	if len(f.PenggunaanBangunan) > 0 {
+		parts = append(parts, attrClause("kode_penggunaan_bangunan_label", f.PenggunaanBangunan))
 	}
 	// Both are dictionary lookups now, so they no longer carry a per-query
 	// set build — the fragment is still only added when the filter is on,
@@ -439,16 +495,26 @@ func (f Filter) clause() (string, []any) {
 	return strings.Join(parts, " AND "), args
 }
 
-// attrClause builds an equality WHERE fragment for one of the attribute
-// filters. val has already passed parseEnumFilter against a fixed
-// whitelist (see ParseJenisPrelist etc.), so it's always either EmptyValue
-// or a known-safe string — never arbitrary text — by the time it lands
-// here.
-func attrClause(col, val string) string {
-	if val == EmptyValue {
-		return fmt.Sprintf("%s = ''", col)
+// attrClause builds the WHERE fragment for one attribute filter: an IN
+// list over the picked values, which is what makes these filters
+// multi-select. Every value has already passed parseEnumFilter against a
+// fixed whitelist (see ParseJenisPrelist etc.), so each is either
+// EmptyValue or a known-safe string — never arbitrary text — by the time
+// it lands here, which is why they can be interpolated directly.
+//
+// EmptyValue becomes a literal ” inside the same list rather than a
+// separate OR: "blank" is just another value the column can hold, so
+// "(Kosong)" combines with real picks for free.
+func attrClause(col string, vals []string) string {
+	quoted := make([]string, len(vals))
+	for i, v := range vals {
+		if v == EmptyValue {
+			quoted[i] = "''"
+			continue
+		}
+		quoted[i] = "'" + v + "'"
 	}
-	return fmt.Sprintf("%s = '%s'", col, val)
+	return fmt.Sprintf("%s IN (%s)", col, strings.Join(quoted, ", "))
 }
 
 func clamp(v, lo, hi float64) float64 {
@@ -470,6 +536,10 @@ type Point struct {
 	Alamat       string  `json:"alamat"`
 	SubSLS       string  `json:"subsls"`
 	JenisPrelist string  `json:"jenis_prelist"`
+	// PenggunaanBangunan is kode_penggunaan_bangunan_label. Blank on 42% of
+	// rows, which is a real value here (the question went unanswered), not
+	// a rendering gap — hence no omitempty.
+	PenggunaanBangunan string `json:"penggunaan_bangunan"`
 	// KeberadaanUsaha is scanned from the table's jumlah_usaha column
 	// (renamed there from keberadaan_usaha; it always held a count of usaha
 	// at the point, not a 0/1 presence flag). int32 to match that column's
@@ -548,6 +618,35 @@ func NewService(conn driver.Conn) *Service {
 }
 
 const validCoords = "latitude_ppl != 0 AND longitude_ppl != 0 AND isFinite(latitude_ppl) AND isFinite(longitude_ppl)"
+
+// bboxIf builds the four percentile aggregates a wilayah list returns for
+// map auto-zoom, computed over plottable rows only.
+//
+// The condition lives in the aggregate rather than the WHERE on purpose.
+// These lists feed the filter dropdowns of every menu, and the Daftar menu
+// shows rows whether or not they carry coordinates — filtering the whole
+// query by validCoords silently dropped any wilayah with no plottable
+// point from the dropdowns. Measured against live data at the time: 1,216
+// of 14,412 SLS, 1,351 of 17,116 SubSLS, and 6 each of kecamatan and desa
+// were missing that way.
+//
+// A wilayah with no plottable row yields NaN here; scanBBox turns that into
+// a nil pointer so it is omitted from the JSON rather than crashing the
+// encoder (encoding/json refuses NaN) or arriving as a fake 0/0.
+const bboxIf = `quantileIf(0.01)(latitude_ppl, ` + validCoords + `),
+		quantileIf(0.99)(latitude_ppl, ` + validCoords + `),
+		quantileIf(0.01)(longitude_ppl, ` + validCoords + `),
+		quantileIf(0.99)(longitude_ppl, ` + validCoords + `)`
+
+// FiniteOrNil is the NaN guard between ClickHouse and the JSON encoder:
+// a wilayah with no plottable row has no bounding box, and NaN would
+// crash encoding/json while 0 would be a real coordinate in the Atlantic.
+func FiniteOrNil(v float64) *float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return nil
+	}
+	return &v
+}
 
 func bboxClause(b BBox) string {
 	return fmt.Sprintf(
@@ -628,6 +727,7 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 	where, args := filter.clause()
 	q := fmt.Sprintf(`SELECT
 		assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root,
+		kode_penggunaan_bangunan_label,
 		jumlah_usaha, nomor_bangunan, keberadaan_keluarga, assignment_status_alias,
 		latitude_ppl, longitude_ppl,
 		%s, %s
@@ -651,6 +751,7 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 		var adaBaru, adaRegsosek uint8
 		if err := rows.Scan(
 			&p.AssignmentID, &p.Nama, &p.Alamat, &p.SubSLS, &p.JenisPrelist,
+			&p.PenggunaanBangunan,
 			&p.KeberadaanUsaha, &p.NomorBangunan, &p.KeberadaanKeluarga, &p.Status,
 			&p.Lat, &p.Lon, &adaBaru, &adaRegsosek,
 		); err != nil {
@@ -713,6 +814,36 @@ func (s *Service) queryClusters(ctx context.Context, b BBox, zoom int, filter Fi
 // DatasetBounds computes the geographic extent and total row count of all
 // valid-coordinate rows. Intended to be called once at startup (and cached)
 // since it scans the whole table.
+// FilteredBounds is the geographic extent of the rows matching filter,
+// used to zoom the map onto a name search's results. Unlike DatasetBounds
+// (computed once at startup and cached) this runs per request, so it is
+// only called when the map actually needs it — see the Peta menu's
+// applyFilters, which asks for it only while a search is active. Measured:
+// ~100ms with a name search, against ~55ms unfiltered.
+//
+// Percentiles rather than min/max, matching the wilayah bounding boxes, so
+// one row with a bad GPS fix can't stretch the view across the country.
+// Total is 0 when nothing matches, and the caller must not fit to the
+// extent in that case — the percentiles are NaN there.
+func (s *Service) FilteredBounds(ctx context.Context, filter Filter) (Bounds, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	where, args := filter.clause()
+	q := fmt.Sprintf(`SELECT
+		quantile(0.01)(latitude_ppl), quantile(0.99)(latitude_ppl),
+		quantile(0.01)(longitude_ppl), quantile(0.99)(longitude_ppl),
+		count()
+	FROM %s WHERE %s AND %s`, table, validCoords, where)
+
+	row := s.conn.QueryRow(ctx, q, args...)
+	var b Bounds
+	if err := row.Scan(&b.MinLat, &b.MaxLat, &b.MinLon, &b.MaxLon, &b.Total); err != nil {
+		return Bounds{}, err
+	}
+	return b, nil
+}
+
 func (s *Service) DatasetBounds(ctx context.Context) (Bounds, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -742,13 +873,17 @@ type KabKotaInfo struct {
 }
 
 type KabKotaInfoJSON struct {
-	Code   string  `json:"code"`
-	Name   string  `json:"name"`
-	Total  uint64  `json:"total"`
-	MinLat float64 `json:"min_lat"`
-	MaxLat float64 `json:"max_lat"`
-	MinLon float64 `json:"min_lon"`
-	MaxLon float64 `json:"max_lon"`
+	Code  string `json:"code"`
+	Name  string `json:"name"`
+	Total uint64 `json:"total"`
+	// Nil when this wilayah has no plottable point at all — the four
+	// are then omitted from the JSON entirely, and the frontend's boundsOf
+	// falls back to the wilayah above it. A zero would be worse than
+	// absent: it is a real coordinate off the coast of Africa.
+	MinLat *float64 `json:"min_lat,omitempty"`
+	MaxLat *float64 `json:"max_lat,omitempty"`
+	MinLon *float64 `json:"min_lon,omitempty"`
+	MaxLon *float64 `json:"max_lon,omitempty"`
 }
 
 // KabKotaList returns every kabupaten/kota actually present in the data,
@@ -763,12 +898,11 @@ func (s *Service) KabKotaList(ctx context.Context) ([]KabKotaInfo, error) {
 	q := fmt.Sprintf(`SELECT
 		substring(level_6_full_code, 1, 4) AS kabkota,
 		count(),
-		quantile(0.01)(latitude_ppl), quantile(0.99)(latitude_ppl),
-		quantile(0.01)(longitude_ppl), quantile(0.99)(longitude_ppl)
+		%s
 	FROM %s
-	WHERE %s AND length(level_6_full_code) >= 4
+	WHERE length(level_6_full_code) >= 4
 	GROUP BY kabkota
-	ORDER BY kabkota ASC`, table, validCoords)
+	ORDER BY kabkota ASC`, bboxIf, table)
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -806,13 +940,17 @@ type KecamatanInfo struct {
 // internal/mapdb.KecamatanNames) — the frontend falls back to showing
 // Code alone when Name is blank.
 type KecamatanInfoJSON struct {
-	Code   string  `json:"code"`
-	Name   string  `json:"name"`
-	Total  uint64  `json:"total"`
-	MinLat float64 `json:"min_lat"`
-	MaxLat float64 `json:"max_lat"`
-	MinLon float64 `json:"min_lon"`
-	MaxLon float64 `json:"max_lon"`
+	Code  string `json:"code"`
+	Name  string `json:"name"`
+	Total uint64 `json:"total"`
+	// Nil when this wilayah has no plottable point at all — the four
+	// are then omitted from the JSON entirely, and the frontend's boundsOf
+	// falls back to the wilayah above it. A zero would be worse than
+	// absent: it is a real coordinate off the coast of Africa.
+	MinLat *float64 `json:"min_lat,omitempty"`
+	MaxLat *float64 `json:"max_lat,omitempty"`
+	MinLon *float64 `json:"min_lon,omitempty"`
+	MaxLon *float64 `json:"max_lon,omitempty"`
 }
 
 // KecamatanList returns every kecamatan present within one kabupaten/kota,
@@ -826,12 +964,11 @@ func (s *Service) KecamatanList(ctx context.Context, kabkota string) ([]Kecamata
 	q := fmt.Sprintf(`SELECT
 		substring(level_6_full_code, 5, 3) AS kec,
 		count(),
-		quantile(0.01)(latitude_ppl), quantile(0.99)(latitude_ppl),
-		quantile(0.01)(longitude_ppl), quantile(0.99)(longitude_ppl)
+		%s
 	FROM %s
-	WHERE %s AND length(level_6_full_code) >= 7 AND substring(level_6_full_code, 1, 4) = '%s'
+	WHERE length(level_6_full_code) >= 7 AND substring(level_6_full_code, 1, 4) = '%s'
 	GROUP BY kec
-	ORDER BY kec ASC`, table, validCoords, kabkota)
+	ORDER BY kec ASC`, bboxIf, table, kabkota)
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -863,13 +1000,17 @@ type DesaInfo struct {
 // DesaInfoJSON is the API shape for a desa/kelurahan option. Name is ""
 // unless the server enriched it from the optional PostGIS database.
 type DesaInfoJSON struct {
-	Code   string  `json:"code"`
-	Name   string  `json:"name"`
-	Total  uint64  `json:"total"`
-	MinLat float64 `json:"min_lat"`
-	MaxLat float64 `json:"max_lat"`
-	MinLon float64 `json:"min_lon"`
-	MaxLon float64 `json:"max_lon"`
+	Code  string `json:"code"`
+	Name  string `json:"name"`
+	Total uint64 `json:"total"`
+	// Nil when this wilayah has no plottable point at all — the four
+	// are then omitted from the JSON entirely, and the frontend's boundsOf
+	// falls back to the wilayah above it. A zero would be worse than
+	// absent: it is a real coordinate off the coast of Africa.
+	MinLat *float64 `json:"min_lat,omitempty"`
+	MaxLat *float64 `json:"max_lat,omitempty"`
+	MinLon *float64 `json:"min_lon,omitempty"`
+	MaxLon *float64 `json:"max_lon,omitempty"`
 }
 
 // DesaList returns every desa/kelurahan present within one kabupaten/kota +
@@ -884,14 +1025,13 @@ func (s *Service) DesaList(ctx context.Context, kabkota, kecamatan string) ([]De
 	q := fmt.Sprintf(`SELECT
 		substring(level_6_full_code, 8, 3) AS desa,
 		count(),
-		quantile(0.01)(latitude_ppl), quantile(0.99)(latitude_ppl),
-		quantile(0.01)(longitude_ppl), quantile(0.99)(longitude_ppl)
+		%s
 	FROM %s
-	WHERE %s AND length(level_6_full_code) >= 10
+	WHERE length(level_6_full_code) >= 10
 		AND substring(level_6_full_code, 1, 4) = '%s'
 		AND substring(level_6_full_code, 5, 3) = '%s'
 	GROUP BY desa
-	ORDER BY desa ASC`, table, validCoords, kabkota, kecamatan)
+	ORDER BY desa ASC`, bboxIf, table, kabkota, kecamatan)
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -926,12 +1066,16 @@ type SLSInfoJSON struct {
 	// Name is nmsls from PostGIS, or "" when PostGIS isn't configured or
 	// has no name for this code — the frontend then shows the code alone,
 	// exactly as before.
-	Name   string  `json:"name"`
-	Total  uint64  `json:"total"`
-	MinLat float64 `json:"min_lat"`
-	MaxLat float64 `json:"max_lat"`
-	MinLon float64 `json:"min_lon"`
-	MaxLon float64 `json:"max_lon"`
+	Name  string `json:"name"`
+	Total uint64 `json:"total"`
+	// Nil when this wilayah has no plottable point at all — the four
+	// are then omitted from the JSON entirely, and the frontend's boundsOf
+	// falls back to the wilayah above it. A zero would be worse than
+	// absent: it is a real coordinate off the coast of Africa.
+	MinLat *float64 `json:"min_lat,omitempty"`
+	MaxLat *float64 `json:"max_lat,omitempty"`
+	MinLon *float64 `json:"min_lon,omitempty"`
+	MaxLon *float64 `json:"max_lon,omitempty"`
 }
 
 // SLSList returns every Kode SLS present within one kabupaten/kota +
@@ -947,15 +1091,14 @@ func (s *Service) SLSList(ctx context.Context, kabkota, kecamatan, desa string) 
 	q := fmt.Sprintf(`SELECT
 		substring(level_6_full_code, 11, 4) AS sls,
 		count(),
-		quantile(0.01)(latitude_ppl), quantile(0.99)(latitude_ppl),
-		quantile(0.01)(longitude_ppl), quantile(0.99)(longitude_ppl)
+		%s
 	FROM %s
-	WHERE %s AND length(level_6_full_code) >= 14
+	WHERE length(level_6_full_code) >= 14
 		AND substring(level_6_full_code, 1, 4) = '%s'
 		AND substring(level_6_full_code, 5, 3) = '%s'
 		AND substring(level_6_full_code, 8, 3) = '%s'
 	GROUP BY sls
-	ORDER BY sls ASC`, table, validCoords, kabkota, kecamatan, desa)
+	ORDER BY sls ASC`, bboxIf, table, kabkota, kecamatan, desa)
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -985,12 +1128,16 @@ type SubSLSInfo struct {
 }
 
 type SubSLSInfoJSON struct {
-	Code   string  `json:"code"`
-	Total  uint64  `json:"total"`
-	MinLat float64 `json:"min_lat"`
-	MaxLat float64 `json:"max_lat"`
-	MinLon float64 `json:"min_lon"`
-	MaxLon float64 `json:"max_lon"`
+	Code  string `json:"code"`
+	Total uint64 `json:"total"`
+	// Nil when this wilayah has no plottable point at all — the four
+	// are then omitted from the JSON entirely, and the frontend's boundsOf
+	// falls back to the wilayah above it. A zero would be worse than
+	// absent: it is a real coordinate off the coast of Africa.
+	MinLat *float64 `json:"min_lat,omitempty"`
+	MaxLat *float64 `json:"max_lat,omitempty"`
+	MinLon *float64 `json:"min_lon,omitempty"`
+	MaxLon *float64 `json:"max_lon,omitempty"`
 }
 
 // SubSLSList returns every Kode SubSLS present within one kabupaten/kota +
@@ -1005,16 +1152,15 @@ func (s *Service) SubSLSList(ctx context.Context, kabkota, kecamatan, desa, sls 
 	q := fmt.Sprintf(`SELECT
 		substring(level_6_full_code, 15, 2) AS subsls,
 		count(),
-		quantile(0.01)(latitude_ppl), quantile(0.99)(latitude_ppl),
-		quantile(0.01)(longitude_ppl), quantile(0.99)(longitude_ppl)
+		%s
 	FROM %s
-	WHERE %s AND length(level_6_full_code) >= 16
+	WHERE length(level_6_full_code) >= 16
 		AND substring(level_6_full_code, 1, 4) = '%s'
 		AND substring(level_6_full_code, 5, 3) = '%s'
 		AND substring(level_6_full_code, 8, 3) = '%s'
 		AND substring(level_6_full_code, 11, 4) = '%s'
 	GROUP BY subsls
-	ORDER BY subsls ASC`, table, validCoords, kabkota, kecamatan, desa, sls)
+	ORDER BY subsls ASC`, bboxIf, table, kabkota, kecamatan, desa, sls)
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -1082,6 +1228,7 @@ var listSortColumns = map[string]string{
 	"nomor_bangunan":      "nomor_bangunan",
 	"keberadaan_keluarga": "keberadaan_keluarga",
 	"status":              "assignment_status_alias",
+	"penggunaan_bangunan": "kode_penggunaan_bangunan_label",
 	"assignment_id":       "assignment_id",
 
 	// The three dictionary-backed columns. They are expressions rather than
@@ -1192,7 +1339,7 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 	if !ok {
 		sortCol = listSortColumns[DefaultSortColumn]
 	}
-	cols := "assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root, jumlah_usaha, nomor_bangunan, keberadaan_keluarga, assignment_status_alias, latitude_ppl, longitude_ppl"
+	cols := "assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root, kode_penggunaan_bangunan_label, jumlah_usaha, nomor_bangunan, keberadaan_keluarga, assignment_status_alias, latitude_ppl, longitude_ppl"
 	if includeCatatan {
 		cols += ", catatan"
 	}
@@ -1225,6 +1372,7 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 		var p Point
 		dest := []any{
 			&p.AssignmentID, &p.Nama, &p.Alamat, &p.SubSLS, &p.JenisPrelist,
+			&p.PenggunaanBangunan,
 			&p.KeberadaanUsaha, &p.NomorBangunan, &p.KeberadaanKeluarga, &p.Status,
 			&p.Lat, &p.Lon,
 		}

@@ -128,10 +128,10 @@ Index-nya sudah di-`DROP` lagi. Jangan ditambahkan ulang tanpa mengukur.
 ### Tombol "Terapkan Filter"
 
 Baik di menu Peta maupun Daftar, mengubah dropdown wilayah, dropdown atribut
-(Jenis Prelist/Keberadaan Keluarga/Status di Daftar), atau kotak cari nama
-**tidak langsung memuat ulang data** — itu baru terjadi begitu tombol
-"Terapkan Filter" diklik (di Daftar, menekan Enter di kotak cari juga
-sama saja dengan mengklik tombolnya). Ini supaya ganti beberapa filter
+(Jenis Prelist/Keberadaan Keluarga/Status/Penggunaan Bangunan), atau kotak
+cari nama **tidak langsung memuat ulang data** — itu baru terjadi begitu
+tombol "Terapkan Filter" diklik (di kedua menu, menekan Enter di kotak cari
+juga sama saja dengan mengklik tombolnya). Ini supaya ganti beberapa filter
 sekaligus (misalnya kabupaten/kota lalu kecamatan lalu status) tidak memicu
 satu request per klik — cukup satu request begitu semua filter yang
 diinginkan sudah dipilih.
@@ -165,6 +165,37 @@ berfungsi sebagai filter, hanya labelnya berupa kode mentah). Begitu tombol
 area itu (bounding box dihitung pakai persentil 1–99% supaya titik dengan
 GPS salah/outlier tidak merusak zoom) dan membatasi semua query berikutnya
 (`GET /api/points?...&kabkota=6472`).
+
+**Semua wilayah yang ada di tabel ikut masuk dropdown, termasuk yang tidak
+punya satu pun titik berkoordinat.** Ini pernah salah: kelima query daftar
+wilayah menyaring seluruh baris dengan `validCoords` (predikat yang memang
+dibutuhkan peta), sehingga wilayah tanpa koordinat hilang sama sekali dari
+filter — padahal menu Daftar menampilkan barisnya. Terukur saat itu:
+**1.216 dari 14.412 SLS** dan **1.351 dari 17.116 SubSLS** hilang, plus 6
+kecamatan dan 6 desa.
+
+Sekarang syarat koordinatnya pindah dari `WHERE` ke dalam agregatnya
+(`bboxIf` di `internal/points/points.go`): daftar wilayahnya lengkap,
+sementara bounding box untuk auto-zoom tetap dihitung dari baris yang bisa
+dipetakan saja. Dua jebakan yang ikut ditangani:
+
+- Wilayah tanpa koordinat menghasilkan `NaN` dari ClickHouse, dan
+  `encoding/json` **menolak** memarshal NaN — satu wilayah seperti itu akan
+  membuat seluruh endpoint 500. `points.FiniteOrNil` mengubahnya jadi
+  pointer nil sehingga keempat field bbox-nya hilang dari JSON.
+- Mengisinya dengan `0` juga tidak boleh: 0,0 itu koordinat sungguhan di
+  Atlantik. Karena field-nya dihilangkan, `boundsOf` di frontend jatuh ke
+  wilayah di atasnya — dipilih SLS tanpa koordinat, peta memakai bbox
+  desanya. `boundsOf` sekaligus diperketat ke `Number.isFinite`, karena
+  `isFinite` global mengoersi dan menganggap `null` sebagai angka berhingga.
+
+Konsekuensinya angka di label dropdown sekarang menghitung **semua baris**,
+bukan cuma yang bisa dipetakan. Karena itu label di **menu Daftar**
+menyebutnya "data" (`countNoun: "data"` di `makeCascadingLevel`), bukan
+"titik" — belum tentu barisnya punya koordinat. Menu peta tetap memakai
+"titik" karena di sana konteksnya memang memetakan, dan jumlah yang
+benar-benar tergambar tetap dilaporkan terpisah di panel statistik ("Di
+area ini: …").
 
 Dropdown "Kecamatan" di sebelahnya mengikuti (cascading): nonaktif sampai
 sebuah kabupaten/kota dipilih, lalu terisi otomatis dari 3 digit berikutnya
@@ -209,6 +240,42 @@ Reset di level manapun otomatis mengosongkan & men-disable semua level di
 bawahnya (ganti kabupaten/kota → kecamatan, desa, SLS, dan SubSLS ikut
 ter-reset).
 
+### Cari nama di menu Peta
+
+Kotak "Cari Nama" di paling atas panel filter menu Peta bekerja persis sama
+dengan yang di menu Daftar: substring (tidak case-sensitive) di kolom
+`nama_assignment`, digabung `AND` dengan filter wilayah/atribut yang lain,
+dikirim ke ClickHouse lewat parameter binding (`?` placeholder di
+`Filter.clause()`), bukan digabung ke teks SQL. Tidak ada perubahan sisi
+server yang diperlukan untuk pencariannya sendiri: `/api/points` dan
+`/api/list` sama-sama lewat `parseFilter` yang sama.
+
+Yang perlu tambahan justru zoom-nya. Di menu Daftar hasil pencarian langsung
+kelihatan sebagai baris tabel, sedangkan di peta hasil pencarian nama cuma
+beberapa titik yang tersebar di area seluas provinsi — praktis tidak
+kelihatan pada zoom wilayah. Jadi menu Peta ikut memanggil
+`GET /api/points-bounds` untuk mendapat extent baris yang cocok, lalu zoom
+ke situ (`fitToSearch` di `web/static/app.js`).
+
+Query extent ini **cuma dijalankan saat pencarian nama sedang aktif**. Untuk
+filter wilayah/atribut, bounding box per wilayah yang sudah di-cache saat
+startup sudah benar dan gratis, jadi biaya tambahannya tidak perlu dibayar
+di jalur yang paling sering dipakai. Diukur di data sekarang: extent + cari
+nama ~100ms, extent tanpa filter apa pun ~55ms. Urutannya pun dibuat supaya
+tidak ada yang menunggu — peta langsung di-fit ke extent wilayah (dari
+cache) begitu tombol diklik, lalu dipersempit ke extent hasil pencarian
+setelah responsnya datang.
+
+Extent-nya memakai persentil 1%/99% seperti bounding box wilayah, bukan
+min/max, supaya satu titik dengan GPS meleset tidak menarik tampilan ke
+seberang pulau. Konsekuensinya sedikit titik di ekor bisa jatuh di luar
+layar setelah auto-zoom — diuji: cari "SUPRIYADI" tanpa filter wilayah
+memberi 1.187 titik dan 1.185 di antaranya masuk viewport hasil zoom.
+Kalau tidak ada yang cocok, server mengirim `total: 0` dengan keempat batas
+`null`, dan peta **tidak** dipindahkan (`boundsOf` menolak nilai
+non-finite — lihat catatan `Number.isFinite` vs `isFinite` di file yang
+sama, yang tanpa itu akan melempar tampilan ke 0,0 di Atlantik).
+
 ### Jenis peta (OpenStreetMap / Satelit)
 
 Kontrol layer di pojok kiri bawah peta memilih basemap: "Peta Jalan
@@ -251,6 +318,18 @@ kecamatan/desa. Lihat `internal/mapdb/`.
 
 ### Menu Daftar
 
+**Keterangan "Data terakhir diperbarui"** tampil tepat di atas blok filter,
+diisi dari `DATA_UPDATED_AT` di `.env` (mis. `"8 September 2026 pukul 08.00
+WITA"`) dan diserve lewat `GET /api/meta`. Sengaja konfigurasi, bukan teks
+yang ditulis langsung di HTML: datanya dimuat ulang berkala, dan tanggal
+yang ditanam di kode akan menuntut rebuild + redeploy tiap kali. Kalau
+variabelnya kosong, barisnya disembunyikan sama sekali — lebih baik tidak
+ada keterangan daripada keterangan basi yang tidak ada yang memperbarui.
+
+Nilainya dikutip di `.env` (`DATA_UPDATED_AT="…"`) karena mengandung spasi:
+parser aplikasi melucuti tanda kutipnya, dan dengan begitu `.env` tetap bisa
+di-`source` dari shell.
+
 Selain menu "Peta", ada menu "Daftar" (nav di paling atas) yang menampilkan
 isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
 
@@ -285,15 +364,53 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
   SubSLS, cascading persis seperti di menu Peta, tapi state-nya independen
   (pilih filter di satu menu tidak mengubah filter di menu lainnya) dan
   tidak ada auto-zoom (karena tidak ada peta di sini).
-- **Filter atribut** — Jenis Prelist, Keberadaan Keluarga, Status: tiga
-  dropdown independen (tidak nge-cascade dan tidak saling bergantung, juga
-  tidak bergantung pada filter wilayah). Pilihannya adalah enum tertutup
-  dari `internal/points/points.go` (`jenisPrelistValues` dkk.), diserve ke
-  frontend lewat `GET /api/filter-options` — jadi frontend tidak perlu
-  hardcode daftar nilainya sendiri. Ada opsi "(Kosong)" di tiap dropdown
-  untuk memfilter baris yang kolomnya benar-benar kosong (`__EMPTY__` di
-  query string — beda dari filter tidak diisi sama sekali, lihat
-  `points.EmptyValue`).
+- **Filter atribut** — Jenis Prelist, Keberadaan Keluarga, Status,
+  Penggunaan Bangunan (`kode_penggunaan_bangunan_label`): empat
+  dropdown **multi-pilih** yang independen (tidak nge-cascade dan tidak
+  saling bergantung, juga tidak bergantung pada filter wilayah). Nilai di
+  dalam satu filter di-**OR** (jadi satu `IN (...)` di SQL), sementara
+  keempat filter itu sendiri tetap di-**AND** satu sama lain. Pilihannya
+  enum tertutup dari `internal/points/points.go` (`jenisPrelistValues`
+  dkk.), diserve ke frontend lewat `GET /api/filter-options` — jadi
+  frontend tidak perlu hardcode daftar nilainya sendiri. Ada opsi
+  "(Kosong)" di tiap dropdown untuk memfilter baris yang kolomnya
+  benar-benar kosong (`__EMPTY__` di query string — beda dari filter tidak
+  diisi sama sekali, lihat `points.EmptyValue`); ia masuk ke `IN` yang sama
+  sebagai `''`, jadi bisa dikombinasikan dengan nilai biasa.
+
+  Di URL tiap nilai jadi parameter tersendiri yang berulang
+  (`?status=OPEN&status=DRAFT`), bukan satu string dipisah koma — nilai
+  seperti "0. Tidak Ditemukan (STOP)" mengandung koma, jadi pemisah koma
+  akan ambigu. Nilai duplikat dilipat dan nilai kosong diabaikan di
+  `parseEnumFilter`, sehingga parameter berulang tidak bisa menggelembungkan
+  daftar `IN`.
+
+  Widget-nya dibuat sendiri (`makeMultiSelect` di `web/static/common.js`),
+  bukan `<select multiple>` bawaan: browser merender itu sebagai list box
+  yang selalu terbuka, yang akan mengubah tiga baris filter satu baris jadi
+  panel-panel tinggi dan merusak tata letak panel filter. Yang dipakai
+  adalah tombol bergaya sama persis dengan `<select>` di sebelahnya, yang
+  membuka panel checkbox. Label tombolnya menampilkan nama nilai kalau
+  cuma satu yang dipilih, dan "N dipilih" kalau lebih — daftar lengkapnya
+  selalu ada di tooltip.
+
+  Nilai Penggunaan Bangunan sangat panjang — yang terpanjang ~100 karakter
+  — jadi menu dropdown-nya dibatasi `max-width` dan labelnya dibiarkan
+  membungkus. Catatan CSS: percobaan pertama memakai `min-width:
+  max-content`, dan itu **tidak** bisa dibatasi `max-width` karena
+  `min-width` menang di cascade; yang benar `width: max-content` +
+  `max-width`. Terukur di browser: 622px sebelum diperbaiki, 420px sesudah.
+
+  **Keempat filter ini juga ada di menu Peta**, memakai komponen dan
+  endpoint filter yang sama — `/api/points` dan `/api/list` sama-sama lewat
+  `parseFilter`, jadi tidak ada apa pun di backend yang perlu ditambah
+  untuk mendukungnya di peta. Satu beda perilaku yang perlu diketahui:
+  filter atribut **tidak** menggeser atau men-zoom peta. Auto-zoom hanya
+  mengikuti filter wilayah (bounding box-nya sudah di-cache per wilayah),
+  sementara filter atribut cuma mengurangi titik di dalam viewport yang
+  sedang tampil. Karena itu panel statistik menampilkan satu baris per
+  filter atribut yang aktif — tanpa itu, peta yang terfilter ketat tidak
+  bisa dibedakan dari area yang memang kosong.
 - **Tidak difilter oleh validitas koordinat** — beda dari menu Peta, daftar
   ini menampilkan semua baris yang cocok filter, termasuk yang
   `latitude_ppl`/`longitude_ppl`-nya `0` atau kosong, karena tujuannya
@@ -569,7 +686,14 @@ Join-nya tidak merusak primary-key range di sisi kiri — `read_rows` naik
 dari 57.344 ke 146.781, dan selisihnya persis 89.437 baris `se2026_match`
 sendiri.
 
-Kolom ini ikut ke **unduhan Excel**, tapi **tidak ke PDF**. Alasannya sama
+Penggunaan Bangunan juga jadi kolom di tabel Daftar, baris di tooltip peta,
+dan kolom di unduhan Excel. Di PDF ia hanya muncul di blok "Filter
+Tambahan", bukan sebagai kolom tabel: kedua set kolom PDF sudah di
+275-276mm dari 277mm yang tersedia, dan nilai sepanjang ~100 karakter tidak
+muat tanpa memangkas Nama/Alamat/Catatan. Kalau kolomnya memang dibutuhkan
+di PDF, sebutkan kolom mana yang boleh dikorbankan.
+
+Kolom Assignment ID Baru ikut ke **unduhan Excel**, tapi **tidak ke PDF**. Alasannya sama
 dengan kolom Assignment ID yang sudah ada: PDF Daftar memang tidak memuat
 kolom ID sama sekali (bukan info yang dibaca dari kertas), dan kedua set
 kolomnya sudah di 275–276mm dari 277mm yang tersedia di A4 landscape —
@@ -828,23 +952,25 @@ Semua endpoint di bawah butuh sesi login kecuali yang ditandai — lihat
 bagian "Login" di atas.
 
 - `GET /` — peta (frontend)
-- `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=&flagBaru=&flagRegsosek=` — data titik/cluster untuk satu viewport. Titik individual ikut membawa kedua flag "Ditemukan di …" untuk tooltip (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
+- `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&flagBaru=&flagRegsosek=&search=` — data titik/cluster untuk satu viewport. Filter atributnya sama persis dengan `/api/list` (multi-nilai, ulangi parameternya per nilai) — keduanya lewat `parseFilter` yang sama. Titik individual ikut membawa kedua flag "Ditemukan di …" untuk tooltip (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
+- `GET /api/points-bounds?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&flagBaru=&flagRegsosek=&search=` — extent geografis baris yang cocok dengan filter (persentil 1%/99% dari `latitude_ppl`/`longitude_ppl`), untuk auto-zoom ke hasil pencarian nama di menu Peta. Parameternya sama persis dengan `/api/points` minus kotak viewport-nya. Balasannya `min_lat`/`max_lat`/`min_lon`/`max_lon` + `total`; kalau tidak ada baris yang cocok, `total` 0 dan keempat batasnya `null` (bukan NaN — `encoding/json` menolak NaN, lihat `points.FiniteOrNil`), jadi pemanggil tidak boleh nge-zoom ke situ. Dipanggil frontend hanya saat pencarian nama aktif — lihat "Cari nama di menu Peta" di atas
 - `GET /api/bounds` — extent geografis + total baris valid di seluruh dataset
-- `GET /api/kabkota` — daftar kabupaten/kota yang ada di data, dengan jumlah titik & bounding box masing-masing
+- `GET /api/kabkota` — daftar kabupaten/kota yang ada di data, dengan jumlah baris & bounding box masing-masing. Sama seperti keempat endpoint wilayah lainnya: daftarnya memuat SEMUA wilayah di tabel, dan `min_lat`/`max_lat`/`min_lon`/`max_lon` dihilangkan dari JSON untuk wilayah yang tidak punya titik berkoordinat
 - `GET /api/kecamatan?kabkota=` — daftar kecamatan di dalam satu kabupaten/kota (parameter wajib); `name` diisi dari PostGIS kalau `MAP_*` dikonfigurasi, kosong kalau tidak
 - `GET /api/desa?kabkota=&kecamatan=` — daftar desa/kelurahan di dalam satu kecamatan (kedua parameter wajib); `name` sama seperti di atas
 - `GET /api/sls?kabkota=&kecamatan=&desa=` — daftar Kode SLS di dalam satu desa/kelurahan (ketiga parameter wajib); `name` diisi dari kolom `nmsls` di PostGIS kalau `MAP_*` dikonfigurasi, kosong kalau tidak
 - `GET /api/subsls?kabkota=&kecamatan=&desa=&sls=` — daftar Kode SubSLS di dalam satu SLS (keempat parameter wajib)
 - `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — GeoJSON batas SubSLS untuk overlay di peta (kelima parameter wajib); 503 kalau PostGIS tidak dikonfigurasi/tidak terhubung — lihat `internal/mapdb/`
-- `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&flagBaru=&flagRegsosek=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `status`, `assignment_id`, `ada_assignment_baru`, `ada_regsosek`, `assignment_id_baru` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`) semuanya opsional dan independen dari filter wilayah maupun satu sama lain — nilainya divalidasi terhadap enum tetap di `internal/points/points.go`, pakai `__EMPTY__` untuk memfilter kolom yang kosong. `flagBaru` dan `flagRegsosek` hanya menerima `""` (semua), `"1"` (ada) atau `"0"` (tidak ada) — nilai lain ditolak 400
-- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&flagBaru=&flagRegsosek=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
-- `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&flagBaru=&flagRegsosek=&search=&sortBy=&dir=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf` (lihat `prepareReport` di `internal/api/server.go`, dipakai bareng oleh kedua handler)
+- `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&flagBaru=&flagRegsosek=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `status`, `penggunaan_bangunan`, `assignment_id`, `ada_assignment_baru`, `ada_regsosek`, `assignment_id_baru` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`, `penggunaanBangunan`) semuanya opsional, **multi-nilai**, dan independen dari filter wilayah maupun satu sama lain — ulangi parameternya untuk tiap nilai (`?status=OPEN&status=DRAFT`), yang jadi satu `IN (...)`; nilainya divalidasi terhadap enum tetap di `internal/points/points.go` dan satu nilai tak dikenal menolak seluruh request dengan 400; pakai `__EMPTY__` untuk memfilter kolom yang kosong, boleh digabung dengan nilai biasa. `flagBaru` dan `flagRegsosek` hanya menerima `""` (semua), `"1"` (ada) atau `"0"` (tidak ada) — nilai lain ditolak 400
+- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&flagBaru=&flagRegsosek=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
+- `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&flagBaru=&flagRegsosek=&search=&sortBy=&dir=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf` (lihat `prepareReport` di `internal/api/server.go`, dipakai bareng oleh kedua handler)
 - `GET /api/reg2022?kabkota=&kecamatan=&desa=&sls=&subsls=&matchStatus=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar Reg2022 (tabel `se2026_match_regsosek`). Filter wilayah sama dengan endpoint lain; `matchStatus` divalidasi terhadap 7 nilai tetap di `internal/regsosek/regsosek.go` (pakai `__EMPTY__` untuk kolom kosong); `search` mencari substring di `nama_prelist` dan `nama_kk` saja, lewat parameter binding — nomor KK/NIK tidak dipakai sebagai kunci cari. `sortBy` salah satu dari `nama` (default), `nama_kk`, `subsls`, `match_status`, `alamat_regsosek`, `nama_matched`, `assignment_id`
 - `GET /api/reg2022/filter-options` — daftar nilai `match_status` untuk dropdown filter menu Daftar Reg2022
 - `GET /api/reg2022/pdf?...` dan `GET /api/reg2022/xlsx?...` — laporan "Daftar Match Regsosek". Parameter filternya sama dengan `/api/reg2022`; `kabkota` dan `kecamatan` **wajib** (cakupan minimal satu kecamatan, lebih luas ditolak 400)
 - `GET /api/match-points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&...&matchStatus=&search=` — titik/cluster untuk viewport menu Peta Match Reg2022, memakai `latitude_regsosek`/`longitude_regsosek`
 - `GET /api/match-bounds?kabkota=&...&matchStatus=&search=` — extent geografis baris yang cocok dengan filter, untuk auto-zoom peta match (dihitung per request karena bergantung pada filter, bukan cuma wilayah)
 - `GET /api/filter-options` — daftar nilai enum untuk dropdown filter Jenis Prelist, Keberadaan Keluarga, dan Status (statis, bukan query ke ClickHouse)
+- `GET /api/meta` — metadata dataset yang cuma ditampilkan, bukan di-query: saat ini hanya `data_updated_at` dari `DATA_UPDATED_AT` di `.env`, string kosong kalau tidak dikonfigurasi
 - `GET /healthz` — health check (ping ClickHouse); satu dari sedikit endpoint yang tidak butuh login
 - `GET /login` — halaman form login (publik)
 - `POST /api/login` — memeriksa username/password, menerbitkan cookie sesi; body `username`, `password`, opsional `next`

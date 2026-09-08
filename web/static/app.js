@@ -13,6 +13,7 @@
   const flagBaruSelect = document.getElementById("flagbaru-select");
   const flagRegsosekSelect = document.getElementById("flagregsosek-select");
   const applyFilterBtn = document.getElementById("apply-filter-btn");
+  const searchInput = document.getElementById("peta-search");
 
   // Phone-sized screens get the compact (icon) basemap switcher and a
   // panel that starts collapsed — see setPanelCollapsed below. Read once
@@ -182,6 +183,12 @@
   let appliedSubsls = "";
   let appliedFlagBaru = "";
   let appliedFlagRegsosek = "";
+  let appliedSearch = "";
+  // Arrays: multi-select, one repeated query parameter per picked value.
+  let appliedJenisPrelist = [];
+  let appliedKeberadaanKeluarga = [];
+  let appliedStatus = [];
+  let appliedPenggunaan = [];
 
   // --- status labels -------------------------------------------------
 
@@ -203,7 +210,16 @@
     return STATUS_COLORS[status] || "#2a81cb";
   }
 
-  const { fetchWithRetry, makeCascadingLevel, esc } = App;
+  const { fetchWithRetry, makeCascadingLevel, makeMultiSelect, esc } = App;
+
+  // Same three multi-select attribute filters as the Daftar menu, backed
+  // by the same component and the same server-side filter — /api/points
+  // and /api/list both go through parseFilter, so nothing was needed on
+  // the backend to support them here.
+  const jenisPrelistMS = makeMultiSelect(document.getElementById("jenisprelist-ms-peta"));
+  const keberadaanKeluargaMS = makeMultiSelect(document.getElementById("keberadaankeluarga-ms-peta"));
+  const statusMS = makeMultiSelect(document.getElementById("status-ms-peta"));
+  const penggunaanMS = makeMultiSelect(document.getElementById("penggunaan-ms-peta"));
 
   function tooltipHTML(p) {
     return `
@@ -213,6 +229,7 @@
         <div><b>Alamat:</b> ${esc(p.alamat)}</div>
         <div><b>ID SUBSLS:</b> ${esc(p.subsls)}</div>
         <div><b>Jenis Prelist:</b> ${esc(p.jenis_prelist)}</div>
+        <div><b>Penggunaan Bangunan:</b> ${esc(p.penggunaan_bangunan)}</div>
         <div><b>Nomor Bangunan:</b> ${esc(p.nomor_bangunan)}</div>
         <div><b>Keberadaan Keluarga:</b> ${esc(p.keberadaan_keluarga)}</div>
         <div><b>Status:</b> ${esc(p.status)}</div>
@@ -302,6 +319,25 @@
     debounceTimer = setTimeout(loadViewport, LOAD_DEBOUNCE_MS);
   }
 
+  // Every applied filter except the viewport box, shared by /api/points
+  // and /api/points-bounds so the zoom-to-search extent is computed over
+  // exactly the rows the map is about to draw.
+  function appendFilterParams(params) {
+    if (appliedKabkota) params.set("kabkota", appliedKabkota);
+    if (appliedKecamatan) params.set("kecamatan", appliedKecamatan);
+    if (appliedDesa) params.set("desa", appliedDesa);
+    if (appliedSls) params.set("sls", appliedSls);
+    if (appliedSubsls) params.set("subsls", appliedSubsls);
+    if (appliedFlagBaru) params.set("flagBaru", appliedFlagBaru);
+    if (appliedFlagRegsosek) params.set("flagRegsosek", appliedFlagRegsosek);
+    if (appliedSearch) params.set("search", appliedSearch);
+    for (const v of appliedJenisPrelist) params.append("jenisPrelist", v);
+    for (const v of appliedKeberadaanKeluarga) params.append("keberadaanKeluarga", v);
+    for (const v of appliedStatus) params.append("status", v);
+    for (const v of appliedPenggunaan) params.append("penggunaanBangunan", v);
+    return params;
+  }
+
   async function loadViewport() {
     const seq = ++requestSeq;
 
@@ -316,13 +352,7 @@
       minLon: b.getWest(), maxLon: b.getEast(),
       zoom: String(zoom),
     });
-    if (appliedKabkota) params.set("kabkota", appliedKabkota);
-    if (appliedKecamatan) params.set("kecamatan", appliedKecamatan);
-    if (appliedDesa) params.set("desa", appliedDesa);
-    if (appliedSls) params.set("sls", appliedSls);
-    if (appliedSubsls) params.set("subsls", appliedSubsls);
-    if (appliedFlagBaru) params.set("flagBaru", appliedFlagBaru);
-    if (appliedFlagRegsosek) params.set("flagRegsosek", appliedFlagRegsosek);
+    appendFilterParams(params);
 
     setLoading(true);
     try {
@@ -415,6 +445,14 @@
     if (appliedFlagRegsosek) {
       lines.push(`Regsosek: ${appliedFlagRegsosek === "1" ? "hanya yang ditemukan" : "hanya yang tidak ditemukan"}`);
     }
+    // Attribute filters change the point count without changing the map
+    // extent, so without a line here a filtered map is indistinguishable
+    // from an empty area.
+    attrLine(lines, "Jenis Prelist", appliedJenisPrelist);
+    attrLine(lines, "Keberadaan Keluarga", appliedKeberadaanKeluarga);
+    attrLine(lines, "Status", appliedStatus);
+    attrLine(lines, "Penggunaan Bangunan", appliedPenggunaan);
+    if (appliedSearch) lines.push(`Cari nama: "${appliedSearch}"`);
     lines.push(`Di area ini: ${resp.total.toLocaleString("id-ID")} titik`);
     lines.push(`Ditampilkan: ${shown.toLocaleString("id-ID")} ${kind}`);
     // Roughly 1 SubSLS in 5 (3,219 of 15,722, measured) is spread widely
@@ -464,7 +502,12 @@
   });
 
   function boundsOf(info) {
-    if (info && isFinite(info.min_lat) && isFinite(info.max_lat) && isFinite(info.min_lon) && isFinite(info.max_lon)) {
+    // Number.isFinite, not the global isFinite: the server now omits these
+    // four entirely for a wilayah with no plottable point, and the global
+    // one coerces first — isFinite(undefined) is false, but isFinite(null)
+    // is true, which would zoom the map to 0,0 in the Atlantic.
+    if (info && Number.isFinite(info.min_lat) && Number.isFinite(info.max_lat)
+        && Number.isFinite(info.min_lon) && Number.isFinite(info.max_lon)) {
       return [[info.min_lat, info.min_lon], [info.max_lat, info.max_lon]];
     }
     return null;
@@ -554,16 +597,81 @@
     appliedSubsls = subslsSelect.value;
     appliedFlagBaru = flagBaruSelect.value;
     appliedFlagRegsosek = flagRegsosekSelect.value;
+    appliedJenisPrelist = jenisPrelistMS.getValues();
+    appliedKeberadaanKeluarga = keberadaanKeluargaMS.getValues();
+    appliedStatus = statusMS.getValues();
+    appliedPenggunaan = penggunaanMS.getValues();
+    appliedSearch = searchInput.value.trim();
 
+    // Wilayah extent first: it is cached client-side, so the view is
+    // right immediately for every filter that isn't a name search. A
+    // search then refines it asynchronously (fitToSearch below), because
+    // a handful of matching dots scattered over a whole kabupaten are
+    // invisible at the wilayah zoom.
     fitTo(currentBounds());
+    if (appliedSearch) fitToSearch(appliedSearch);
     // fitBounds triggers moveend -> scheduleLoad already; force an
     // immediate reload too in case the view didn't actually move.
     scheduleLoad();
     loadSubSlsPolygon();
   });
 
+  // The map has no equivalent of the Daftar table's row list, so a search
+  // that matches a few rows in a large wilayah would otherwise leave an
+  // apparently empty map. Ask the server for the extent of the matches and
+  // zoom onto it. Costs about 100ms against 55ms for the same query with
+  // no filters, so it runs only while a search is actually active.
+  //
+  // The four bounds are omitted from the JSON when nothing matches (the
+  // server sends null for a non-finite percentile), so total > 0 alone
+  // isn't enough of a guard — boundsOf re-checks the numbers.
+  async function fitToSearch(search) {
+    try {
+      const params = appendFilterParams(new URLSearchParams());
+      const b = await fetchWithRetry(`/api/points-bounds?${params}`, undefined);
+      if (search !== appliedSearch) return; // filter changed while we waited
+      if (!b || !b.total) return;
+      fitTo(boundsOf(b)); // null-safe: fitTo ignores a null extent
+    } catch (err) {
+      // Leave the wilayah extent in place; the points still load.
+      console.error("failed to load search bounds", err);
+    }
+  }
+
+  // Enter in the search box applies the whole filter panel, same as the
+  // Daftar menu, so a name search doesn't need a trip to the button.
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") applyFilterBtn.click();
+  });
+
+  // One stats line per active attribute filter. Names are spelled out up
+  // to three picks and summarised beyond that, so the panel doesn't grow a
+  // paragraph when someone selects most of a long enum like Status.
+  function attrLine(lines, label, vals) {
+    if (vals.length === 0) return;
+    const shown = vals.map((v) => (v === App.EMPTY_VALUE ? "(Kosong)" : v));
+    lines.push(`${label}: ${vals.length > 3 ? `${vals.length} dipilih` : shown.join(", ")}`);
+  }
+
+  // The enum choices are a static closed set on the server, so this is
+  // one call at boot rather than anything that reacts to the wilayah
+  // filters. A failure here leaves the three dropdowns empty rather than
+  // breaking the map.
+  async function loadAttrOptions() {
+    try {
+      const opts = await fetchWithRetry("/api/filter-options", undefined);
+      jenisPrelistMS.setOptions(opts.jenis_prelist || []);
+      keberadaanKeluargaMS.setOptions(opts.keberadaan_keluarga || []);
+      statusMS.setOptions(opts.status || []);
+      penggunaanMS.setOptions(opts.penggunaan_bangunan || []);
+    } catch (err) {
+      console.error("failed to load filter options", err);
+    }
+  }
+
   async function boot() {
     await loadKabKotaOptions();
+    loadAttrOptions();
     try {
       const b = await fetchWithRetry("/api/bounds", undefined);
       datasetTotal = b.total;
