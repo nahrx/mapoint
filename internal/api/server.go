@@ -471,6 +471,10 @@ func parseFilter(q url.Values) (points.Filter, error) {
 	if err != nil {
 		return points.Filter{}, err
 	}
+	keberadaanBKU, err := points.ParseKeberadaanBKU(q["keberadaanBku"])
+	if err != nil {
+		return points.Filter{}, err
+	}
 	flagBaru, err := points.ParseFlag(q.Get("flagBaru"))
 	if err != nil {
 		return points.Filter{}, err
@@ -487,6 +491,7 @@ func parseFilter(q url.Values) (points.Filter, error) {
 	filter.KeberadaanKeluarga = keberadaanKeluarga
 	filter.Status = status
 	filter.PenggunaanBangunan = penggunaanBangunan
+	filter.KeberadaanBKU = keberadaanBKU
 	filter.FlagBaru = flagBaru
 	filter.FlagRegsosek = flagRegsosek
 	filter.Search = search
@@ -639,6 +644,7 @@ func (s *Server) prepareReport(w http.ResponseWriter, r *http.Request, q url.Val
 		KeberadaanKeluarga: filter.KeberadaanKeluarga,
 		Status:             filter.Status,
 		PenggunaanBangunan: filter.PenggunaanBangunan,
+		KeberadaanBKU:      filter.KeberadaanBKU,
 		Search:             filter.Search,
 		FlagBaru:           filter.FlagBaru,
 		FlagRegsosek:       filter.FlagRegsosek,

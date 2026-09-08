@@ -43,6 +43,7 @@ var columns = []struct {
 	{"Jenis Prelist", 18},
 	{"Penggunaan Bangunan", 46},
 	{"Keberadaan Keluarga", 34},
+	{"Keberadaan Usaha", 34},
 	{"Status", 34},
 	{"Assignment ID", 38},
 	{"Ditemukan di Assignment Baru", 24},
@@ -232,6 +233,7 @@ func writeTable(f *excelize.File, sheet string, st styles, headerRow int, items 
 			report.DashIfEmpty(p.JenisPrelist),
 			report.DashIfEmpty(p.PenggunaanBangunan),
 			report.DashIfEmpty(p.KeberadaanKeluarga),
+			report.DashIfEmpty(p.KeberadaanBKU),
 			report.DashIfEmpty(p.Status),
 			report.DashIfEmpty(p.AssignmentID),
 			// Spelled out rather than a checkmark glyph: these two columns

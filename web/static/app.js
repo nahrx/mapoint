@@ -189,6 +189,7 @@
   let appliedKeberadaanKeluarga = [];
   let appliedStatus = [];
   let appliedPenggunaan = [];
+  let appliedKeberadaanBku = [];
 
   // --- status labels -------------------------------------------------
 
@@ -220,6 +221,7 @@
   const keberadaanKeluargaMS = makeMultiSelect(document.getElementById("keberadaankeluarga-ms-peta"));
   const statusMS = makeMultiSelect(document.getElementById("status-ms-peta"));
   const penggunaanMS = makeMultiSelect(document.getElementById("penggunaan-ms-peta"));
+  const keberadaanBkuMS = makeMultiSelect(document.getElementById("keberadaanbku-ms-peta"));
 
   function tooltipHTML(p) {
     return `
@@ -232,6 +234,7 @@
         <div><b>Penggunaan Bangunan:</b> ${esc(p.penggunaan_bangunan)}</div>
         <div><b>Nomor Bangunan:</b> ${esc(p.nomor_bangunan)}</div>
         <div><b>Keberadaan Keluarga:</b> ${esc(p.keberadaan_keluarga)}</div>
+        <div><b>Keberadaan Usaha:</b> ${esc(p.keberadaan_bku)}</div>
         <div><b>Status:</b> ${esc(p.status)}</div>
         <div><b>Ditemukan di Assignment Baru:</b> ${flagText(p.ada_assignment_baru)}</div>
         <div><b>Ditemukan di Regsosek:</b> ${flagText(p.ada_regsosek)}</div>
@@ -335,6 +338,7 @@
     for (const v of appliedKeberadaanKeluarga) params.append("keberadaanKeluarga", v);
     for (const v of appliedStatus) params.append("status", v);
     for (const v of appliedPenggunaan) params.append("penggunaanBangunan", v);
+    for (const v of appliedKeberadaanBku) params.append("keberadaanBku", v);
     return params;
   }
 
@@ -452,6 +456,7 @@
     attrLine(lines, "Keberadaan Keluarga", appliedKeberadaanKeluarga);
     attrLine(lines, "Status", appliedStatus);
     attrLine(lines, "Penggunaan Bangunan", appliedPenggunaan);
+    attrLine(lines, "Keberadaan Usaha", appliedKeberadaanBku);
     if (appliedSearch) lines.push(`Cari nama: "${appliedSearch}"`);
     lines.push(`Di area ini: ${resp.total.toLocaleString("id-ID")} titik`);
     lines.push(`Ditampilkan: ${shown.toLocaleString("id-ID")} ${kind}`);
@@ -601,6 +606,7 @@
     appliedKeberadaanKeluarga = keberadaanKeluargaMS.getValues();
     appliedStatus = statusMS.getValues();
     appliedPenggunaan = penggunaanMS.getValues();
+    appliedKeberadaanBku = keberadaanBkuMS.getValues();
     appliedSearch = searchInput.value.trim();
 
     // Wilayah extent first: it is cached client-side, so the view is
@@ -664,6 +670,7 @@
       keberadaanKeluargaMS.setOptions(opts.keberadaan_keluarga || []);
       statusMS.setOptions(opts.status || []);
       penggunaanMS.setOptions(opts.penggunaan_bangunan || []);
+      keberadaanBkuMS.setOptions(opts.keberadaan_bku || []);
     } catch (err) {
       console.error("failed to load filter options", err);
     }

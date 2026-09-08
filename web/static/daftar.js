@@ -12,6 +12,7 @@
   const keberadaanKeluargaMS = makeMultiSelect(document.getElementById("keberadaankeluarga-ms-list"));
   const statusMS = makeMultiSelect(document.getElementById("status-ms-list"));
   const penggunaanMS = makeMultiSelect(document.getElementById("penggunaan-ms-list"));
+  const keberadaanBkuMS = makeMultiSelect(document.getElementById("keberadaanbku-ms-list"));
   const flagBaruSelect = document.getElementById("flagbaru-select-list");
   const flagRegsosekSelect = document.getElementById("flagregsosek-select-list");
   const searchInput = document.getElementById("daftar-search");
@@ -54,6 +55,7 @@
   let appliedKeberadaanKeluarga = [];
   let appliedStatus = [];
   let appliedPenggunaan = [];
+  let appliedKeberadaanBku = [];
   let appliedFlagBaru = "";
   let appliedFlagRegsosek = "";
   let appliedSearch = "";
@@ -96,6 +98,7 @@
         <td>${esc(p.penggunaan_bangunan)}</td>
         <td class="num">${esc(p.nomor_bangunan)}</td>
         <td>${esc(p.keberadaan_keluarga)}</td>
+        <td>${esc(p.keberadaan_bku)}</td>
         <td><span class="status-dot" style="background:${color}"></span>${esc(p.status)}</td>
         <td class="mono">${esc(p.assignment_id)}</td>
         <td class="col-joined col-flag">${flagCell(p.ada_assignment_baru)}</td>
@@ -133,6 +136,7 @@
     for (const v of appliedKeberadaanKeluarga) params.append("keberadaanKeluarga", v);
     for (const v of appliedStatus) params.append("status", v);
     for (const v of appliedPenggunaan) params.append("penggunaanBangunan", v);
+    for (const v of appliedKeberadaanBku) params.append("keberadaanBku", v);
     if (appliedFlagBaru) params.set("flagBaru", appliedFlagBaru);
     if (appliedFlagRegsosek) params.set("flagRegsosek", appliedFlagRegsosek);
     if (appliedSearch) params.set("search", appliedSearch);
@@ -180,7 +184,7 @@
     const startRow = (resp.page - 1) * resp.page_size + 1;
     tbody.innerHTML = resp.items.length
       ? resp.items.map((p, i) => rowHTML(p, startRow + i)).join("")
-      : `<tr><td colspan="13" class="empty-row">Tidak ada data yang cocok dengan filter ini.</td></tr>`;
+      : `<tr><td colspan="14" class="empty-row">Tidak ada data yang cocok dengan filter ini.</td></tr>`;
 
     const totalPages = Math.max(1, Math.ceil(resp.total / resp.page_size));
     pageInfoEl.textContent = `Halaman ${resp.page.toLocaleString("id-ID")} dari ${totalPages.toLocaleString("id-ID")} (${resp.total.toLocaleString("id-ID")} data)`;
@@ -297,6 +301,7 @@
       keberadaanKeluargaMS.setOptions(opts.keberadaan_keluarga || []);
       statusMS.setOptions(opts.status || []);
       penggunaanMS.setOptions(opts.penggunaan_bangunan || []);
+      keberadaanBkuMS.setOptions(opts.keberadaan_bku || []);
     } catch (err) {
       console.error("failed to load filter options", err);
     }
@@ -373,6 +378,7 @@
     appliedKeberadaanKeluarga = keberadaanKeluargaMS.getValues();
     appliedStatus = statusMS.getValues();
     appliedPenggunaan = penggunaanMS.getValues();
+    appliedKeberadaanBku = keberadaanBkuMS.getValues();
     appliedFlagBaru = flagBaruSelect.value;
     appliedFlagRegsosek = flagRegsosekSelect.value;
     appliedSearch = searchInput.value.trim();
@@ -385,7 +391,7 @@
   applyFilterBtn.addEventListener("click", applyFilters);
 
   // --- filter panel collapse (phone only) --------------------------------
-  // The nine filter controls stack to roughly a full screen on a phone,
+  // The filter controls stack to roughly a full screen on a phone,
   // which would push the table itself out of view. The toggle button is
   // hidden by CSS above 600px, where everything fits side by side anyway.
 

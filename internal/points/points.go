@@ -166,6 +166,20 @@ var (
 		"EDITED BY Admin Kabupaten", "COMPLETED BY Admin Kabupaten",
 		"REVOKED BY Admin Kabupaten",
 	}
+	// keberadaan_BKU, shown everywhere as "Keberadaan Usaha" — the column
+	// name keeps the source's spelling, the label is what the form calls
+	// it. Listed in the source's own numeric order, and note the gaps
+	// (5 and 6 are absent from the data). Blank on 68.5% of rows, by far
+	// the most common value, but not listed here: like every other
+	// attribute filter it reaches the filter as EmptyValue.
+	keberadaanBKUValues = []string{
+		"0. Tidak Ditemukan",
+		"1. Ditemukan",
+		"2. Baru",
+		"3. Tutup",
+		"4. Ganda",
+		"7. Data diperoleh dari Kantor Pusat (KP)",
+	}
 	// kode_penggunaan_bangunan_label, listed in the source's own numeric
 	// order rather than by frequency so the dropdown reads like the form it
 	// came from. Blank is by far the most common value (42% of rows at the
@@ -192,6 +206,7 @@ type FilterOptions struct {
 	KeberadaanKeluarga []string `json:"keberadaan_keluarga"`
 	Status             []string `json:"status"`
 	PenggunaanBangunan []string `json:"penggunaan_bangunan"`
+	KeberadaanBKU      []string `json:"keberadaan_bku"`
 }
 
 // GetFilterOptions returns the attribute filter dropdown choices.
@@ -201,6 +216,7 @@ func GetFilterOptions() FilterOptions {
 		KeberadaanKeluarga: keberadaanKeluargaValues,
 		Status:             statusValues,
 		PenggunaanBangunan: penggunaanBangunanValues,
+		KeberadaanBKU:      keberadaanBKUValues,
 	}
 }
 
@@ -373,6 +389,12 @@ func ParsePenggunaanBangunan(raw []string) ([]string, error) {
 	return parseEnumFilter(raw, penggunaanBangunanValues)
 }
 
+// ParseKeberadaanBKU validates the Keberadaan Usaha filter values
+// (keberadaan_BKU in the table).
+func ParseKeberadaanBKU(raw []string) ([]string, error) {
+	return parseEnumFilter(raw, keberadaanBKUValues)
+}
+
 // Filter narrows a query down to a wilayah and, optionally, a handful of
 // row attributes. The five wilayah fields come from level_6_full_code:
 // KabKota is characters 1-4, Kecamatan is characters 5-7, Desa is
@@ -394,6 +416,7 @@ type Filter struct {
 	KeberadaanKeluarga []string
 	Status             []string
 	PenggunaanBangunan []string
+	KeberadaanBKU      []string
 
 	// FlagBaru and FlagRegsosek filter on the two membership flags:
 	// FlagYes keeps only rows found in that table, FlagNo only rows not
@@ -472,6 +495,11 @@ func (f Filter) clause() (string, []any) {
 	}
 	if len(f.PenggunaanBangunan) > 0 {
 		parts = append(parts, attrClause("kode_penggunaan_bangunan_label", f.PenggunaanBangunan))
+	}
+	// Quoted identifier: the column really is spelled keberadaan_BKU, and
+	// ClickHouse identifiers are case-sensitive.
+	if len(f.KeberadaanBKU) > 0 {
+		parts = append(parts, attrClause("keberadaan_BKU", f.KeberadaanBKU))
 	}
 	// Both are dictionary lookups now, so they no longer carry a per-query
 	// set build — the fragment is still only added when the filter is on,
@@ -555,7 +583,12 @@ type Point struct {
 	// fine at this width).
 	NomorBangunan      int32  `json:"nomor_bangunan"`
 	KeberadaanKeluarga string `json:"keberadaan_keluarga"`
-	Status             string `json:"status"`
+	// KeberadaanBKU is the keberadaan_BKU column, displayed as "Keberadaan
+	// Usaha" in both menus. Not to be confused with KeberadaanUsaha above,
+	// which is the jumlah_usaha *count* and stays hidden — these are two
+	// different columns that the form happens to name similarly.
+	KeberadaanBKU string `json:"keberadaan_bku"`
+	Status        string `json:"status"`
 	// AdaAssignmentBaru and AdaRegsosek report whether this row's
 	// assignment_id appears in se2026_match (as assignment_id_tdk) and in
 	// se2026_match_regsosek respectively. They are presence flags only —
@@ -728,7 +761,8 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 	q := fmt.Sprintf(`SELECT
 		assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root,
 		kode_penggunaan_bangunan_label,
-		jumlah_usaha, nomor_bangunan, keberadaan_keluarga, assignment_status_alias,
+		jumlah_usaha, nomor_bangunan, keberadaan_keluarga, keberadaan_BKU,
+		assignment_status_alias,
 		latitude_ppl, longitude_ppl,
 		%s, %s
 	FROM %s
@@ -752,7 +786,8 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 		if err := rows.Scan(
 			&p.AssignmentID, &p.Nama, &p.Alamat, &p.SubSLS, &p.JenisPrelist,
 			&p.PenggunaanBangunan,
-			&p.KeberadaanUsaha, &p.NomorBangunan, &p.KeberadaanKeluarga, &p.Status,
+			&p.KeberadaanUsaha, &p.NomorBangunan, &p.KeberadaanKeluarga,
+			&p.KeberadaanBKU, &p.Status,
 			&p.Lat, &p.Lon, &adaBaru, &adaRegsosek,
 		); err != nil {
 			return nil, err
@@ -1227,6 +1262,7 @@ var listSortColumns = map[string]string{
 	"keberadaan_usaha":    "jumlah_usaha",
 	"nomor_bangunan":      "nomor_bangunan",
 	"keberadaan_keluarga": "keberadaan_keluarga",
+	"keberadaan_bku":      "keberadaan_BKU",
 	"status":              "assignment_status_alias",
 	"penggunaan_bangunan": "kode_penggunaan_bangunan_label",
 	"assignment_id":       "assignment_id",
@@ -1339,7 +1375,7 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 	if !ok {
 		sortCol = listSortColumns[DefaultSortColumn]
 	}
-	cols := "assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root, kode_penggunaan_bangunan_label, jumlah_usaha, nomor_bangunan, keberadaan_keluarga, assignment_status_alias, latitude_ppl, longitude_ppl"
+	cols := "assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root, kode_penggunaan_bangunan_label, jumlah_usaha, nomor_bangunan, keberadaan_keluarga, keberadaan_BKU, assignment_status_alias, latitude_ppl, longitude_ppl"
 	if includeCatatan {
 		cols += ", catatan"
 	}
@@ -1373,7 +1409,8 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 		dest := []any{
 			&p.AssignmentID, &p.Nama, &p.Alamat, &p.SubSLS, &p.JenisPrelist,
 			&p.PenggunaanBangunan,
-			&p.KeberadaanUsaha, &p.NomorBangunan, &p.KeberadaanKeluarga, &p.Status,
+			&p.KeberadaanUsaha, &p.NomorBangunan, &p.KeberadaanKeluarga,
+			&p.KeberadaanBKU, &p.Status,
 			&p.Lat, &p.Lon,
 		}
 		if includeCatatan {

@@ -35,6 +35,7 @@ type Region struct {
 	KeberadaanKeluarga []string
 	Status             []string
 	PenggunaanBangunan []string
+	KeberadaanBKU      []string
 	Search             string
 
 	// FlagBaru and FlagRegsosek are the raw points.FlagYes/FlagNo values of
@@ -119,6 +120,9 @@ func (r Region) ExtraFilters() [][2]string {
 	}
 	if len(r.PenggunaanBangunan) > 0 {
 		extra = append(extra, [2]string{"Penggunaan Bangunan", AttrLabels(r.PenggunaanBangunan)})
+	}
+	if len(r.KeberadaanBKU) > 0 {
+		extra = append(extra, [2]string{"Keberadaan Usaha", AttrLabels(r.KeberadaanBKU)})
 	}
 	if r.Search != "" {
 		extra = append(extra, [2]string{"Cari Nama", r.Search})
