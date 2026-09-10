@@ -139,6 +139,9 @@
     </div>
 
     <div id="loading" class="map-loading hidden">Memuat data…</div>
+    <!-- Filled by the GPS control in app.js; hidden until it has something
+         to say, so it never covers the map for nothing. -->
+    <p id="gps-status" class="map-gps-status hidden" role="status" aria-live="polite"></p>
   </section>
 
   <section id="view-daftar" class="view">

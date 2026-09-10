@@ -129,16 +129,28 @@
     }
   }
 
-  async function loadSubSlsPolygon() {
+  // Draws the SubSLS boundaries for whatever wilayah is filtered, from
+  // desa/kelurahan downwards: a desa shows every SubSLS inside it, an SLS
+  // every SubSLS inside that SLS, a SubSLS just its own. All three are the
+  // same request — /api/subsls-polygon matches on a prefix of idsubsls, so
+  // the levels that are set are exactly the prefix.
+  //
+  // Nothing is drawn above desa level: a kecamatan would be thousands of
+  // polygons, against 164 for the largest desa measured (502 kB of GeoJSON
+  // before gzip).
+  async function loadWilayahPolygons() {
     const seq = ++polygonSeq;
     clearPolygon();
-    if (!(appliedKabkota && appliedKecamatan && appliedDesa && appliedSls && appliedSubsls)) {
+    if (!(appliedKabkota && appliedKecamatan && appliedDesa)) {
       return;
     }
     const params = new URLSearchParams({
       kabkota: appliedKabkota, kecamatan: appliedKecamatan, desa: appliedDesa,
-      sls: appliedSls, subsls: appliedSubsls,
     });
+    // Only the levels actually filtered go in — an empty one would make the
+    // server reject the request rather than widen the prefix.
+    if (appliedSls) params.set("sls", appliedSls);
+    if (appliedSubsls) params.set("subsls", appliedSubsls);
     try {
       const geojson = await fetchWithRetry(`/api/subsls-polygon?${params}`, undefined);
       if (seq !== polygonSeq) return; // filter changed again while this was in flight
@@ -157,7 +169,7 @@
       if (seq !== polygonSeq) return;
       // Optional overlay — log and move on rather than surfacing an error
       // for something that isn't configured on every deployment.
-      console.error("failed to load SubSLS polygon", err);
+      console.error("failed to load SubSLS polygons", err);
     }
   }
 
@@ -619,10 +631,221 @@
     // fitBounds triggers moveend -> scheduleLoad already; force an
     // immediate reload too in case the view didn't actually move.
     scheduleLoad();
-    loadSubSlsPolygon();
+    loadWilayahPolygons();
   }
 
   applyFilterBtn.addEventListener("click", applyFilters);
+
+
+  // --- GPS: "lokasi saya" -------------------------------------------------
+  // For fieldwork: show where the phone actually is, on top of the points
+  // it is supposed to be visiting. A Leaflet control rather than another
+  // row in the filter panel, because the panel is usually collapsed on a
+  // phone and this is the one thing you want reachable with a thumb.
+  //
+  // Tracking starts on its own as soon as the page loads, whenever the
+  // browser can supply a position at all — no press needed. watchPosition
+  // (not getCurrentPosition) means every new fix arrives on its own, so
+  // the dot keeps up while you walk.
+  //
+  // Browsers only hand out geolocation in a secure context — HTTPS, or
+  // localhost. Served over plain http:// on a LAN address, which is how
+  // this app runs today, that check fails and the button explains why
+  // instead of appearing broken.
+  let gpsWatchId = null;
+  let gpsMarker = null;
+  // gpsFollow decides whether a new fix also moves the map. Auto-start
+  // leaves it off: the page has just fitted the map to the dataset or to
+  // the applied filter, and hijacking that view for a location nobody
+  // asked to see would be wrong. Pressing the button turns it on.
+  let gpsFollow = false;
+  let gpsBtn = null;
+  let gpsStatusTimer = 0;
+  // Errors and first-fix messages are only worth showing when the user
+  // actually pressed the button. On auto-start they would mean a banner on
+  // every page load for anyone who has denied the permission, or who is on
+  // http://, neither of whom asked for anything.
+  let gpsAsked = false;
+  let gpsAnnounced = false;
+
+  const gpsStatusEl = document.getElementById("gps-status");
+
+  function gpsSay(msg, transient) {
+    if (!gpsStatusEl) return;
+    clearTimeout(gpsStatusTimer);
+    gpsStatusEl.textContent = msg || "";
+    gpsStatusEl.classList.toggle("hidden", !msg);
+    if (msg && transient) {
+      gpsStatusTimer = setTimeout(() => {
+        gpsStatusEl.textContent = "";
+        gpsStatusEl.classList.add("hidden");
+      }, 6000);
+    }
+  }
+
+  function gpsRender() {
+    if (!gpsBtn) return;
+    const active = gpsWatchId !== null;
+    gpsBtn.classList.toggle("is-active", active && gpsFollow);
+    gpsBtn.classList.toggle("is-tracking", active && !gpsFollow);
+    gpsBtn.title = !active
+      ? "Tampilkan lokasi saya"
+      : gpsFollow
+        ? "Berhenti mengikuti lokasi saya"
+        : "Pusatkan peta ke lokasi saya";
+    gpsBtn.setAttribute("aria-label", gpsBtn.title);
+    gpsBtn.setAttribute("aria-pressed", String(active));
+  }
+
+  function gpsStop() {
+    if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
+    gpsWatchId = null;
+    if (gpsMarker) { map.removeLayer(gpsMarker); gpsMarker = null; }
+    gpsFollow = false;
+    gpsAnnounced = false;
+    gpsRender();
+    gpsSay("", false);
+  }
+
+  function gpsOnPosition(pos) {
+    const { latitude, longitude, accuracy } = pos.coords;
+    const latlng = [latitude, longitude];
+    const label = `Lokasi Anda (±${Math.round(accuracy)} m)`;
+
+    if (!gpsMarker) {
+      // A divIcon, not a circleMarker: an HTML element can carry a CSS
+      // animation, and a Leaflet vector cannot — its <path> has no radius
+      // attribute to animate, only presentation attributes. That also puts
+      // it in the marker pane, above the points' canvas, so nothing the
+      // viewport redraws can paint over it.
+      gpsMarker = L.marker(latlng, {
+        icon: L.divIcon({
+          className: "gps-marker",
+          html: '<span class="gps-marker-pulse"></span><span class="gps-marker-dot"></span>',
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        }),
+        keyboard: false,
+        // Above the nomor-bangunan labels, which are markers too: this is
+        // the one thing that must never end up underneath something else.
+        zIndexOffset: 1000,
+      }).addTo(map);
+      gpsMarker.bindTooltip(label, { direction: "top", offset: [0, -12] });
+    } else {
+      gpsMarker.setLatLng(latlng);
+      gpsMarker.setTooltipContent(label);
+    }
+
+    if (gpsFollow) {
+      // Zoom in on the first fix only, and never back out: a later fix
+      // shouldn't yank the view back if the user has zoomed out to look
+      // around.
+      map.setView(latlng, Math.max(map.getZoom(), 17), { animate: false });
+    }
+    gpsRender();
+    if (gpsAsked && !gpsAnnounced) {
+      gpsAnnounced = true;
+      gpsSay(`${label}. Titik biru mengikuti Anda selama halaman ini terbuka.`, true);
+    }
+  }
+
+  function gpsOnError(err) {
+    const reason = {
+      1: "Akses lokasi ditolak. Izinkan lokasi untuk situs ini di pengaturan browser.",
+      2: "Lokasi tidak tersedia. Pastikan GPS/lokasi perangkat aktif.",
+      3: "Waktu tunggu lokasi habis. Coba lagi di tempat yang lebih terbuka.",
+    }[err.code] || "Gagal mendapatkan lokasi.";
+    const asked = gpsAsked;
+    gpsStop();
+    if (asked) gpsSay(reason, false);
+    else console.warn("lokasi otomatis tidak tersedia:", reason);
+  }
+
+  // gpsAvailable is the same condition the browser itself applies —
+  // isSecureContext already treats localhost as secure, so this is not a
+  // protocol string comparison.
+  function gpsAvailable() {
+    return Boolean(window.isSecureContext && navigator.geolocation);
+  }
+
+  function gpsStart() {
+    if (gpsWatchId !== null) return;
+    if (!window.isSecureContext) {
+      if (gpsAsked) {
+        gpsSay(
+          "Fitur lokasi hanya bisa dipakai lewat HTTPS (atau localhost). " +
+          "Dashboard ini sedang diakses lewat http://, jadi browser memblokir GPS.",
+          false
+        );
+      }
+      return;
+    }
+    if (!navigator.geolocation) {
+      if (gpsAsked) gpsSay("Browser ini tidak mendukung fitur lokasi.", false);
+      return;
+    }
+    if (gpsAsked) gpsSay("Mencari lokasi…", false);
+    gpsWatchId = navigator.geolocation.watchPosition(gpsOnPosition, gpsOnError, {
+      // Worth the battery: this is for walking a SubSLS, and the whole
+      // point is knowing which side of a boundary you are standing on.
+      enableHighAccuracy: true,
+      maximumAge: 5000,
+      timeout: 20000,
+    });
+    gpsRender();
+  }
+
+  function gpsToggle() {
+    gpsAsked = true;
+    if (gpsWatchId === null) {
+      gpsFollow = true;
+      gpsStart();
+      return;
+    }
+    // Tracking but the map is elsewhere — either because tracking started
+    // on its own, or because the user panned away. The obvious meaning of
+    // a press is "take me there", not "stop".
+    if (!gpsFollow) {
+      gpsFollow = true;
+      if (gpsMarker) map.setView(gpsMarker.getLatLng(), Math.max(map.getZoom(), 17), { animate: false });
+      gpsRender();
+      return;
+    }
+    gpsStop();
+  }
+
+  // Panning by hand means "I want to look over there" — keep updating the
+  // dot, stop dragging the view along with it.
+  map.on("dragstart", () => {
+    if (gpsWatchId !== null && gpsFollow) {
+      gpsFollow = false;
+      gpsRender();
+    }
+  });
+
+  const gpsControl = L.control({ position: "bottomright" });
+  gpsControl.onAdd = () => {
+    const wrap = L.DomUtil.create("div", "leaflet-bar gps-control");
+    gpsBtn = L.DomUtil.create("a", "gps-btn", wrap);
+    gpsBtn.href = "#";
+    gpsBtn.setAttribute("role", "button");
+    gpsBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+      '<circle cx="12" cy="12" r="4" fill="currentColor"></circle>' +
+      '<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.6"></circle>' +
+      '<path d="M12 1v3M12 20v3M1 12h3M20 12h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>' +
+      "</svg>";
+    L.DomEvent.disableClickPropagation(wrap);
+    L.DomEvent.on(gpsBtn, "click", L.DomEvent.stop);
+    L.DomEvent.on(gpsBtn, "click", gpsToggle);
+    gpsRender();
+    return wrap;
+  };
+  gpsControl.addTo(map);
+
+  // Start tracking straight away when the browser can do it at all. No
+  // message and no map movement if it fails — nobody asked yet.
+  if (gpsAvailable()) gpsStart();
 
   // --- preset filter (localStorage) --------------------------------------
   // The preset bar itself lives in common.js; these two functions are the

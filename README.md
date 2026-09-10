@@ -346,12 +346,105 @@ Kalau nanti perlu sumber lain:
 - **Mapbox Satellite** — kualitas tinggi, tapi butuh signup + API key
   (gratis sampai ~50.000 pemuatan peta/bulan, berbayar di atas itu).
 
+### GPS "lokasi saya" (menu Peta)
+
+Tombol bidik di pojok kanan bawah peta — sebaris dengan tombol zoom, bukan
+di panel filter, karena di HP panel itu biasanya tertutup dan justru ini yang
+perlu terjangkau ibu jari di lapangan.
+
+**Pelacakan mulai sendiri begitu halaman dibuka**, tanpa perlu ditekan,
+selama browser memang bisa memberikan posisi. Yang dipakai
+`navigator.geolocation.watchPosition` — bukan `getCurrentPosition` — jadi
+**setiap fix baru datang sendiri dan titik birunya ikut bergerak selama
+halaman terbuka**. `enableHighAccuracy: true`: boros baterai, tapi ini memang
+untuk menyusuri satu SubSLS, dan gunanya justru tahu Anda berdiri di sisi
+mana dari sebuah batas.
+
+Penandanya **berdenyut**, dan sengaja **nila (indigo)**, bukan biru. Titik
+data di peta ini sudah memakai hampir seluruh palet — biru (`#2a81cb`, warna
+default), biru muda, hijau, oranye, merah, abu-abu di `STATUS_COLORS` — jadi
+titik biru ketujuh di tengah-tengah mereka justru jadi hal yang paling tidak
+boleh terjadi pada penanda ini. Denyutnya menyelesaikan sisanya: tidak ada
+apa pun lagi di peta ini yang bergerak.
+
+Teknisnya penanda ini `L.divIcon`, bukan `L.circleMarker` — animasi CSS butuh
+elemen HTML, sementara vektor Leaflet dirender jadi `<path>` yang tidak punya
+atribut radius untuk dianimasikan. Efek sampingnya menguntungkan: penanda
+jadi berada di marker pane, di atas canvas titik, sehingga tidak mungkin
+tertimpa saat viewport digambar ulang. Halonya mengembang sampai ±57px, jadi
+ia diberi `pointer-events: none` — kalau tidak, ia akan menelan hover yang
+ditujukan ke titik-titik data di bawahnya; hanya titik 14px-nya yang tetap
+interaktif, dan itu sudah cukup untuk tooltip. Animasinya dimatikan di
+`prefers-reduced-motion` (jadi cincin diam, bukan yang mengembang).
+
+Lingkaran radius akurasi sempat ada lalu dibuang — di zoom kerja (17+) ia
+hampir selalu lebih kecil dari penandanya sendiri, jadi hanya menambah gambar
+tanpa menambah informasi. Angka akurasinya tetap ada di tooltip ("Lokasi Anda
+(±11 m)").
+
+Tombolnya punya tiga keadaan, bukan dua:
+
+| Keadaan tombol | Artinya | Menekan berarti |
+|---|---|---|
+| Polos | tidak melacak | mulai melacak & ikuti |
+| Biru muda (`is-tracking`) | titik hidup, peta di tempat lain | pusatkan peta ke lokasi saya |
+| Biru tua (`is-active`) | peta mengikuti Anda | berhenti melacak |
+
+Bedanya "melacak" dan "mengikuti" itu disengaja. Saat mulai sendiri di awal,
+pelacakan menyala tapi **peta tidak digeser** — halaman baru saja menyesuaikan
+tampilan ke seluruh data atau ke filter yang dipakai, dan membajak tampilan itu
+demi lokasi yang belum diminta siapa pun jelas salah. Menggeser peta dengan
+tangan juga berarti "saya mau lihat sebelah sana", jadi efeknya sama: titik
+tetap hidup, peta berhenti ikut. Menekan tombol adalah jalan kembalinya.
+
+Pesan hanya muncul kalau tombolnya benar-benar ditekan. Kalau pelacakan
+otomatis gagal — izin ditolak, GPS mati, halaman diakses lewat http:// —
+kegagalannya cuma masuk console, karena memunculkan spanduk di setiap
+pemuatan halaman untuk sesuatu yang tidak diminta akan jadi gangguan. Begitu
+tombolnya ditekan, barulah alasannya ditampilkan di pil hitam di atas peta.
+
+> **Penting untuk pemakaian di lapangan: fitur ini butuh HTTPS.** Browser
+> hanya memberikan lokasi pada *secure context* — HTTPS, atau `localhost`.
+> Dashboard ini disajikan lewat `http://` di alamat LAN (`HTTP_ADDR=:8082`,
+> tanpa TLS), jadi kalau dibuka dari HP lewat `http://192.168.x.x:8082`
+> browser akan **memblokir GPS**. Kodenya memeriksa `window.isSecureContext`
+> lebih dulu dan menjelaskan hal itu, alih-alih menampilkan tombol yang diam
+> saja. Tiga cara mengatasinya:
+>
+> 1. **Reverse proxy TLS** di depan aplikasi (Caddy paling ringkas — otomatis
+>    mengurus sertifikat kalau ada domain publik). Ini yang paling benar untuk
+>    pemakaian rutin.
+> 2. **Tunnel** (Cloudflare Tunnel, ngrok) — memberi URL `https://` tanpa
+>    mengubah jaringan; praktis untuk uji coba.
+> 3. **Menandai origin-nya tepercaya di tiap HP**: Chrome →
+>    `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, isi
+>    `http://192.168.x.x:8082`. Per-perangkat dan hanya Chrome, jadi masuk akal
+>    untuk beberapa HP petugas, bukan untuk semua orang.
+
+Diuji dengan mengganti `navigator.geolocation` dan `window.isSecureContext`
+di browser, dan dengan mendorong beberapa posisi berurutan seolah pengguna
+berjalan:
+
+| Uji | Hasil |
+|---|---|
+| Muat halaman, izin lokasi ditolak browser | pelacakan otomatis dicoba, gagal diam-diam, hanya `console.warn` |
+| Fix pertama (mode ikuti) | penanda tepat di pusat peta (offset 1px), tanpa lingkaran akurasi |
+| Denyut halo | lebar terukur 15 → 27 → 37 → 46 → 53px dengan opacity 0,48 → 0 |
+| Hover 22px dari penanda | yang tersentuh `cluster-icon`, bukan halo — halo tidak menelan pointer |
+| Fix kedua, posisi bergeser ~200 m | titik **tetap** di pusat peta: peta ikut bergerak live |
+| Geser peta dengan tangan | tombol jadi "Pusatkan peta ke lokasi saya" |
+| Fix ketiga setelah digeser | titik pindah 206px di layar, peta **tidak** ikut — persis yang diinginkan |
+| Tekan tombol saat tidak mengikuti | peta balik memusat ke titik (offset 1px) |
+| Tekan lagi | pelacakan berhenti, titik hilang |
+| Konteks tidak aman (http://) + tombol ditekan | pesan HTTPS muncul |
+| `PERMISSION_DENIED` + tombol ditekan | pesan izin muncul |
+
 ### Polygon batas SubSLS & nama kecamatan/desa (PostGIS, opsional)
 
-Begitu filter wilayah di menu Peta didrill sampai Kode SubSLS, peta
-menggambar garis batas (poligon) area SubSLS itu (merah, semi-transparan)
-di atas titik-titiknya — otomatis hilang lagi kalau filter naik ke level
-manapun di atasnya. Filter Kecamatan dan Desa/Kelurahan (di menu Peta
+Begitu filter wilayah di menu Peta menyentuh Desa/Kelurahan, peta menggambar
+garis batas (poligon) SubSLS (merah, semi-transparan) di atas titik-titiknya
+— semua SubSLS di dalam cakupan yang difilter, lihat tabel di bawah. Otomatis
+hilang lagi kalau filter naik ke level di atas desa. Filter Kecamatan dan Desa/Kelurahan (di menu Peta
 maupun Daftar) juga menampilkan **nama wilayahnya**, bukan cuma kodenya
 (mis. "Kec. Sungai Pinang" alih-alih "Kec. 061") — ClickHouse sendiri tidak
 punya tabel nama untuk kedua level ini, sama seperti dulu, jadi dilengkapi
@@ -368,6 +461,44 @@ formatnya persis sama dengan `level_6_full_code` di ClickHouse (16 digit),
 `wkb_geometry` geometrinya (SRID 4326 / WGS84, langsung dipakai Leaflet
 tanpa reproyeksi), `kdkec`/`nmkec` dan `kddesa`/`nmdesa` sumber nama
 kecamatan/desa. Lihat `internal/mapdb/`.
+
+#### Berapa polygon yang digambar
+
+Batas SubSLS digambar sejak filter menyentuh **desa/kelurahan**, bukan hanya
+saat sudah menunjuk satu SubSLS:
+
+| Filter sampai | Yang digambar |
+|---|---|
+| Desa/Kelurahan | semua SubSLS di dalam desa itu |
+| Kode SLS | semua SubSLS di dalam SLS itu |
+| Kode SubSLS | satu SubSLS itu saja |
+
+Ketiganya request yang sama. `SubSLSPolygonsGeoJSON` mencocokkan **prefiks**
+`idsubsls` (`LIKE $1 || '%'`), dan karena `FullCode()` hanya menyambung level
+yang terisi — sementara `parseFilter` sudah menolak filter yang bolong
+hierarkinya — prefiksnya selalu utuh: 10 digit untuk desa, 14 untuk SLS, 16
+untuk SubSLS. LIKE aman di sini karena parser wilayahnya hanya menerima digit,
+jadi tidak ada `%` atau `_` yang bisa jadi wildcard.
+
+Kecamatan ke atas sengaja tidak digambar dan ditolak 400. Diukur di layer yang
+ada sekarang (17.039 polygon):
+
+| Cakupan | Polygon | GeoJSON | Setelah gzip |
+|---|---|---|---|
+| Desa dengan SubSLS terbanyak | 164 | 164 kB | **29 kB** |
+| Desa terberat (10 SubSLS luas) | 10 | 421 kB | **99 kB** |
+| SLS dengan SubSLS terbanyak | 35 | — | — |
+| Satu SubSLS | 1 | 705 B | 292 B |
+
+Presisi koordinatnya diturunkan ke 6 desimal (`ST_AsGeoJSON(geom, 6)`) —
+sekitar 0,11 m, jauh lebih halus dari batas wilayahnya sendiri — dan itu
+memangkas 19% ukuran kirim dibanding default PostGIS. Ada juga batas keras
+`PolygonMaxRows` (400 baris): bukan batas yang pernah tersentuh wilayah nyata,
+melainkan penjaga kalau ada prefiks aneh yang mencoba menarik seluruh tabel.
+
+Tiap feature membawa `idsubsls`-nya sendiri di `properties`, jadi ke depan
+polygon-polygon itu bisa dibedakan (label, warna per status) tanpa mengubah
+endpoint-nya.
 
 ### Menu Daftar
 
@@ -1073,7 +1204,7 @@ bagian "Login" di atas.
 - `GET /api/desa?kabkota=&kecamatan=` — daftar desa/kelurahan di dalam satu kecamatan (kedua parameter wajib); `name` sama seperti di atas
 - `GET /api/sls?kabkota=&kecamatan=&desa=` — daftar Kode SLS di dalam satu desa/kelurahan (ketiga parameter wajib); `name` diisi dari kolom `nmsls` di PostGIS kalau `MAP_*` dikonfigurasi, kosong kalau tidak
 - `GET /api/subsls?kabkota=&kecamatan=&desa=&sls=` — daftar Kode SubSLS di dalam satu SLS (keempat parameter wajib)
-- `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — GeoJSON batas SubSLS untuk overlay di peta (kelima parameter wajib); 503 kalau PostGIS tidak dikonfigurasi/tidak terhubung — lihat `internal/mapdb/`
+- `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — batas SubSLS sebagai GeoJSON FeatureCollection, dari PostGIS. `kabkota`, `kecamatan` dan `desa` **wajib**; `sls` dan `subsls` opsional dan hanya mempersempit. Yang dikembalikan adalah semua SubSLS yang `idsubsls`-nya berawalan kode gabungan itu — satu desa bisa ratusan polygon (maksimal terukur 164), satu SubSLS tepat satu. Cakupan lebih luas dari desa ditolak 400. Tiap feature membawa `properties.idsubsls`. Tanpa PostGIS terkonfigurasi, endpoint ini menjawab 503 dan petanya tetap jalan tanpa overlay
 - `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `keberadaan_bku`, `status`, `penggunaan_bangunan`, `assignment_id`, `ada_assignment_baru`, `ada_regsosek`, `assignment_id_baru` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`, `penggunaanBangunan`, `keberadaanBku`) semuanya opsional, **multi-nilai**, dan independen dari filter wilayah maupun satu sama lain — ulangi parameternya untuk tiap nilai (`?status=OPEN&status=DRAFT`), yang jadi satu `IN (...)`; nilainya divalidasi terhadap enum tetap di `internal/points/points.go` dan satu nilai tak dikenal menolak seluruh request dengan 400; pakai `__EMPTY__` untuk memfilter kolom yang kosong, boleh digabung dengan nilai biasa. `flagBaru` dan `flagRegsosek` hanya menerima `""` (semua), `"1"` (ada) atau `"0"` (tidak ada) — nilai lain ditolak 400
 - `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
 - `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&search=&sortBy=&dir=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf` (lihat `prepareReport` di `internal/api/server.go`, dipakai bareng oleh kedua handler)

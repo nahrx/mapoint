@@ -504,6 +504,141 @@ body {
   pointer-events: none;
 }
 
+/* =====================================================================
+   GPS ("lokasi saya") — a Leaflet control button plus the one line of
+   feedback it needs. Both sit over the map, so both stay clear of the
+   filter panel (top left), the loading pill (top right), the basemap
+   switch (bottom left) and the zoom buttons (bottom right).
+   ===================================================================== */
+
+.gps-control a.gps-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: var(--navy);
+  background: var(--surface);
+}
+
+.gps-control a.gps-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Two "on" states, because tracking and following are not the same thing.
+   is-tracking: the dot is live but the map is somewhere else, so the
+   button is an invitation to press it. is-active: the map is following
+   you, and pressing stops that. */
+.gps-control a.gps-btn.is-tracking {
+  color: var(--navy-600);
+  background: var(--surface-sunken);
+}
+
+.gps-control a.gps-btn.is-active {
+  color: #fff;
+  background: var(--navy);
+}
+
+.gps-control a.gps-btn.is-active:hover {
+  background: var(--navy-600);
+}
+
+/* The "you are here" marker. Indigo, deliberately: the data points are
+   already blue (#2a81cb by default), cyan, green, orange, red and grey —
+   every colour in STATUS_COLORS — and a seventh blue dot among them would
+   be exactly what this marker must not be. The pulsing halo does the rest
+   of the work: nothing else on this map moves. */
+.gps-marker {
+  /* Leaflet positions the 22x22 box; both children centre inside it. */
+  position: relative;
+  width: 22px;
+  height: 22px;
+}
+
+.gps-marker-dot,
+.gps-marker-pulse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 50%;
+}
+
+.gps-marker-dot {
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  background: #4f46e5;
+  border: 2.5px solid #fff;
+  /* A dark rim as well as the white one, so the marker holds its shape on
+     a pale satellite tile and on a dark one alike. */
+  box-shadow: 0 0 0 1px rgba(28, 24, 92, 0.55), 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+.gps-marker-pulse {
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  background: rgba(79, 70, 229, 0.45);
+  animation: gps-pulse 1.8s ease-out infinite;
+  /* The halo grows to ~57px across. Without this it would be part of the
+     marker's clickable area and swallow hovers meant for the data points
+     it expands over — the dot alone stays interactive, which is all the
+     tooltip needs. */
+  pointer-events: none;
+}
+
+@keyframes gps-pulse {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.55;
+  }
+  70% {
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+/* Motion is the whole point of the halo, but it is also the kind of
+   endless movement that makes some people ill. The marker stays perfectly
+   legible without it — a steady ring instead of an expanding one. */
+@media (prefers-reduced-motion: reduce) {
+  .gps-marker-pulse {
+    animation: none;
+    transform: scale(1.3);
+    opacity: 0.3;
+  }
+}
+
+.map-gps-status {
+  position: absolute;
+  z-index: 1000;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(420px, calc(100% - 24px));
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(20, 32, 45, 0.88);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.35;
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+
+/* display, not opacity: unlike the loading pill this one has no fade to
+   preserve, and an invisible-but-present bar would still swallow clicks
+   meant for the map underneath. */
+.map-gps-status.hidden {
+  display: none;
+}
+
 .titik-tooltip {
   font-size: 12px;
   line-height: 1.55;
@@ -1133,6 +1268,16 @@ body {
   .download-btn-group button {
     flex: 1;
     min-height: var(--tap);
+  }
+
+  .gps-control a.gps-btn {
+    width: var(--tap);
+    height: var(--tap);
+  }
+
+  .gps-control a.gps-btn svg {
+    width: 21px;
+    height: 21px;
   }
 
   .list-toolbar {

@@ -7,6 +7,7 @@ package mapdb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -50,19 +51,41 @@ func New(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// SubSLSPolygonGeoJSON returns the SubSLS boundary as a GeoJSON
-// FeatureCollection (raw bytes, ready to write straight into an HTTP
-// response) for the given 16-digit code. A code with no matching row
-// yields an empty FeatureCollection (features: []), not an error — the
-// caller decides whether that's worth a 404. code is passed as a query
-// parameter, never interpolated into SQL, but callers should still run it
-// through points.Parse* first so a malformed filter fails with a clear
-// 400 instead of a silently-empty polygon.
-func SubSLSPolygonGeoJSON(ctx context.Context, pool *pgxpool.Pool, code string) ([]byte, error) {
+// PolygonMaxRows caps one polygon response. Measured against the live
+// layer, the largest desa/kelurahan holds 164 SubSLS and the largest SLS
+// 35, so this is a guard against a malformed prefix pulling the whole
+// 17,039-row table, not a limit any real wilayah runs into.
+const PolygonMaxRows = 400
+
+// geojsonDecimals is the coordinate precision asked of PostGIS. Six
+// decimal places is about 0.11 m at the equator — far finer than the
+// boundaries themselves — and measured 19% smaller on the wire than
+// PostGIS's default 9 (183 kB -> 148 kB for the largest desa).
+const geojsonDecimals = 6
+
+// SubSLSPolygonsGeoJSON returns every SubSLS boundary whose idsubsls
+// starts with codePrefix, as a GeoJSON FeatureCollection (raw bytes,
+// ready to write straight into an HTTP response).
+//
+// The prefix is what makes one function serve all three zoom levels the
+// Peta menu asks for: 16 digits is a single SubSLS, 14 is every SubSLS in
+// an SLS, 10 is every SubSLS in a desa/kelurahan. Each feature carries its
+// own idsubsls in properties so the caller can tell them apart.
+//
+// A prefix with no matching row yields an empty FeatureCollection
+// (features: []), not an error — the caller decides whether that is worth
+// a 404. codePrefix is passed as a query parameter, never interpolated
+// into SQL; callers should still run it through points.Parse* first so a
+// malformed filter fails with a clear 400 instead of a silently-empty
+// response. LIKE is safe here for the same reason: those parsers only
+// admit digits, so there is no % or _ to act as a wildcard.
+func SubSLSPolygonsGeoJSON(ctx context.Context, pool *pgxpool.Pool, codePrefix string) ([]byte, error) {
 	rows, err := pool.Query(ctx, fmt.Sprintf(
-		`SELECT coalesce(ST_AsGeoJSON(%s), '{}') FROM %s WHERE %s = $1`,
-		geomColumn, table, codeColumn,
-	), code)
+		`SELECT %s, coalesce(ST_AsGeoJSON(%s, %d), '{}')
+		 FROM %s WHERE %s LIKE $1 || '%%'
+		 ORDER BY %s LIMIT %d`,
+		codeColumn, geomColumn, geojsonDecimals, table, codeColumn, codeColumn, PolygonMaxRows,
+	), codePrefix)
 	if err != nil {
 		return nil, fmt.Errorf("mapdb: query: %w", err)
 	}
@@ -70,11 +93,19 @@ func SubSLSPolygonGeoJSON(ctx context.Context, pool *pgxpool.Pool, code string) 
 
 	var features []string
 	for rows.Next() {
-		var geomJSON string
-		if err := rows.Scan(&geomJSON); err != nil {
+		var code, geomJSON string
+		if err := rows.Scan(&code, &geomJSON); err != nil {
 			return nil, fmt.Errorf("mapdb: scan: %w", err)
 		}
-		features = append(features, fmt.Sprintf(`{"type":"Feature","geometry":%s,"properties":{}}`, geomJSON))
+		// code comes from the database, not the request, but it still goes
+		// into a JSON string that a browser will parse — encode it rather
+		// than trusting it to contain nothing that needs escaping.
+		idJSON, err := json.Marshal(code)
+		if err != nil {
+			return nil, fmt.Errorf("mapdb: encode idsubsls: %w", err)
+		}
+		features = append(features, fmt.Sprintf(
+			`{"type":"Feature","geometry":%s,"properties":{"idsubsls":%s}}`, geomJSON, idJSON))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("mapdb: rows: %w", err)

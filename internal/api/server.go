@@ -710,12 +710,20 @@ func (s *Server) handleSubSLSPolygon(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if filter.KabKota == "" || filter.Kecamatan == "" || filter.Desa == "" || filter.SLS == "" || filter.SubSLS == "" {
-		writeError(w, http.StatusBadRequest, "polygon lookup requires filtering all the way down to Kode SubSLS")
+	// Desa/kelurahan is the widest scope worth drawing: at that level the
+	// answer is at most a few hundred polygons (164 in the largest one
+	// measured), while a whole kecamatan would be thousands. Anything set
+	// below it — SLS, SubSLS — simply narrows the same prefix, so one
+	// handler covers all three levels.
+	if filter.KabKota == "" || filter.Kecamatan == "" || filter.Desa == "" {
+		writeError(w, http.StatusBadRequest, "polygon lookup requires filtering at least down to Desa/Kelurahan")
 		return
 	}
 
-	geojson, err := mapdb.SubSLSPolygonGeoJSON(r.Context(), s.mapPool, filter.FullCode())
+	// FullCode concatenates only the levels that are set, and parseFilter
+	// has already rejected a filter with a gap in the hierarchy, so this is
+	// always a contiguous prefix: 10, 14 or 16 digits.
+	geojson, err := mapdb.SubSLSPolygonsGeoJSON(r.Context(), s.mapPool, filter.FullCode())
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
