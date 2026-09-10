@@ -240,9 +240,62 @@ Reset di level manapun otomatis mengosongkan & men-disable semua level di
 bawahnya (ganti kabupaten/kota → kecamatan, desa, SLS, dan SubSLS ikut
 ter-reset).
 
+### Preset filter (localStorage)
+
+Kombinasi filter bisa disimpan dengan nama dan dipanggil lagi kapan saja —
+tombolnya ada di baris aksi menu **Daftar** dan di bawah "Terapkan Filter"
+di panel menu **Peta**: satu dropdown preset, "Simpan Filter", dan "Hapus".
+
+Yang disimpan adalah **isi kontrol saat itu**, bukan filter yang sedang
+berlaku — jadi bisa menyusun kombinasi lalu menyimpannya tanpa harus
+menerapkannya dulu. Sebaliknya, **memilih preset langsung menerapkannya**:
+memilihnya jelas berarti "tampilkan yang ini", bukan "isikan lalu tunggu
+saya klik Terapkan".
+
+Satu daftar dipakai bersama oleh kedua menu (kunci
+`se2026.filterPresets.v1`). Keduanya memfilter kolom yang sama persis, jadi
+preset yang disimpan sambil membaca tabel sama sahihnya di peta, dan dua
+daftar terpisah hanya akan memaksa pengguna menyimpan dua kali. Isinya
+per-browser, bukan per-akun: tidak ada apa pun di server, dan preset tidak
+ikut berpindah ke perangkat lain.
+
+**Tanpa `prompt()`/`confirm()`.** Dialog native diblokir di konteks
+tersemat/sandbox — diuji di preview pane aplikasi ini sendiri:
+`prompt() is not supported` — sehingga tombol Simpan akan diam saja tanpa
+melakukan apa pun. Kotak nama dan konfirmasi hapus dibangun sendiri di
+`makePresetBar` (`common.js`):
+
+- **Simpan** membuka kotak nama inline (Enter menyimpan, Escape batal).
+  Nama yang sudah ada akan **memperbarui** preset itu — namanya diketik
+  utuh, jadi hampir selalu memang itu maksudnya — dan pesannya berbunyi
+  "diperbarui", bukan "tersimpan", supaya tidak pernah jadi kejutan diam.
+- **Hapus** butuh dua klik: klik pertama mengubah tombolnya jadi "Yakin
+  hapus?", klik kedua menghapus. Ia melucuti diri setelah 5 detik dan
+  setiap kali pilihan preset berubah, jadi klik nyasar belakangan tidak
+  bisa mendarat di tombol yang sudah terkokang. Menghapus preset tidak bisa
+  dibatalkan, jadi konfirmasinya bukan basa-basi.
+
+Memulihkan wilayah harus **berurutan**: opsi tiap level diambil dari level
+di atasnya, jadi nilainya tidak bisa diisi sebelum fetch itu selesai — lihat
+`applyFilterState` di `app.js`/`daftar.js`. Kode wilayah yang sudah tidak
+ada di daftar terbaru tidak akan terpasang (select-nya jatuh ke ""), dan itu
+memang hasil yang benar: wilayahnya sudah hilang dari data. Nilai
+multi-select yang tidak lagi ada di enum server juga dibuang di
+`setValues` — kalau tidak, preset lama bisa menyelundupkan nilai yang
+sekarang ditolak server dengan 400.
+
+Semua akses `localStorage` dibungkus `try/catch`: ia melempar exception di
+sebagian konfigurasi browser (Safari private, "block all cookies", kebijakan
+korporat), dan panel filter yang tidak bisa menyimpan preset harus tetap
+bisa memfilter. Gagal baca dibaca sebagai "belum ada preset"; gagal tulis
+dilaporkan apa adanya ke baris status ("Gagal menyimpan preset — penyimpanan
+browser tidak tersedia"), bukan dipura-purakan berhasil. Diuji dengan
+menyabotase `Storage.prototype.setItem`.
+
 ### Cari nama di menu Peta
 
-Kotak "Cari Nama" di paling atas panel filter menu Peta bekerja persis sama
+Kotak "Cari Nama" di panel filter menu Peta — tepat sebelum Jenis Prelist,
+sama seperti di menu Daftar — bekerja persis sama
 dengan yang di menu Daftar: substring (tidak case-sensitive) di kolom
 `nama_assignment`, digabung `AND` dengan filter wilayah/atribut yang lain,
 dikirim ke ClickHouse lewat parameter binding (`?` placeholder di
@@ -334,7 +387,7 @@ Selain menu "Peta", ada menu "Daftar" (nav di paling atas) yang menampilkan
 isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
 
 - **Sort by kolom apa saja** — klik header kolom mana pun (Nama, Alamat, ID
-  SUBSLS, Jenis Prelist, Penggunaan Bangunan, Nomor Bangunan, Keberadaan
+  SUBSLS, Nomor Bangunan, Jenis Prelist, Penggunaan Bangunan, Keberadaan
   Keluarga, Keberadaan Usaha, Status, Assignment ID, Ditemukan di
   Assignment Baru, Assignment ID Baru, Ditemukan di Regsosek) untuk mengurutkan tabel berdasarkan kolom itu; klik lagi
   kolom yang sama untuk membalik arah (naik/turun), klik kolom lain untuk
@@ -346,7 +399,7 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
   Baris dengan nilai kosong di kolom yang diurutkan ikut tampil apa adanya
   (bukan disembunyikan), karena ini daftar data mentah, bukan cuma titik
   yang siap dipetakan.
-- **Cari nama** — kotak teks di atas filter wilayah, mencari substring
+- **Cari nama** — kotak teks tepat sebelum Jenis Prelist, mencari substring
   (tidak case-sensitive) di kolom `nama_assignment`, digabung dengan filter
   lain lewat `AND` (semuanya harus cocok). Sama seperti filter lain di menu
   ini, ketikan baru diterapkan begitu tombol "Terapkan Filter" diklik (atau
@@ -357,6 +410,9 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
   (`?` placeholder, lihat `Filter.clause()` di
   `internal/points/points.go`), bukan digabung langsung ke teks SQL, supaya
   aman dari SQL injection tanpa perlu escaping manual.
+- **Preset filter** — simpan kombinasi filter dengan nama, panggil lagi
+  lewat dropdown di baris aksi. Tersimpan di `localStorage` browser dan
+  dipakai bersama dengan menu Peta — lihat "Preset filter" di atas.
 - **Paginasi** lewat `LIMIT`/`OFFSET` di ClickHouse — bukan infinite
   scroll, supaya jumlah data yang ditransfer & di-render tiap saat tetap
   kecil. Ukuran halaman bisa dipilih 25/50/100/200 baris.
@@ -364,9 +420,10 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
   SubSLS, cascading persis seperti di menu Peta, tapi state-nya independen
   (pilih filter di satu menu tidak mengubah filter di menu lainnya) dan
   tidak ada auto-zoom (karena tidak ada peta di sini).
-- **Filter atribut** — Jenis Prelist, Keberadaan Keluarga, Status,
-  Penggunaan Bangunan (`kode_penggunaan_bangunan_label`), Keberadaan
-  Usaha (`keberadaan_BKU`): lima dropdown **multi-pilih** yang independen
+- **Filter atribut** — Jenis Prelist, Penggunaan Bangunan
+  (`kode_penggunaan_bangunan_label`), Keberadaan Keluarga, Keberadaan
+  Usaha (`keberadaan_BKU`), Status: lima dropdown **multi-pilih** yang
+  independen
   (tidak nge-cascade dan tidak saling bergantung, juga tidak bergantung
   pada filter wilayah). Nilai di dalam satu filter di-**OR** (jadi satu
   `IN (...)` di SQL), sementara kelima filter itu sendiri tetap di-**AND**
@@ -401,6 +458,52 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
   max-content`, dan itu **tidak** bisa dibatasi `max-width` karena
   `min-width` menang di cascade; yang benar `width: max-content` +
   `max-width`. Terukur di browser: 622px sebelum diperbaiki, 420px sesudah.
+
+  Urutan kelimanya di panel filter mengikuti urutan kolom di tabel Daftar
+  (Nomor Bangunan tidak punya filter, jadi dilewati), dan sama persis di
+  kedua menu — jadi mata tidak perlu memetakan ulang urutan saat pindah
+  antara panel filter dan tabel.
+
+  Panel filternya dibagi jadi dua kelompok `.filter-group` — filter
+  wilayah yang berjenjang, lalu sisanya (cari nama, kelima filter atribut,
+  dua flag) — **tanpa judul kelompok**. Urutannya sama persis di menu Peta
+  dan Daftar.
+
+  Pemisah antar kelompok beda per konteks, dan itu disengaja. Di kartu
+  filter menu Daftar pada lebar ≥600px pemisahnya **jarak saja** (14px,
+  tanpa garis): tiap kelompok adalah grid-nya sendiri, jadi kelompok kedua
+  selalu mulai di baris baru — garis di situ cuma menggarisbawahi
+  pergantian baris yang sudah terlihat. Di panel Peta (sidebar ±260px) dan
+  di bawah 600px, kontrolnya menumpuk satu kolom sehingga pergantian baris
+  itu tidak lagi berarti apa-apa; di dua tempat itu garis tipisnya
+  dipertahankan sebagai satu-satunya penanda kelompok yang tersisa.
+
+  Judul kelompok sempat dicoba dua kali dan dua-duanya dibuang: sebagai
+  baris penuh di atas kelompoknya (±42px per judul) lalu sebagai kolom
+  judul 112px di kiri. Keduanya memakan ruang untuk mengatakan apa yang
+  sudah dikatakan teks kontrolnya sendiri. Yang tersisa cuma
+  `role="group"` + `aria-label` di tiap kelompok, jadi pengelompokannya
+  tetap diumumkan pembaca layar tanpa memakan satu pixel pun.
+
+  Ukuran kontrolnya juga diturunkan satu tingkat (font 13→12,5px, padding
+  7→6px) dan track grid-nya dirapatkan (`minmax(168px)` → `minmax(150px)`;
+  di layar 1024px itu bedanya lima select wilayah muat satu baris atau jadi
+  dua). `--tap` di HP tidak berubah. Terukur di browser, dari versi
+  sebelum perapian sampai sekarang:
+
+  | Lebar layar | Tinggi kartu filter | Ruang untuk tabel |
+  |---|---|---|
+  | 1440×900 | 453px → 248px → **186px** | 266px → 458px → **520px** |
+  | 1440×900, filter ditutup | — | **718px** |
+
+  Satu bug ikut ketahuan saat merapikan ini: `.multiselect-toggle` cuma
+  punya `font: inherit`, yang mengembalikan ukurannya ke 16px milik
+  `body` — jadi tombol multi-pilih setinggi 37px berdiri di samping
+  `<select>` setinggi 33px. Sekarang `font-size`-nya ditulis eksplisit dan
+  keduanya sama tinggi (30px di desktop, 40px di HP).
+
+  Panel Peta (sidebar ±260px) dan layar di bawah 600px memakai satu kontrol
+  per baris — override `.map-panel-body .filter-group` dan media query-nya.
 
   **Kelima filter ini juga ada di menu Peta**, memakai komponen dan
   endpoint filter yang sama — `/api/points` dan `/api/list` sama-sama lewat
@@ -774,11 +877,15 @@ Dua penyesuaian khusus HP yang diatur dari JS, bukan CSS:
 - **Panel filter di Peta** mulai dalam keadaan tertutup (`app.js`,
   `setPanelCollapsed`) — kalau terbuka, panel selebar layar itu menutupi
   sebagian besar peta. Tombol buka/tutupnya tetap terlihat di header panel.
-- **Kartu filter di Daftar** juga mulai tertutup dan punya tombol "Filter"
-  sendiri di sebelah judul (`daftar.js`, `setFiltersCollapsed`; tombolnya
-  `display: none` di atas 600px). Sembilan kontrol filter yang ditumpuk
-  setinggi ±satu layar penuh akan mendorong tabelnya keluar layar kalau
-  dibiarkan terbuka. Menekan "Terapkan Filter" di HP otomatis menutup
+- **Kartu filter di Daftar** juga mulai tertutup di lebar ini, lewat tombol
+  "Filter" di sebelah judul (`daftar.js`, `setFiltersCollapsed`). Kontrol
+  filter yang ditumpuk setinggi ±satu layar penuh akan mendorong tabelnya
+  keluar layar kalau dibiarkan terbuka. Tombolnya sendiri sekarang ada di
+  **semua lebar** (dulu `display: none` di atas 600px): di layar lebar pun
+  kartu itu ±250px, dan menutupnya adalah cara tercepat memberi tabel
+  seluruh viewport (terukur: 458px → 718px di layar 900px). Yang masih
+  ditentukan breakpoint cuma keadaan awalnya — tertutup di HP, terbuka di
+  atasnya. Menekan "Terapkan Filter" di HP otomatis menutup
   kartunya lagi, supaya yang tampil langsung hasil filternya. Di lebar ini
   `#daftar-container` juga di-scroll seperti halaman biasa (di desktop dia
   flex column ber-`overflow: hidden` dengan hanya tabelnya yang scroll

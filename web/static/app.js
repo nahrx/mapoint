@@ -213,7 +213,7 @@
 
   const { fetchWithRetry, makeCascadingLevel, makeMultiSelect, esc } = App;
 
-  // Same three multi-select attribute filters as the Daftar menu, backed
+  // Same five multi-select attribute filters as the Daftar menu, backed
   // by the same component and the same server-side filter — /api/points
   // and /api/list both go through parseFilter, so nothing was needed on
   // the backend to support them here.
@@ -594,7 +594,7 @@
   // subslsSelect has no child level to cascade — nothing to do here at all
   // now; its value is only read when Terapkan Filter is clicked.
 
-  applyFilterBtn.addEventListener("click", () => {
+  function applyFilters() {
     appliedKabkota = kabkotaSelect.value;
     appliedKecamatan = kecamatanSelect.value;
     appliedDesa = desaSelect.value;
@@ -620,7 +620,81 @@
     // immediate reload too in case the view didn't actually move.
     scheduleLoad();
     loadSubSlsPolygon();
+  }
+
+  applyFilterBtn.addEventListener("click", applyFilters);
+
+  // --- preset filter (localStorage) --------------------------------------
+  // The preset bar itself lives in common.js; these two functions are the
+  // half only this menu can supply — reading its own controls, and putting
+  // a saved filter back into them.
+
+  function readFilterState() {
+    return {
+      kabkota: kabkotaSelect.value,
+      kecamatan: kecamatanSelect.value,
+      desa: desaSelect.value,
+      sls: slsSelect.value,
+      subsls: subslsSelect.value,
+      search: searchInput.value.trim(),
+      jenisPrelist: jenisPrelistMS.getValues(),
+      penggunaanBangunan: penggunaanMS.getValues(),
+      keberadaanKeluarga: keberadaanKeluargaMS.getValues(),
+      keberadaanBku: keberadaanBkuMS.getValues(),
+      status: statusMS.getValues(),
+      flagBaru: flagBaruSelect.value,
+      flagRegsosek: flagRegsosekSelect.value,
+    };
+  }
+
+  // Restoring the wilayah chain has to be sequential: each level's options
+  // are fetched from the level above, so its value can't be set before
+  // that fetch lands. A code that no longer exists in the reloaded list
+  // simply doesn't take (the <select> falls back to ""), which is the
+  // right outcome — the wilayah is gone from the data, so filtering by it
+  // would return nothing anyway.
+  async function applyFilterState(f) {
+    const enc = encodeURIComponent;
+    kabkotaSelect.value = f.kabkota || "";
+    await kecamatanLevel.load(kabkotaSelect.value ? `/api/kecamatan?kabkota=${enc(kabkotaSelect.value)}` : null);
+    kecamatanSelect.value = f.kecamatan || "";
+    await desaLevel.load(kecamatanSelect.value
+      ? `/api/desa?kabkota=${enc(kabkotaSelect.value)}&kecamatan=${enc(kecamatanSelect.value)}`
+      : null);
+    desaSelect.value = f.desa || "";
+    await slsLevel.load(desaSelect.value
+      ? `/api/sls?kabkota=${enc(kabkotaSelect.value)}&kecamatan=${enc(kecamatanSelect.value)}&desa=${enc(desaSelect.value)}`
+      : null);
+    slsSelect.value = f.sls || "";
+    await subslsLevel.load(slsSelect.value
+      ? `/api/subsls?kabkota=${enc(kabkotaSelect.value)}&kecamatan=${enc(kecamatanSelect.value)}&desa=${enc(desaSelect.value)}&sls=${enc(slsSelect.value)}`
+      : null);
+    subslsSelect.value = f.subsls || "";
+
+    searchInput.value = f.search || "";
+    jenisPrelistMS.setValues(f.jenisPrelist);
+    penggunaanMS.setValues(f.penggunaanBangunan);
+    keberadaanKeluargaMS.setValues(f.keberadaanKeluarga);
+    keberadaanBkuMS.setValues(f.keberadaanBku);
+    statusMS.setValues(f.status);
+    flagBaruSelect.value = f.flagBaru || "";
+    flagRegsosekSelect.value = f.flagRegsosek || "";
+
+    // Picking a preset means "show me this", so it applies straight away
+    // rather than leaving the user to press Terapkan Filter as well.
+    applyFilters();
+  }
+
+  App.makePresetBar({
+    rootEl: document.getElementById("preset-bar-peta"),
+    selectEl: document.getElementById("preset-select-peta"),
+    saveBtn: document.getElementById("preset-save-peta"),
+    deleteBtn: document.getElementById("preset-delete-peta"),
+    statusEl: document.getElementById("preset-status-peta"),
+    read: readFilterState,
+    apply: applyFilterState,
   });
+
 
   // The map has no equivalent of the Daftar table's row list, so a search
   // that matches a few rows in a large wilayah would otherwise leave an

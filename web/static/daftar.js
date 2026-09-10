@@ -94,9 +94,9 @@
         <td>${esc(p.nama)}</td>
         <td class="addr" title="${esc(p.alamat)}">${esc(p.alamat)}</td>
         <td>${esc(p.subsls)}</td>
+        <td class="num">${esc(p.nomor_bangunan)}</td>
         <td>${esc(p.jenis_prelist)}</td>
         <td>${esc(p.penggunaan_bangunan)}</td>
-        <td class="num">${esc(p.nomor_bangunan)}</td>
         <td>${esc(p.keberadaan_keluarga)}</td>
         <td>${esc(p.keberadaan_bku)}</td>
         <td><span class="status-dot" style="background:${color}"></span>${esc(p.status)}</td>
@@ -390,10 +390,84 @@
 
   applyFilterBtn.addEventListener("click", applyFilters);
 
-  // --- filter panel collapse (phone only) --------------------------------
-  // The filter controls stack to roughly a full screen on a phone,
-  // which would push the table itself out of view. The toggle button is
-  // hidden by CSS above 600px, where everything fits side by side anyway.
+  // --- preset filter (localStorage) --------------------------------------
+  // The preset bar itself lives in common.js; these two functions are the
+  // half only this menu can supply — reading its own controls, and putting
+  // a saved filter back into them.
+
+  function readFilterState() {
+    return {
+      kabkota: kabkotaSelect.value,
+      kecamatan: kecamatanSelect.value,
+      desa: desaSelect.value,
+      sls: slsSelect.value,
+      subsls: subslsSelect.value,
+      search: searchInput.value.trim(),
+      jenisPrelist: jenisPrelistMS.getValues(),
+      penggunaanBangunan: penggunaanMS.getValues(),
+      keberadaanKeluarga: keberadaanKeluargaMS.getValues(),
+      keberadaanBku: keberadaanBkuMS.getValues(),
+      status: statusMS.getValues(),
+      flagBaru: flagBaruSelect.value,
+      flagRegsosek: flagRegsosekSelect.value,
+    };
+  }
+
+  // Restoring the wilayah chain has to be sequential: each level's options
+  // are fetched from the level above, so its value can't be set before
+  // that fetch lands. A code that no longer exists in the reloaded list
+  // simply doesn't take (the <select> falls back to ""), which is the
+  // right outcome — the wilayah is gone from the data, so filtering by it
+  // would return nothing anyway.
+  async function applyFilterState(f) {
+    const enc = encodeURIComponent;
+    kabkotaSelect.value = f.kabkota || "";
+    await kecamatanLevel.load(kabkotaSelect.value ? `/api/kecamatan?kabkota=${enc(kabkotaSelect.value)}` : null);
+    kecamatanSelect.value = f.kecamatan || "";
+    await desaLevel.load(kecamatanSelect.value
+      ? `/api/desa?kabkota=${enc(kabkotaSelect.value)}&kecamatan=${enc(kecamatanSelect.value)}`
+      : null);
+    desaSelect.value = f.desa || "";
+    await slsLevel.load(desaSelect.value
+      ? `/api/sls?kabkota=${enc(kabkotaSelect.value)}&kecamatan=${enc(kecamatanSelect.value)}&desa=${enc(desaSelect.value)}`
+      : null);
+    slsSelect.value = f.sls || "";
+    await subslsLevel.load(slsSelect.value
+      ? `/api/subsls?kabkota=${enc(kabkotaSelect.value)}&kecamatan=${enc(kecamatanSelect.value)}&desa=${enc(desaSelect.value)}&sls=${enc(slsSelect.value)}`
+      : null);
+    subslsSelect.value = f.subsls || "";
+
+    searchInput.value = f.search || "";
+    jenisPrelistMS.setValues(f.jenisPrelist);
+    penggunaanMS.setValues(f.penggunaanBangunan);
+    keberadaanKeluargaMS.setValues(f.keberadaanKeluarga);
+    keberadaanBkuMS.setValues(f.keberadaanBku);
+    statusMS.setValues(f.status);
+    flagBaruSelect.value = f.flagBaru || "";
+    flagRegsosekSelect.value = f.flagRegsosek || "";
+
+    // Picking a preset means "show me this", so it applies straight away
+    // rather than leaving the user to press Terapkan Filter as well.
+    applyFilters();
+  }
+
+  App.makePresetBar({
+    rootEl: document.getElementById("preset-bar-list"),
+    selectEl: document.getElementById("preset-select-list"),
+    saveBtn: document.getElementById("preset-save-list"),
+    deleteBtn: document.getElementById("preset-delete-list"),
+    statusEl: document.getElementById("preset-status-list"),
+    read: readFilterState,
+    apply: applyFilterState,
+  });
+
+
+  // --- filter panel collapse ---------------------------------------------
+  // The toggle is available at every width: on a phone the controls stack
+  // to roughly a full screen, and even on a wide screen the card is around
+  // 300px of the viewport that the table could be using instead. What the
+  // breakpoint still decides is the *default* — collapsed on a phone,
+  // open on anything wider.
 
   function setFiltersCollapsed(collapsed) {
     filtersEl.classList.toggle("collapsed", collapsed);
@@ -404,14 +478,10 @@
     setFiltersCollapsed(!filtersEl.classList.contains("collapsed"));
   });
 
-  // Applying a filter on a phone means you're done choosing — fold the
-  // panel away so the results you just asked for are what's on screen.
-  // The toggle is hidden above 600px (see .list-filter-toggle in
-  // style.css), so a panel left collapsed at that width could never be
-  // reopened. Track the breakpoint rather than reading it once at load:
-  // the page can start narrow and then be widened (window resize, phone
-  // rotation), and that used to strand the user with no filters and no
-  // way to get them back.
+  // Default state per breakpoint: collapsed on a phone, open above it.
+  // Tracked rather than read once at load, because the page can start
+  // narrow and then be widened (window resize, phone rotation) and the
+  // sensible default differs on each side of that line.
   const narrowQuery = window.matchMedia("(max-width: 600px)");
   narrowQuery.addEventListener("change", (e) => setFiltersCollapsed(e.matches));
   setFiltersCollapsed(narrowQuery.matches);

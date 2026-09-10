@@ -225,13 +225,256 @@ window.App = (() => {
       close();
     }
 
+    // Restores a saved set of picks (see filterPresets below). Values the
+    // current option list doesn't contain are dropped rather than kept as
+    // ghosts: the options come from the server's enum whitelist, so a
+    // preset saved before that enum changed would otherwise send a value
+    // the server now rejects with 400.
+    function setValues(values) {
+      const wanted = new Set(Array.isArray(values) ? values : []);
+      selected.clear();
+      menu.querySelectorAll("input[type=checkbox]").forEach((box) => {
+        box.checked = wanted.has(box.value);
+        if (box.checked) selected.add(box.value);
+      });
+      renderValue();
+    }
+
     renderValue();
-    return { setOptions, getValues: () => [...selected], reset };
+    return { setOptions, getValues: () => [...selected], setValues, reset };
+  }
+
+  // --- saved filter presets ---------------------------------------------
+  // Named filter combinations, kept in localStorage. One shared store for
+  // the Peta and Daftar menus: both filter on exactly the same fields, so
+  // a preset saved while reading the table is just as valid on the map,
+  // and two separate lists would only make the user save twice.
+  //
+  // Every access is wrapped. localStorage throws outright in some
+  // configurations (Safari private browsing, "block all cookies", an
+  // enterprise policy), and a filter panel that cannot save a preset
+  // should still filter. A failed read reads as "no presets"; a failed
+  // write is reported back so the caller can say so instead of pretending
+  // the preset was kept.
+  const PRESET_KEY = "se2026.filterPresets.v1";
+  // A guard against an unbounded list, not a considered UX limit: the
+  // dropdown stops being useful long before this, and localStorage has a
+  // per-origin quota a runaway caller could otherwise fill.
+  const PRESET_LIMIT = 50;
+
+  function readPresets() {
+    try {
+      const raw = localStorage.getItem(PRESET_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.presets)) return [];
+      // Written by an older version, hand-edited, or half-overwritten:
+      // keep whatever still looks like a preset and drop the rest.
+      return parsed.presets.filter(
+        (x) => x && typeof x.name === "string" && x.name !== "" && x.filter && typeof x.filter === "object"
+      );
+    } catch (err) {
+      console.warn("filter presets unreadable, treating as empty", err);
+      return [];
+    }
+  }
+
+  function writePresets(presets) {
+    try {
+      localStorage.setItem(PRESET_KEY, JSON.stringify({ v: 1, presets }));
+      return true;
+    } catch (err) {
+      console.warn("failed to save filter presets", err);
+      return false;
+    }
+  }
+
+  const filterPresets = {
+    list: readPresets,
+    get(name) {
+      return readPresets().find((x) => x.name === name) || null;
+    },
+    // Saving under an existing name overwrites it — that is the "update
+    // this preset" gesture, and the caller confirms before calling.
+    save(name, filter) {
+      const presets = readPresets().filter((x) => x.name !== name);
+      if (presets.length >= PRESET_LIMIT) return { ok: false, reason: "limit" };
+      presets.push({ name, filter, saved: new Date().toISOString() });
+      presets.sort((a, b) => a.name.localeCompare(b.name, "id"));
+      return { ok: writePresets(presets), reason: "storage" };
+    },
+    remove(name) {
+      return writePresets(readPresets().filter((x) => x.name !== name));
+    },
+  };
+
+  // Wires one preset bar to the store above. read() returns the menu's
+  // current filter as a plain object and apply(filter) puts one back into
+  // the controls and runs it — both stay with the menu, since only it
+  // knows its own elements and its own cascading dropdowns.
+  //
+  // No prompt()/confirm(): those are blocked outright in embedded and
+  // sandboxed contexts (measured — this app's own preview pane throws
+  // "prompt() is not supported"), which would leave the save button doing
+  // nothing at all. The name field and the delete confirmation are built
+  // here instead, so both work wherever the page does.
+  function makePresetBar({ rootEl, selectEl, saveBtn, deleteBtn, statusEl, read, apply }) {
+    const form = document.createElement("div");
+    form.className = "preset-name-form hidden";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "preset-name-input";
+    input.placeholder = "Nama preset…";
+    input.setAttribute("aria-label", "Nama preset");
+    const okBtn = document.createElement("button");
+    okBtn.type = "button";
+    okBtn.className = "preset-btn preset-btn-primary";
+    okBtn.textContent = "Simpan";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "preset-btn";
+    cancelBtn.textContent = "Batal";
+    form.append(input, okBtn, cancelBtn);
+    rootEl.appendChild(form);
+
+    function say(msg) {
+      if (statusEl) statusEl.textContent = msg || "";
+    }
+
+    function refresh(selectName) {
+      const presets = filterPresets.list();
+      selectEl.innerHTML = "";
+      const head = document.createElement("option");
+      head.value = "";
+      head.textContent = presets.length ? "Pilih preset…" : "Belum ada preset";
+      selectEl.appendChild(head);
+      for (const preset of presets) {
+        const opt = document.createElement("option");
+        opt.value = preset.name;
+        opt.textContent = preset.name;
+        selectEl.appendChild(opt);
+      }
+      selectEl.value = presets.some((x) => x.name === selectName) ? selectName : "";
+      selectEl.disabled = presets.length === 0;
+      deleteBtn.disabled = selectEl.value === "";
+    }
+
+    // --- delete: armed by the first click, done by the second -----------
+    // Deleting a preset can't be undone, so it needs a confirmation step;
+    // a two-state button gives one without a dialog. It disarms itself
+    // after a few seconds and whenever the selection changes, so a stray
+    // click much later can't land on a primed button.
+    let deleteTimer = 0;
+    function disarmDelete() {
+      clearTimeout(deleteTimer);
+      deleteTimer = 0;
+      deleteBtn.textContent = "Hapus";
+      deleteBtn.classList.remove("is-armed");
+    }
+
+    deleteBtn.addEventListener("click", () => {
+      const name = selectEl.value;
+      if (!name) return;
+      if (!deleteTimer) {
+        deleteBtn.textContent = "Yakin hapus?";
+        deleteBtn.classList.add("is-armed");
+        say(`Klik sekali lagi untuk menghapus preset "${name}".`);
+        deleteTimer = setTimeout(() => {
+          disarmDelete();
+          say("");
+        }, 5000);
+        return;
+      }
+      disarmDelete();
+      const ok = filterPresets.remove(name);
+      refresh("");
+      say(ok ? `Preset "${name}" dihapus.` : "Gagal menghapus preset.");
+    });
+
+    // --- save -----------------------------------------------------------
+    function openForm() {
+      disarmDelete();
+      input.value = selectEl.value || "";
+      form.classList.remove("hidden");
+      input.focus();
+      input.select();
+      say("");
+    }
+    function closeForm() {
+      form.classList.add("hidden");
+    }
+
+    function commitSave() {
+      const name = input.value.trim();
+      if (!name) {
+        say("Nama preset tidak boleh kosong.");
+        input.focus();
+        return;
+      }
+      // Saving under a name that already exists updates it. The name was
+      // typed out in full, so that is nearly always what was meant — the
+      // message afterwards says "diperbarui" rather than "tersimpan" so it
+      // is never a silent surprise.
+      const existed = Boolean(filterPresets.get(name));
+      const res = filterPresets.save(name, read());
+      if (!res.ok) {
+        say(res.reason === "limit"
+          ? `Preset sudah mencapai batas ${PRESET_LIMIT}. Hapus salah satu dulu.`
+          : "Gagal menyimpan preset — penyimpanan browser tidak tersedia.");
+        return;
+      }
+      closeForm();
+      refresh(name);
+      say(existed ? `Preset "${name}" diperbarui.` : `Preset "${name}" tersimpan.`);
+    }
+
+    saveBtn.addEventListener("click", () => {
+      if (form.classList.contains("hidden")) openForm();
+      else closeForm();
+    });
+    okBtn.addEventListener("click", commitSave);
+    cancelBtn.addEventListener("click", () => {
+      closeForm();
+      say("");
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commitSave();
+      } else if (e.key === "Escape") {
+        closeForm();
+        say("");
+      }
+    });
+
+    // --- pick one --------------------------------------------------------
+    selectEl.addEventListener("change", async () => {
+      disarmDelete();
+      const name = selectEl.value;
+      deleteBtn.disabled = name === "";
+      if (!name) return;
+      const preset = filterPresets.get(name);
+      if (!preset) {
+        // Deleted in another tab since this dropdown was last built.
+        refresh("");
+        say("Preset itu sudah tidak ada.");
+        return;
+      }
+      say(`Menerapkan "${name}"…`);
+      await apply(preset.filter);
+      say(`Preset "${name}" diterapkan.`);
+    });
+
+    refresh("");
+    return { refresh };
   }
 
   // Must match points.EmptyValue on the server — the sentinel meaning
   // "match rows where this column is blank", as opposed to not filtering.
   const EMPTY_VALUE = "__EMPTY__";
 
-  return { fetchWithRetry, makeCascadingLevel, makeMultiSelect, esc, EMPTY_VALUE };
+  return {
+    fetchWithRetry, makeCascadingLevel, makeMultiSelect, makePresetBar,
+    filterPresets, esc, EMPTY_VALUE,
+  };
 })();

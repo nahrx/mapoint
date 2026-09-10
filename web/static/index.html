@@ -32,87 +32,104 @@
         </button>
       </div>
       <div id="panel-body" class="map-panel-body">
-        <div class="filter-row">
-          <label for="peta-search">Cari Nama:</label>
-          <input type="text" id="peta-search" placeholder="Cari nama responden…" autocomplete="off">
+
+        <!-- Two groups, separated by a hairline rather than by headings: the
+             wilayah cascade first, then everything else. The five multi-selects
+             below are the custom makeMultiSelect widget (common.js), not a
+             native <select multiple>, which browsers render as an always-open
+             list box that would wreck this layout. Same set, same order and
+             same server-side filter as the Daftar menu — /api/points and
+             /api/list both go through parseFilter. -->
+        <div class="filter-group" role="group" aria-label="Filter wilayah">
+          <div class="filter-row">
+            <label for="kabkota-select">Kabupaten/Kota:</label>
+            <select id="kabkota-select">
+              <option value="">Semua Kabupaten/Kota</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="kecamatan-select">Kecamatan:</label>
+            <select id="kecamatan-select" disabled>
+              <option value="">Semua Kecamatan</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="desa-select">Desa/Kelurahan:</label>
+            <select id="desa-select" disabled>
+              <option value="">Semua Desa/Kelurahan</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="sls-select">Kode SLS:</label>
+            <select id="sls-select" disabled>
+              <option value="">Semua SLS</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="subsls-select">Kode SubSLS:</label>
+            <select id="subsls-select" disabled>
+              <option value="">Semua SubSLS</option>
+            </select>
+          </div>
         </div>
-        <div class="filter-row">
-          <label for="kabkota-select">Kabupaten/Kota:</label>
-          <select id="kabkota-select">
-            <option value="">Semua Kabupaten/Kota</option>
-          </select>
-        </div>
-        <div class="filter-row">
-          <label for="kecamatan-select">Kecamatan:</label>
-          <select id="kecamatan-select" disabled>
-            <option value="">Semua Kecamatan</option>
-          </select>
-        </div>
-        <div class="filter-row">
-          <label for="desa-select">Desa/Kelurahan:</label>
-          <select id="desa-select" disabled>
-            <option value="">Semua Desa/Kelurahan</option>
-          </select>
-        </div>
-        <div class="filter-row">
-          <label for="sls-select">Kode SLS:</label>
-          <select id="sls-select" disabled>
-            <option value="">Semua SLS</option>
-          </select>
-        </div>
-        <div class="filter-row">
-          <label for="subsls-select">Kode SubSLS:</label>
-          <select id="subsls-select" disabled>
-            <option value="">Semua SubSLS</option>
-          </select>
-        </div>
-        <!-- Same three multi-selects as the Daftar menu, same component
-             (makeMultiSelect in common.js) and the same server-side filter
-             — /api/points and /api/list share parseFilter. -->
-        <div class="filter-row">
-          <span class="filter-label" id="jenisprelist-label-peta">Jenis Prelist:</span>
-          <div class="multiselect" id="jenisprelist-ms-peta"
-               data-placeholder="Semua Jenis Prelist" data-labelledby="jenisprelist-label-peta"></div>
-        </div>
-        <div class="filter-row">
-          <span class="filter-label" id="keberadaankeluarga-label-peta">Keberadaan Keluarga:</span>
-          <div class="multiselect" id="keberadaankeluarga-ms-peta"
-               data-placeholder="Semua Keberadaan Keluarga" data-labelledby="keberadaankeluarga-label-peta"></div>
-        </div>
-        <div class="filter-row">
-          <span class="filter-label" id="keberadaanbku-label-peta">Keberadaan Usaha:</span>
-          <div class="multiselect" id="keberadaanbku-ms-peta"
-               data-placeholder="Semua Keberadaan Usaha" data-labelledby="keberadaanbku-label-peta"></div>
-        </div>
-        <div class="filter-row">
-          <span class="filter-label" id="status-label-peta">Status:</span>
-          <div class="multiselect" id="status-ms-peta"
-               data-placeholder="Semua Status" data-labelledby="status-label-peta"></div>
-        </div>
-        <div class="filter-row">
-          <span class="filter-label" id="penggunaan-label-peta">Penggunaan Bangunan:</span>
-          <div class="multiselect" id="penggunaan-ms-peta"
-               data-placeholder="Semua Penggunaan Bangunan" data-labelledby="penggunaan-label-peta"></div>
-        </div>
-        <div class="filter-row">
-          <label for="flagbaru-select">Ditemukan di Assignment Baru:</label>
-          <select id="flagbaru-select">
-            <option value="">Semua</option>
-            <option value="1">Ya</option>
-            <option value="0">Tidak</option>
-          </select>
-        </div>
-        <div class="filter-row">
-          <label for="flagregsosek-select">Ditemukan di Regsosek:</label>
-          <select id="flagregsosek-select">
-            <option value="">Semua</option>
-            <option value="1">Ya</option>
-            <option value="0">Tidak</option>
-          </select>
+        <div class="filter-group" role="group" aria-label="Filter lainnya">
+          <div class="filter-row">
+            <label for="peta-search">Cari Nama:</label>
+            <input type="text" id="peta-search" placeholder="Cari nama responden…" autocomplete="off">
+          </div>
+          <div class="filter-row">
+            <span class="filter-label" id="jenisprelist-label-peta">Jenis Prelist:</span>
+            <div class="multiselect" id="jenisprelist-ms-peta"
+                 data-placeholder="Semua Jenis Prelist" data-labelledby="jenisprelist-label-peta"></div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label" id="penggunaan-label-peta">Penggunaan Bangunan:</span>
+            <div class="multiselect" id="penggunaan-ms-peta"
+                 data-placeholder="Semua Penggunaan Bangunan" data-labelledby="penggunaan-label-peta"></div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label" id="keberadaankeluarga-label-peta">Keberadaan Keluarga:</span>
+            <div class="multiselect" id="keberadaankeluarga-ms-peta"
+                 data-placeholder="Semua Keberadaan Keluarga" data-labelledby="keberadaankeluarga-label-peta"></div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label" id="keberadaanbku-label-peta">Keberadaan Usaha:</span>
+            <div class="multiselect" id="keberadaanbku-ms-peta"
+                 data-placeholder="Semua Keberadaan Usaha" data-labelledby="keberadaanbku-label-peta"></div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label" id="status-label-peta">Status:</span>
+            <div class="multiselect" id="status-ms-peta"
+                 data-placeholder="Semua Status" data-labelledby="status-label-peta"></div>
+          </div>
+          <div class="filter-row">
+            <label for="flagbaru-select">Ditemukan di Assignment Baru:</label>
+            <select id="flagbaru-select">
+              <option value="">Semua</option>
+              <option value="1">Ya</option>
+              <option value="0">Tidak</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="flagregsosek-select">Ditemukan di Regsosek:</label>
+            <select id="flagregsosek-select">
+              <option value="">Semua</option>
+              <option value="1">Ya</option>
+              <option value="0">Tidak</option>
+            </select>
+          </div>
         </div>
         <div class="filter-row" id="apply-filter-row">
           <button id="apply-filter-btn" class="apply-filter-btn" type="button">Terapkan Filter</button>
         </div>
+        <!-- Saved filter presets, kept in localStorage and shared with the
+             other menu — see filterPresets in common.js. -->
+        <div class="preset-bar" id="preset-bar-peta">
+          <select id="preset-select-peta" class="preset-select" aria-label="Preset filter tersimpan"></select>
+          <button id="preset-save-peta" class="preset-btn" type="button">Simpan Filter</button>
+          <button id="preset-delete-peta" class="preset-btn preset-btn-danger" type="button" disabled>Hapus</button>
+        </div>
+        <p id="preset-status-peta" class="preset-status" role="status" aria-live="polite"></p>
         <div id="stats" class="map-stats">Memuat statistik…</div>
         <div id="legend" class="map-legend">
           <div class="legend-row"><span class="dot dot-point"></span> Titik individual</div>
@@ -139,87 +156,104 @@
       <p id="daftar-updated" class="list-updated hidden"></p>
 
       <div id="daftar-filters" class="list-filters">
-        <div class="filter-row">
-          <label for="daftar-search">Cari Nama:</label>
-          <input type="text" id="daftar-search" placeholder="Cari nama responden…" autocomplete="off">
+
+        <!-- Two groups, separated by a hairline rather than by headings: the
+             wilayah cascade first, then everything else. The five multi-selects
+             below are the custom makeMultiSelect widget (common.js), not a
+             native <select multiple>, which browsers render as an always-open
+             list box that would wreck this layout. The order matches the
+             table's columns, so the panel and the table read the same way
+             round. -->
+        <div class="filter-group" role="group" aria-label="Filter wilayah">
+          <div class="filter-row">
+            <label for="kabkota-select-list">Kabupaten/Kota:</label>
+            <select id="kabkota-select-list">
+              <option value="">Semua Kabupaten/Kota</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="kecamatan-select-list">Kecamatan:</label>
+            <select id="kecamatan-select-list" disabled>
+              <option value="">Semua Kecamatan</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="desa-select-list">Desa/Kelurahan:</label>
+            <select id="desa-select-list" disabled>
+              <option value="">Semua Desa/Kelurahan</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="sls-select-list">Kode SLS:</label>
+            <select id="sls-select-list" disabled>
+              <option value="">Semua SLS</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="subsls-select-list">Kode SubSLS:</label>
+            <select id="subsls-select-list" disabled>
+              <option value="">Semua SubSLS</option>
+            </select>
+          </div>
         </div>
-        <div class="filter-row">
-          <label for="kabkota-select-list">Kabupaten/Kota:</label>
-          <select id="kabkota-select-list">
-            <option value="">Semua Kabupaten/Kota</option>
-          </select>
-        </div>
-        <div class="filter-row">
-          <label for="kecamatan-select-list">Kecamatan:</label>
-          <select id="kecamatan-select-list" disabled>
-            <option value="">Semua Kecamatan</option>
-          </select>
-        </div>
-        <div class="filter-row">
-          <label for="desa-select-list">Desa/Kelurahan:</label>
-          <select id="desa-select-list" disabled>
-            <option value="">Semua Desa/Kelurahan</option>
-          </select>
-        </div>
-        <div class="filter-row">
-          <label for="sls-select-list">Kode SLS:</label>
-          <select id="sls-select-list" disabled>
-            <option value="">Semua SLS</option>
-          </select>
-        </div>
-        <div class="filter-row">
-          <label for="subsls-select-list">Kode SubSLS:</label>
-          <select id="subsls-select-list" disabled>
-            <option value="">Semua SubSLS</option>
-          </select>
-        </div>
-        <!-- These three are multi-select. A native <select multiple> renders
-             as a tall list box, not a dropdown, which would break this
-             compact filter grid — so each is a button that opens a panel of
-             checkboxes (see makeMultiSelect in common.js). -->
-        <div class="filter-row">
-          <span class="filter-label" id="jenisprelist-label-list">Jenis Prelist:</span>
-          <div class="multiselect" id="jenisprelist-ms-list"
-               data-placeholder="Semua Jenis Prelist" data-labelledby="jenisprelist-label-list"></div>
-        </div>
-        <div class="filter-row">
-          <span class="filter-label" id="keberadaankeluarga-label-list">Keberadaan Keluarga:</span>
-          <div class="multiselect" id="keberadaankeluarga-ms-list"
-               data-placeholder="Semua Keberadaan Keluarga" data-labelledby="keberadaankeluarga-label-list"></div>
-        </div>
-        <div class="filter-row">
-          <span class="filter-label" id="keberadaanbku-label-list">Keberadaan Usaha:</span>
-          <div class="multiselect" id="keberadaanbku-ms-list"
-               data-placeholder="Semua Keberadaan Usaha" data-labelledby="keberadaanbku-label-list"></div>
-        </div>
-        <div class="filter-row">
-          <span class="filter-label" id="status-label-list">Status:</span>
-          <div class="multiselect" id="status-ms-list"
-               data-placeholder="Semua Status" data-labelledby="status-label-list"></div>
-        </div>
-        <div class="filter-row">
-          <span class="filter-label" id="penggunaan-label-list">Penggunaan Bangunan:</span>
-          <div class="multiselect" id="penggunaan-ms-list"
-               data-placeholder="Semua Penggunaan Bangunan" data-labelledby="penggunaan-label-list"></div>
-        </div>
-        <div class="filter-row">
-          <label for="flagbaru-select-list">Ditemukan di Assignment Baru:</label>
-          <select id="flagbaru-select-list">
-            <option value="">Semua</option>
-            <option value="1">Ya</option>
-            <option value="0">Tidak</option>
-          </select>
-        </div>
-        <div class="filter-row">
-          <label for="flagregsosek-select-list">Ditemukan di Regsosek:</label>
-          <select id="flagregsosek-select-list">
-            <option value="">Semua</option>
-            <option value="1">Ya</option>
-            <option value="0">Tidak</option>
-          </select>
+        <div class="filter-group" role="group" aria-label="Filter lainnya">
+          <div class="filter-row">
+            <label for="daftar-search">Cari Nama:</label>
+            <input type="text" id="daftar-search" placeholder="Cari nama responden…" autocomplete="off">
+          </div>
+          <div class="filter-row">
+            <span class="filter-label" id="jenisprelist-label-list">Jenis Prelist:</span>
+            <div class="multiselect" id="jenisprelist-ms-list"
+                 data-placeholder="Semua Jenis Prelist" data-labelledby="jenisprelist-label-list"></div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label" id="penggunaan-label-list">Penggunaan Bangunan:</span>
+            <div class="multiselect" id="penggunaan-ms-list"
+                 data-placeholder="Semua Penggunaan Bangunan" data-labelledby="penggunaan-label-list"></div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label" id="keberadaankeluarga-label-list">Keberadaan Keluarga:</span>
+            <div class="multiselect" id="keberadaankeluarga-ms-list"
+                 data-placeholder="Semua Keberadaan Keluarga" data-labelledby="keberadaankeluarga-label-list"></div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label" id="keberadaanbku-label-list">Keberadaan Usaha:</span>
+            <div class="multiselect" id="keberadaanbku-ms-list"
+                 data-placeholder="Semua Keberadaan Usaha" data-labelledby="keberadaanbku-label-list"></div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label" id="status-label-list">Status:</span>
+            <div class="multiselect" id="status-ms-list"
+                 data-placeholder="Semua Status" data-labelledby="status-label-list"></div>
+          </div>
+          <div class="filter-row">
+            <label for="flagbaru-select-list">Ditemukan di Assignment Baru:</label>
+            <select id="flagbaru-select-list">
+              <option value="">Semua</option>
+              <option value="1">Ya</option>
+              <option value="0">Tidak</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="flagregsosek-select-list">Ditemukan di Regsosek:</label>
+            <select id="flagregsosek-select-list">
+              <option value="">Semua</option>
+              <option value="1">Ya</option>
+              <option value="0">Tidak</option>
+            </select>
+          </div>
         </div>
         <div id="daftar-actions" class="list-actions">
-          <button id="apply-filter-btn-list" class="apply-filter-btn" type="button">Terapkan Filter</button>
+          <div class="list-actions-left">
+            <button id="apply-filter-btn-list" class="apply-filter-btn" type="button">Terapkan Filter</button>
+            <!-- Saved filter presets, kept in localStorage and shared with the
+                 other menu — see filterPresets in common.js. -->
+            <div class="preset-bar" id="preset-bar-list">
+              <select id="preset-select-list" class="preset-select" aria-label="Preset filter tersimpan"></select>
+              <button id="preset-save-list" class="preset-btn" type="button">Simpan Filter</button>
+              <button id="preset-delete-list" class="preset-btn preset-btn-danger" type="button" disabled>Hapus</button>
+            </div>
+          </div>
           <div id="download-btn-group" class="download-btn-group">
             <button id="download-pdf-btn" class="download-pdf" disabled title="Pilih filter minimal sampai Desa/Kelurahan untuk mengunduh">
               Unduh PDF
@@ -229,6 +263,7 @@
             </button>
           </div>
         </div>
+        <p id="preset-status-list" class="preset-status" role="status" aria-live="polite"></p>
       </div>
 
       <div id="daftar-toolbar" class="list-toolbar">
@@ -256,9 +291,9 @@
               <th class="sortable" data-sort="nama">Nama<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="alamat">Alamat<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="subsls">ID SUBSLS<span class="sort-arrow"></span></th>
+              <th class="sortable num" data-sort="nomor_bangunan">Nomor Bangunan<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="jenis_prelist">Jenis Prelist<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="penggunaan_bangunan">Penggunaan Bangunan<span class="sort-arrow"></span></th>
-              <th class="sortable num" data-sort="nomor_bangunan">Nomor Bangunan<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="keberadaan_keluarga">Keberadaan Keluarga<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="keberadaan_bku">Keberadaan Usaha<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="status">Status<span class="sort-arrow"></span></th>

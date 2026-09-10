@@ -185,7 +185,7 @@ body {
 .filter-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   min-width: 0; /* lets a long <option> shrink instead of stretching the grid */
 }
 
@@ -194,7 +194,7 @@ body {
    rule so the two are indistinguishable. */
 .filter-row label,
 .filter-row .filter-label {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 550;
   letter-spacing: 0.02em;
   color: var(--text-muted);
@@ -202,12 +202,14 @@ body {
 
 .filter-row select,
 .filter-row input[type="text"],
-.list-pagesize {
+.list-pagesize,
+.preset-select,
+.preset-name-input {
   width: 100%;
   min-width: 0;
   font: inherit;
-  font-size: 13px;
-  padding: 7px 10px;
+  font-size: 12.5px;
+  padding: 6px 9px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: var(--surface);
@@ -218,9 +220,10 @@ body {
 /* Native select arrows differ wildly across platforms; this draws one
    consistent chevron and reserves room for it on the right. */
 .filter-row select,
-.list-pagesize {
+.list-pagesize,
+.preset-select {
   appearance: none;
-  padding-right: 30px;
+  padding-right: 28px;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5l5-5' fill='none' stroke='%235b6672' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
@@ -229,13 +232,17 @@ body {
 
 .filter-row select:hover:not(:disabled),
 .filter-row input[type="text"]:hover,
-.list-pagesize:hover {
+.list-pagesize:hover,
+.preset-select:hover:not(:disabled),
+.preset-name-input:hover {
   border-color: var(--navy-600);
 }
 
 .filter-row select:focus,
 .filter-row input[type="text"]:focus,
-.list-pagesize:focus {
+.list-pagesize:focus,
+.preset-select:focus,
+.preset-name-input:focus {
   outline: none;
   border-color: var(--navy-600);
   box-shadow: var(--ring);
@@ -259,11 +266,12 @@ body {
 
 .apply-filter-btn,
 .download-pdf,
-.download-xlsx {
+.download-xlsx,
+.preset-btn {
   font: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 650;
-  padding: 8px 18px;
+  padding: 7px 16px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   display: inline-flex;
@@ -278,7 +286,8 @@ body {
 
 .apply-filter-btn:active:not(:disabled),
 .download-pdf:active:not(:disabled),
-.download-xlsx:active:not(:disabled) {
+.download-xlsx:active:not(:disabled),
+.preset-btn:active:not(:disabled) {
   transform: translateY(1px);
   box-shadow: none;
 }
@@ -525,7 +534,7 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 16px 20px;
+  padding: 12px 18px;
   color: var(--text);
   overflow: hidden;
 }
@@ -545,17 +554,18 @@ body {
   color: var(--navy);
 }
 
-/* Only useful where the filter card would otherwise fill the screen —
-   revealed in the phone media query at the bottom. */
+/* Folds the filter card away. Shown at every width — even on a wide
+   screen the card is ~300px, and collapsing it is the quickest way to
+   read a long table. The phone media query below only grows it to a
+   thumb-sized target. */
 .list-filter-toggle {
-  display: none;
+  display: inline-flex;
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 650;
   gap: 6px;
   align-items: center;
-  padding: 8px 14px;
-  min-height: var(--tap);
+  padding: 6px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: var(--surface);
@@ -582,10 +592,10 @@ body {
    at every width, instead of each control sizing to its own longest
    option and leaving a ragged edge. */
 .list-filters {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 12px 16px;
-  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -593,16 +603,147 @@ body {
   margin-bottom: 12px;
 }
 
+/* One group of filters: the wilayah cascade, then everything else. The
+   two are told apart by a hairline alone — no headings, which used to
+   cost a full ~42px row each and said little the controls' own text
+   doesn't already say. Each group carries an aria-label instead, so the
+   grouping is still announced without taking any vertical space.
+
+   150px tracks, not the 168px this started at: measured at a 1024px
+   window, 168px yields four columns and pushes the five wilayah selects
+   onto a second row; 150px yields five and keeps them on one. */
+.filter-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 14px;
+}
+
+/* Whitespace, not a rule: each group is its own grid, so the second one
+   always starts on a fresh row anyway — a hairline there would only
+   underline a break the eye already sees. It comes back below, in the two
+   places where the controls stack into a single column and that row break
+   stops carrying any meaning. */
+.filter-group + .filter-group {
+  padding-top: 14px;
+}
+
+/* The Peta panel is a ~260px sidebar — one control per row, so the groups
+   need the hairline to stay apart. */
+.map-panel-body .filter-group {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.map-panel-body .filter-group + .filter-group {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* Saved filter presets: dropdown + Simpan + Hapus. Deliberately quiet —
+   neutral surface rather than an accent — so it doesn't compete with
+   "Terapkan Filter", which is still the button that actually runs the
+   filter. */
+.preset-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.preset-select {
+  /* Wide enough for a real preset name, but it must not push the download
+     buttons off the row on a narrow window. */
+  width: auto;
+  min-width: 150px;
+  max-width: 240px;
+}
+
+.preset-btn {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--navy);
+}
+
+.preset-btn:hover:not(:disabled) {
+  border-color: var(--navy-600);
+  background: var(--surface-raised);
+}
+
+.preset-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* The inline name field, revealed by "Simpan Filter". Wraps onto its own
+   line in a narrow panel because .preset-bar is a wrapping flex row. */
+.preset-name-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preset-name-form.hidden {
+  display: none;
+}
+
+.preset-name-input {
+  width: auto;
+  min-width: 160px;
+  max-width: 240px;
+}
+
+.preset-btn-primary {
+  border-color: var(--navy);
+  background: var(--navy);
+  color: #fff;
+}
+
+.preset-btn-primary:hover:not(:disabled) {
+  background: var(--navy-600);
+  border-color: var(--navy-600);
+}
+
+/* Armed state of the delete button: one click primes it, the next one
+   deletes. Looks like what it is about to do. */
+.preset-btn.is-armed {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.preset-btn-danger:hover:not(:disabled) {
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+  background: var(--danger-bg);
+}
+
+/* One line of feedback after saving/applying/deleting. Reserves its own
+   height so the panel doesn't jump by a line every time it speaks. */
+.preset-status {
+  margin: 0;
+  min-height: 15px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Keeps Terapkan Filter and the preset bar together on the left, with the
+   download buttons still pushed to the right by .list-actions. */
+.list-actions-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 /* Actions sit on their own full-width row under the filter grid: apply on
    the left (what you press first), downloads pushed to the right. */
 .list-actions {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 10px;
-  padding-top: 12px;
+  padding-top: 10px;
   border-top: 1px solid var(--border);
 }
 
@@ -809,8 +950,11 @@ body {
   }
 
   .list-filters {
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-    padding: 12px 14px;
+    padding: 10px 12px;
+  }
+
+  .filter-group {
+    grid-template-columns: repeat(auto-fit, minmax(152px, 1fr));
   }
 
   .list-table td.addr {
@@ -905,7 +1049,9 @@ body {
   }
 
   .list-filter-toggle {
-    display: inline-flex;
+    padding: 8px 14px;
+    font-size: 13px;
+    min-height: var(--tap);
   }
 
   /* Fixed height instead of flex-filling, so it keeps its own scroll (and
@@ -916,15 +1062,28 @@ body {
   }
 
   .list-filters {
-    grid-template-columns: 1fr;
     gap: 10px;
     padding: 12px;
   }
 
+  .filter-group {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  /* Single column here too — same reason as the Peta panel above. */
+  .filter-group + .filter-group {
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+
   /* Comfortable touch targets — the desktop sizes are fine with a mouse
-     but too small for a thumb. */
+     but too small for a thumb. The multi-select toggle is in here too now
+     that it carries its own font-size; without it the button would stay
+     12.5px while the selects beside it grow. */
   .filter-row select,
-  .filter-row input[type="text"] {
+  .filter-row input[type="text"],
+  .multiselect-toggle {
     min-height: var(--tap);
     font-size: 16px; /* iOS zooms the page in on focus below 16px */
   }
@@ -937,6 +1096,34 @@ body {
   .list-actions .apply-filter-btn {
     width: 100%;
     min-height: var(--tap);
+  }
+
+  .list-actions-left {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .preset-select {
+    width: 100%;
+    max-width: none;
+    min-height: var(--tap);
+    font-size: 16px; /* iOS zooms the page in on focus below 16px */
+  }
+
+  .preset-btn {
+    flex: 1;
+    min-height: var(--tap);
+  }
+
+  .preset-name-form {
+    width: 100%;
+  }
+
+  .preset-name-input {
+    flex: 1;
+    max-width: none;
+    min-height: var(--tap);
+    font-size: 16px;
   }
 
   .download-btn-group {
@@ -1085,8 +1272,12 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 10px;
+  padding: 6px 9px;
   font: inherit;
+  /* font: inherit resets the size to the body's 16px, which made these
+     buttons 37px tall next to 33px selects — visibly mismatched in a row
+     of filters. Restate it so the two controls are the same height. */
+  font-size: 12.5px;
   text-align: left;
   color: var(--text);
   background: var(--surface);
