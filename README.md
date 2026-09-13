@@ -906,6 +906,20 @@ kolom SQL hanya lewat pemetaan tetap di `tabulasiVariables`
 yang tidak dikenal ditolak 400, bukan jatuh ke default: default diam-diam
 berarti mentabulasi kolom yang salah tanpa memberi tahu.
 
+Empat kolom nama mendahului ID SUBSLS: **Kabupaten/Kota, Kecamatan,
+Desa/Kelurahan, Nama SLS**. Kabupaten/kota dari tabel statis di `points`;
+tiga lainnya dari layer PostGIS (`nmkec`/`nmdesa`/`nmsls` di
+`peta_sls_6400_rev`), diambil **sekali per request** dengan
+`idsls = ANY($1)` untuk semua SLS di halaman itu — bukan satu lookup per
+baris (`mapdb.SLSWilayahNames`, terukur 80 ms untuk seluruh provinsi /
+14.332 SLS, sequential scan tabel 17 ribu baris yang tidak butuh indeks).
+Pengisiannya di lapisan API (`fillTabulasiNames`), bukan di `points`,
+karena paket itu hanya bicara dengan ClickHouse; namanya *pengayaan*, bukan
+data — tanpa PostGIS, atau kalau query-nya gagal, tabulasi tetap disajikan
+dengan kolom nama kosong ("-"), bukan berubah jadi error. Kode SubSLS yang
+tidak ada di layer (mis. `6401000000000000`, keranjang "tanpa SLS") memang
+tampil tanpa nama.
+
 Kolomnya **tetap**: semua kategori yang dikenal ikut ditampilkan meski
 nol di wilayah itu — tabel yang bentuknya berubah dari satu wilayah ke
 wilayah lain jauh lebih sulit dibandingkan daripada tabel dengan angka nol
@@ -964,17 +978,54 @@ untuk level yang tidak difilter, jadi workbook provinsi menyatakannya
 eksplisit, bukan menampilkan kolom kosong yang terbaca seperti data hilang),
 header + kolom ID SUBSLS yang di-*freeze*, AutoFilter di atas data saja
 (supaya baris total tidak ikut terurut ke tengah), dan baris total tebal di
-bawah. Angka ditulis sebagai angka, bukan teks berformat — gunanya
-spreadsheet justru untuk dijumlah dan di-pivot lagi. Terukur: satu SLS 0,14 s
-/ 12 kB; **seluruh provinsi 6,2 s / 4,0 MB** (5 × 17.120 baris). Isinya dicek
-silang: SLS contoh cocok sel demi sel dengan ClickHouse, dan kelima sheet
-provinsi masing-masing 17.120 baris data dengan total keseluruhan 2.193.780.
+bawah. Keempat kolom nama ikut di Excel, dan panel beku-nya mencakup keenam kolom
+identitas (sampai ID SUBSLS). Angka ditulis sebagai angka, bukan teks
+berformat — gunanya spreadsheet justru untuk dijumlah dan di-pivot lagi.
 Endpoint-nya `GET /api/tabulasi/xlsx`, penulisnya `GenerateTabulasi` di
 `internal/xlsxreport/tabulasi.go`.
 
-Tampilan: kolom ID SUBSLS *sticky* di kiri dan baris total *sticky* di
-bawah, jadi saat tabel lebar di-scroll ke kanan barisnya tidak kehilangan
-identitas dan totalnya tetap terlihat. Header kategori boleh membungkus
+**Kinerja ekspor — dan dua jebakan yang ditemukan di jalan.** Versi pertama
+(API sel-per-sel excelize yang sama dengan laporan Daftar) butuh 6,2 s untuk
+provinsi; begitu kolom nama dan sheet keenam ditambah, **18,5 s** — lebih
+lama dari yang mau ditunggu siapa pun. Dua hal diubah, keduanya terukur
+dengan profil CPU pada workbook sintetis seukuran provinsi
+(`TestGenerateTabulasiProvinceTiming`):
+
+1. **`StreamWriter`** menggantikan API sel-per-sel: yang biasa mendedup tiap
+   string lewat shared-string table dan menyimpan seluruh sheet di memori.
+   Urutannya kaku — lebar kolom dan `SetPanes` *sebelum* baris pertama
+   (termasuk blok keterangan, jadi baris header dihitung di muka dan
+   dicek terhadap penghitung baris saat blok selesai), baris menaik,
+   `AddTable` (tombol filter di header) setelah baris, `Flush` terakhir.
+2. **`SetActiveSheet(0)` dibuang.** Ia bukan sekadar mengubah flag: ia
+   memanggil `workSheetReader` pada tiap sheet, yang mem-*parse* ulang setiap
+   sheet hasil stream dari temp file ke model memori, lalu `Write` me-marshal
+   ulang semuanya. Di profil: **6,6 s dari 12,5 s** untuk panggilan itu saja
+   + 4,1 s marshal ulang yang diakibatkannya. Sheet pertama sudah aktif
+   secara default. Tanpa panggilan itu, bagian excelize turun **12,1 s →
+   1,8 s**.
+
+Sisanya adalah query: enam agregasi independen atas baris yang sama, jadi
+keenamnya dijalankan **bersamaan** (goroutine + `WaitGroup`, gagal satu
+membatalkan sisanya lewat `context`), dan nama wilayah dicari **sekali** —
+keenam tabel mencakup SubSLS yang sama persis — bukan enam kali. Hasil akhir
+terukur:
+
+| Cakupan | Sebelum | Sesudah | Ukuran |
+|---|---|---|---|
+| Seluruh provinsi (6 sheet × 17.120 baris) | 18,5 s | **3,1–3,3 s** | 6,5 MB |
+| Satu kabupaten (Paser) | — | 0,67 s | 0,6 MB |
+| Satu SLS | 0,14 s | 0,24 s | 24 kB |
+
+(Satu SLS sedikit lebih lambat karena tiap sheet kini membawa definisi
+tabel Excel; tidak relevan pada skala itu.) Isinya dicek silang: SLS contoh
+cocok sel demi sel dengan ClickHouse termasuk keempat kolom namanya, dan
+keenam sheet provinsi masing-masing 17.120 baris data dengan total
+keseluruhan 2.193.780.
+
+Tampilan: header dan baris total *sticky*. Kolom ID SUBSLS sempat *sticky* di
+kiri juga, tapi dilepas begitu empat kolom nama mendahuluinya — kolom keenam
+yang sticky akan menggeser di atas keempatnya. Header kategori boleh membungkus
 sampai 160px (label Penggunaan Bangunan terpanjang ±100 karakter). Catatan
 CSS: aturan header `.list-table thead th` yang dipakai bersama tidak punya
 `z-index`, dan itu cukup untuk daftar biasa — tapi di sini sel ID SUBSLS

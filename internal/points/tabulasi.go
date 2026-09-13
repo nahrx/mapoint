@@ -63,10 +63,19 @@ func ParseTabulasiVariable(key string) (TabulasiVariable, error) {
 // TabulasiRow is one SubSLS: how many rows fall in each category of the
 // variable, keyed by the category's raw value ("" for a blank column), plus
 // the row total.
+//
+// The four name fields are not filled here — they come from the PostGIS
+// layer, not ClickHouse, and this package only talks to ClickHouse. The API
+// layer fills them after the fact (see fillTabulasiNames in internal/api);
+// they stay "" when PostGIS is not configured.
 type TabulasiRow struct {
-	SubSLS string            `json:"subsls"`
-	Counts map[string]uint64 `json:"counts"`
-	Total  uint64            `json:"total"`
+	KabKotaName   string            `json:"kabkota_name"`
+	KecamatanName string            `json:"kecamatan_name"`
+	DesaName      string            `json:"desa_name"`
+	SLSName       string            `json:"sls_name"`
+	SubSLS        string            `json:"subsls"`
+	Counts        map[string]uint64 `json:"counts"`
+	Total         uint64            `json:"total"`
 }
 
 // TabulasiPage is one page of the cross-tabulation. Columns is the full

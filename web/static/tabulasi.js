@@ -141,6 +141,10 @@
 
     theadEl.innerHTML = `<tr>
       <th class="num">No</th>
+      <th>Kabupaten/Kota</th>
+      <th>Kecamatan</th>
+      <th>Desa/Kelurahan</th>
+      <th>Nama SLS</th>
       <th class="tab-subsls">ID SUBSLS</th>
       ${cols.map((c) => `<th class="num tab-cat${c === "" ? " tab-cat-empty" : ""}" title="${esc(colLabel(c))}">${esc(colLabel(c))}</th>`).join("")}
       <th class="num tab-total">Total</th>
@@ -150,17 +154,21 @@
     tbodyEl.innerHTML = resp.rows.length
       ? resp.rows.map((r, i) => `<tr>
           <td class="num">${startRow + i}</td>
+          <td>${esc(r.kabkota_name || "-")}</td>
+          <td>${esc(r.kecamatan_name || "-")}</td>
+          <td>${esc(r.desa_name || "-")}</td>
+          <td class="tab-sls-name">${esc(r.sls_name || "-")}</td>
           <td class="tab-subsls mono">${esc(r.subsls)}</td>
           ${cols.map((c) => cell(r.counts[c] || 0)).join("")}
           ${cell(r.total, "tab-total")}
         </tr>`).join("")
-      : `<tr><td colspan="${cols.length + 3}" class="empty-row">Tidak ada data yang cocok dengan filter ini.</td></tr>`;
+      : `<tr><td colspan="${cols.length + 7}" class="empty-row">Tidak ada data yang cocok dengan filter ini.</td></tr>`;
 
     // The footer sums the whole filter, not the page: paging through a
     // kabupaten shouldn't make the total row jump around.
     tfootEl.innerHTML = resp.rows.length
       ? `<tr>
-          <th colspan="2" class="tab-grand-label">Total (${fmt(resp.total_rows)} SubSLS)</th>
+          <th colspan="6" class="tab-grand-label">Total (${fmt(resp.total_rows)} SubSLS)</th>
           ${cols.map((c) => cell(resp.grand[c] || 0, "tab-grand")).join("")}
           ${cell(resp.grand_total, "tab-grand tab-total")}
         </tr>`

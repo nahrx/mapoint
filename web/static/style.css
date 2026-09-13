@@ -925,28 +925,22 @@ body {
   font-style: italic;
 }
 
-/* ID SUBSLS stays put while the categories scroll under it, so a row
-   never loses its identity off the left edge. */
+/* No sticky column any more: ID SUBSLS used to be pinned on the left,
+   but it now sits behind four name columns, and a sticky sixth column
+   would slide over them. The header and the totals row stay sticky. */
 .tab-table .tab-subsls {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  background: var(--surface);
+  white-space: nowrap;
 }
 
-/* The shared header rule has no z-index, which is fine for a plain list
-   but not here: the sticky ID SUBSLS cells (z-index 1) would scroll over
-   the header. Header above column, corner above both. */
+.tab-table .tab-sls-name {
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .tab-table thead th {
   z-index: 2;
-}
-
-.tab-table thead .tab-subsls {
-  z-index: 3;
-}
-
-.tab-table tbody tr:nth-child(even) td.tab-subsls {
-  background: var(--surface-raised);
 }
 
 .tab-table td.tab-zero {
@@ -972,9 +966,6 @@ body {
 
 .tab-table tfoot .tab-grand-label {
   text-align: left;
-  position: sticky;
-  left: 0;
-  z-index: 3;
 }
 
 /* Actions sit on their own full-width row under the filter grid: apply on

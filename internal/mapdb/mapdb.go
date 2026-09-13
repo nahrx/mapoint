@@ -133,6 +133,53 @@ func SubSLSPolygonsGeoJSON(ctx context.Context, pool *pgxpool.Pool, codePrefix s
 	return []byte(fmt.Sprintf(`{"type":"FeatureCollection","features":[%s]}`, strings.Join(features, ","))), nil
 }
 
+// WilayahNames is the set of names the polygon layer carries for one SLS.
+type WilayahNames struct {
+	Kecamatan string
+	Desa      string
+	SLS       string
+}
+
+// SLSWilayahNames returns kecamatan / desa / SLS names keyed by 14-digit
+// idsls, for the Tabulasi menu's name columns. One query for the whole
+// batch — a page is at most 200 SLS, an export at most the province's
+// 14,332 — rather than a lookup per row; measured 80ms for the whole
+// province, which is a sequential scan of the 17k-row table (idsls has no
+// index, and doesn't need one at that size).
+//
+// An SLS with several SubSLS has one row per SubSLS in the layer, all
+// carrying the same names — DISTINCT ON collapses them. Codes with no row
+// (the layer covers 14,332 SLS; ClickHouse has a few codes outside it)
+// are simply absent from the map, and the caller shows a blank.
+func SLSWilayahNames(ctx context.Context, pool *pgxpool.Pool, idsls []string) (map[string]WilayahNames, error) {
+	out := make(map[string]WilayahNames, len(idsls))
+	if len(idsls) == 0 {
+		return out, nil
+	}
+	rows, err := pool.Query(ctx, fmt.Sprintf(
+		`SELECT DISTINCT ON (idsls) idsls,
+		        coalesce(nmkec, ''), coalesce(nmdesa, ''), coalesce(%s, '')
+		 FROM %s WHERE idsls = ANY($1) ORDER BY idsls`,
+		slsNameColumn, table,
+	), idsls)
+	if err != nil {
+		return nil, fmt.Errorf("mapdb: sls names: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var code string
+		var n WilayahNames
+		if err := rows.Scan(&code, &n.Kecamatan, &n.Desa, &n.SLS); err != nil {
+			return nil, fmt.Errorf("mapdb: sls names scan: %w", err)
+		}
+		out[code] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mapdb: sls names rows: %w", err)
+	}
+	return out, nil
+}
+
 // splitKabKota breaks a 4-digit ClickHouse kabkota code (2-digit kdprov +
 // 2-digit kdkab) into the two parts peta_sls_6400_rev keys by.
 func splitKabKota(kabkotaCode string) (kdprov, kdkab string, err error) {

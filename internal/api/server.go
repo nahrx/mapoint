@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -754,7 +755,67 @@ func (s *Server) handleTabulasi(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
+	s.fillTabulasiNames(r.Context(), resp.Rows)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// fillTabulasiNames adds the kabupaten/kota, kecamatan, desa and SLS names
+// to tabulation rows. Kabupaten/kota comes from the static table in
+// points; the other three from the PostGIS polygon layer, in one batched
+// query keyed by the 14-digit SLS code.
+//
+// Names are enrichment, not data: without PostGIS, or if its query fails,
+// the tabulation is still served with those columns blank rather than
+// turned into an error. A failure is logged once per request.
+func (s *Server) fillTabulasiNames(ctx context.Context, rows []points.TabulasiRow) {
+	applyWilayahNames(rows, s.lookupWilayahNames(ctx, rows))
+}
+
+// lookupWilayahNames fetches the PostGIS names for every distinct SLS the
+// rows belong to. nil when PostGIS is not configured or the query fails
+// (logged) — applyWilayahNames treats nil as "no names".
+func (s *Server) lookupWilayahNames(ctx context.Context, rows []points.TabulasiRow) map[string]mapdb.WilayahNames {
+	if s.mapPool == nil || len(rows) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(rows))
+	codes := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if len(r.SubSLS) < 14 {
+			continue
+		}
+		c := r.SubSLS[:14]
+		if !seen[c] {
+			seen[c] = true
+			codes = append(codes, c)
+		}
+	}
+	names, err := mapdb.SLSWilayahNames(ctx, s.mapPool, codes)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.log.Warn("tabulasi wilayah names unavailable", "err", err)
+		}
+		return nil
+	}
+	return names
+}
+
+// applyWilayahNames writes the kabupaten/kota name (static, always
+// available) and the PostGIS names (when names has them) onto each row.
+func applyWilayahNames(rows []points.TabulasiRow, names map[string]mapdb.WilayahNames) {
+	for i := range rows {
+		if len(rows[i].SubSLS) >= 4 {
+			rows[i].KabKotaName = points.KabKotaName(rows[i].SubSLS[:4])
+		}
+		if len(rows[i].SubSLS) < 14 {
+			continue
+		}
+		if n, ok := names[rows[i].SubSLS[:14]]; ok {
+			rows[i].KecamatanName = n.Kecamatan
+			rows[i].DesaName = n.Desa
+			rows[i].SLSName = n.SLS
+		}
+	}
 }
 
 // handleTabulasiXLSX writes the complete tabulation — all five variables,
@@ -768,19 +829,48 @@ func (s *Server) handleTabulasiXLSX(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The six variables are independent aggregations over the same rows,
+	// so they run concurrently rather than back to back. Measured on the
+	// whole province: 7.5s sequential for the query phase, against the
+	// figure in README for this fan-out. Any failure cancels the rest via
+	// ctx; the first error is the one reported.
 	variables := points.TabulasiVariables()
-	tables := make([]points.TabulasiTable, 0, len(variables))
-	for _, v := range variables {
-		t, err := s.svc.TabulasiAll(r.Context(), filter, v)
+	tables := make([]points.TabulasiTable, len(variables))
+	errs := make([]error, len(variables))
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	var wg sync.WaitGroup
+	for i, v := range variables {
+		wg.Add(1)
+		go func(i int, v points.TabulasiVariable) {
+			defer wg.Done()
+			t, err := s.svc.TabulasiAll(ctx, filter, v)
+			if err != nil {
+				errs[i] = err
+				cancel()
+				return
+			}
+			tables[i] = t
+		}(i, v)
+	}
+	wg.Wait()
+	for i, err := range errs {
 		if err != nil {
 			if r.Context().Err() != nil {
 				return
 			}
-			s.log.Error("tabulasi xlsx query failed", "var", v.Key, "err", err)
+			s.log.Error("tabulasi xlsx query failed", "var", variables[i].Key, "err", err)
 			writeError(w, http.StatusInternalServerError, "query failed")
 			return
 		}
-		tables = append(tables, t)
+	}
+
+	// Every table covers the same SubSLS (same filter, same ordering), so
+	// the wilayah names are looked up once and applied to all six rather
+	// than fetched six times.
+	names := s.lookupWilayahNames(r.Context(), tables[0].Rows)
+	for i := range tables {
+		applyWilayahNames(tables[i].Rows, names)
 	}
 
 	scope := xlsxreport.TabulasiScope{

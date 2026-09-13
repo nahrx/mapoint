@@ -100,7 +100,14 @@ func GenerateTabulasi(w io.Writer, scope TabulasiScope, tables []points.Tabulasi
 			return fmt.Errorf("xlsxreport: sheet %q: %w", sheet, err)
 		}
 	}
-	f.SetActiveSheet(0)
+	// No SetActiveSheet here, on purpose. The first sheet is active by
+	// default, and SetActiveSheet is not the cheap flag flip it looks like:
+	// it calls workSheetReader on every sheet, which parses each streamed
+	// sheet back out of its temp file into the in-memory model — and Write
+	// then re-marshals all of them. Profiled on a province-sized workbook:
+	// that one call was 6.6s of a 12.5s export, and Write another 4.1s of
+	// re-marshalling it caused. Without it, the streamed sheets go into
+	// the zip as they are.
 
 	if err := f.Write(w); err != nil {
 		return fmt.Errorf("xlsxreport: write: %w", err)
@@ -108,41 +115,24 @@ func GenerateTabulasi(w io.Writer, scope TabulasiScope, tables []points.Tabulasi
 	return nil
 }
 
+// writeTabulasiSheet renders one variable's table with excelize's
+// StreamWriter rather than the cell-by-cell API the Daftar report uses.
+// The difference is not cosmetic: a province-wide workbook is six sheets
+// of 17,120 rows with ten string cells each, and the regular API — which
+// deduplicates every string through the shared-string table and keeps the
+// whole sheet in memory — took 18.5s for it. Streamed, the same workbook
+// is written in a fraction of that (see README for the measured figure).
+//
+// The stream API has an order it insists on: column widths and panes
+// before the first row, rows in ascending order, the table (which gives
+// the header its filter buttons) after the rows, and Flush last.
 func writeTabulasiSheet(f *excelize.File, sheet string, st styles, totalStyle int, scope TabulasiScope, t points.TabulasiTable) error {
-	row := 1
-	set := func(cell string, style int, value any) {
-		f.SetCellValue(sheet, cell, value)
-		f.SetCellStyle(sheet, cell, cell, style)
+	sw, err := f.NewStreamWriter(sheet)
+	if err != nil {
+		return err
 	}
 
-	// --- info block --------------------------------------------------------
-	set(fmt.Sprintf("A%d", row), st.title, fmt.Sprintf("Tabulasi %s per SubSLS", t.Variable.Label))
-	row += 2
-	set(fmt.Sprintf("A%d", row), st.section, "Keterangan Wilayah")
-	row++
-	for _, e := range scope.rows() {
-		set(fmt.Sprintf("A%d", row), st.label, e[0])
-		set(fmt.Sprintf("B%d", row), st.label, e[1])
-		row++
-	}
-	set(fmt.Sprintf("A%d", row), st.label, "Jumlah SubSLS")
-	set(fmt.Sprintf("B%d", row), st.label, int64(t.TotalRows))
-	row++
-	set(fmt.Sprintf("A%d", row), st.label, "Jumlah Data")
-	set(fmt.Sprintf("B%d", row), st.label, int64(t.GrandTotal))
-	row++
-	if t.Truncated {
-		row++
-		set(fmt.Sprintf("A%d", row), st.warn, fmt.Sprintf("Catatan: tabel ini dibatasi hingga %d SubSLS pertama.", points.TabulasiMaxRows))
-		row++
-	}
-	row++
-	set(fmt.Sprintf("A%d", row), st.footnote, fmt.Sprintf("Diunduh %s — Peta Titik SE2026", time.Now().Format("2 January 2006 15:04")))
-	row += 2
-
-	// --- header row --------------------------------------------------------
-	headerRow := row
-	headers := append([]string{"No", "ID SUBSLS"}, make([]string, 0, len(t.Columns)+1)...)
+	headers := []string{"No", "Kabupaten/Kota", "Kecamatan", "Desa/Kelurahan", "Nama SLS", "ID SUBSLS"}
 	for _, c := range t.Columns {
 		if c == "" {
 			c = "(Kosong)"
@@ -150,54 +140,9 @@ func writeTabulasiSheet(f *excelize.File, sheet string, st styles, totalStyle in
 		headers = append(headers, c)
 	}
 	headers = append(headers, "Total")
-	for ci, h := range headers {
-		cell, err := excelize.CoordinatesToCellName(ci+1, headerRow)
-		if err != nil {
-			return err
-		}
-		set(cell, st.tblHead, h)
-	}
 
-	// --- data rows ---------------------------------------------------------
-	for ri, r := range t.Rows {
-		rowNum := headerRow + 1 + ri
-		style := st.tblCell
-		if ri%2 == 1 {
-			style = st.tblFill
-		}
-		values := make([]any, 0, len(headers))
-		values = append(values, ri+1, r.SubSLS)
-		for _, c := range t.Columns {
-			values = append(values, int64(r.Counts[c]))
-		}
-		values = append(values, int64(r.Total))
-		for ci, v := range values {
-			cell, err := excelize.CoordinatesToCellName(ci+1, rowNum)
-			if err != nil {
-				return err
-			}
-			set(cell, style, v)
-		}
-	}
-
-	// --- totals row --------------------------------------------------------
-	totalRow := headerRow + 1 + len(t.Rows)
-	totals := make([]any, 0, len(headers))
-	totals = append(totals, "", "Total")
-	for _, c := range t.Columns {
-		totals = append(totals, int64(t.Grand[c]))
-	}
-	totals = append(totals, int64(t.GrandTotal))
-	for ci, v := range totals {
-		cell, err := excelize.CoordinatesToCellName(ci+1, totalRow)
-		if err != nil {
-			return err
-		}
-		set(cell, totalStyle, v)
-	}
-
-	// --- widths, freeze, filter --------------------------------------------
-	widths := []float64{6, 20}
+	// --- widths (must precede the first row) --------------------------------
+	widths := []float64{6, 16, 18, 20, 24, 20}
 	for _, c := range t.Columns {
 		// Wide enough for the label, within reason — the longest
 		// Penggunaan Bangunan label is ~100 characters and would otherwise
@@ -213,33 +158,143 @@ func writeTabulasiSheet(f *excelize.File, sheet string, st styles, totalStyle in
 	}
 	widths = append(widths, 12)
 	for ci, w := range widths {
-		col, err := excelize.ColumnNumberToName(ci + 1)
-		if err != nil {
-			return err
-		}
-		if err := f.SetColWidth(sheet, col, col, w); err != nil {
+		if err := sw.SetColWidth(ci+1, ci+1, w); err != nil {
 			return err
 		}
 	}
 
-	// Header row stays put, and so does ID SUBSLS on the left — the same
-	// two sticky edges the on-screen table has.
-	if err := f.SetPanes(sheet, &excelize.Panes{
-		Freeze: true, Split: false, XSplit: 2, YSplit: headerRow,
-		TopLeftCell: fmt.Sprintf("C%d", headerRow+1), ActivePane: "bottomRight",
+	// --- panes --------------------------------------------------------------
+	// The stream writer wants SetPanes before the very first SetRow — the
+	// info block included — so the header row has to be known up front
+	// rather than discovered by laying the block out. The layout below is
+	// fixed (title, gap, section, five scope rows, two counts, optional
+	// truncation note, gap, footnote, gap), and the running row counter is
+	// checked against this number when the block is done, so a future edit
+	// to the block can't quietly freeze the wrong row.
+	//
+	// Header row stays put, and so do the identifying columns (through ID
+	// SUBSLS) on the left, so a row never loses its name while scrolling
+	// across the categories.
+	headerRow := 14
+	if t.Truncated {
+		headerRow += 2
+	}
+	if err := sw.SetPanes(&excelize.Panes{
+		Freeze: true, Split: false, XSplit: 6, YSplit: headerRow,
+		TopLeftCell: fmt.Sprintf("G%d", headerRow+1), ActivePane: "bottomRight",
 	}); err != nil {
 		return err
 	}
+
+	// --- info block ---------------------------------------------------------
+	row := 1
+	put := func(r int, cells ...any) error {
+		cell, err := excelize.CoordinatesToCellName(1, r)
+		if err != nil {
+			return err
+		}
+		return sw.SetRow(cell, cells)
+	}
+	styled := func(style int, v any) excelize.Cell { return excelize.Cell{StyleID: style, Value: v} }
+
+	if err := put(row, styled(st.title, fmt.Sprintf("Tabulasi %s per SubSLS", t.Variable.Label))); err != nil {
+		return err
+	}
+	row += 2
+	if err := put(row, styled(st.section, "Keterangan Wilayah")); err != nil {
+		return err
+	}
+	row++
+	for _, e := range scope.rows() {
+		if err := put(row, styled(st.label, e[0]), styled(st.label, e[1])); err != nil {
+			return err
+		}
+		row++
+	}
+	if err := put(row, styled(st.label, "Jumlah SubSLS"), styled(st.label, int64(t.TotalRows))); err != nil {
+		return err
+	}
+	row++
+	if err := put(row, styled(st.label, "Jumlah Data"), styled(st.label, int64(t.GrandTotal))); err != nil {
+		return err
+	}
+	row++
+	if t.Truncated {
+		row++
+		if err := put(row, styled(st.warn, fmt.Sprintf("Catatan: tabel ini dibatasi hingga %d SubSLS pertama.", points.TabulasiMaxRows))); err != nil {
+			return err
+		}
+		row++
+	}
+	row++
+	if err := put(row, styled(st.footnote, fmt.Sprintf("Diunduh %s — Peta Titik SE2026", time.Now().Format("2 January 2006 15:04")))); err != nil {
+		return err
+	}
+	row += 2
+	if row != headerRow {
+		return fmt.Errorf("info block ended on row %d, panes were frozen at %d", row, headerRow)
+	}
+
+	// --- header row ---------------------------------------------------------
+	hdr := make([]any, len(headers))
+	for i, h := range headers {
+		hdr[i] = styled(st.tblHead, h)
+	}
+	if err := put(headerRow, hdr...); err != nil {
+		return err
+	}
+
+	// --- data rows ----------------------------------------------------------
+	for ri, r := range t.Rows {
+		style := st.tblCell
+		if ri%2 == 1 {
+			style = st.tblFill
+		}
+		cells := make([]any, 0, len(headers))
+		cells = append(cells,
+			styled(style, ri+1), styled(style, r.KabKotaName), styled(style, r.KecamatanName),
+			styled(style, r.DesaName), styled(style, r.SLSName), styled(style, r.SubSLS))
+		for _, c := range t.Columns {
+			cells = append(cells, styled(style, int64(r.Counts[c])))
+		}
+		cells = append(cells, styled(style, int64(r.Total)))
+		if err := put(headerRow+1+ri, cells...); err != nil {
+			return err
+		}
+	}
+
+	// --- totals row ---------------------------------------------------------
+	totals := make([]any, 0, len(headers))
+	totals = append(totals, styled(totalStyle, ""), styled(totalStyle, "Total"),
+		styled(totalStyle, ""), styled(totalStyle, ""), styled(totalStyle, ""), styled(totalStyle, ""))
+	for _, c := range t.Columns {
+		totals = append(totals, styled(totalStyle, int64(t.Grand[c])))
+	}
+	totals = append(totals, styled(totalStyle, int64(t.GrandTotal)))
+	if err := put(headerRow+1+len(t.Rows), totals...); err != nil {
+		return err
+	}
+
+	// --- filter buttons on the header, over the data only --------------------
+	// An Excel table is the stream writer's way of getting AutoFilter; its
+	// range stops above the totals row so that sorting can't pull the
+	// total into the middle of the SubSLS. Table names must be unique in
+	// the workbook and identifier-like, hence the key rather than the label.
 	if len(t.Rows) > 0 {
 		lastCol, err := excelize.ColumnNumberToName(len(headers))
 		if err != nil {
 			return err
 		}
-		// AutoFilter over the data only, so the totals row doesn't get
-		// sorted into the middle of the SubSLS.
-		if err := f.AutoFilter(sheet, fmt.Sprintf("A%d:%s%d", headerRow, lastCol, headerRow+len(t.Rows)), nil); err != nil {
+		noStripes := false
+		if err := sw.AddTable(&excelize.Table{
+			Range:          fmt.Sprintf("A%d:%s%d", headerRow, lastCol, headerRow+len(t.Rows)),
+			Name:           "tab_" + t.Variable.Key,
+			StyleName:      "TableStyleLight1",
+			ShowRowStripes: &noStripes,
+		}); err != nil {
 			return err
 		}
 	}
-	return nil
+
+	return sw.Flush()
 }
