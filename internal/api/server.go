@@ -95,6 +95,7 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /api/subsls-polygon", s.handleSubSLSPolygon)
 	mux.HandleFunc("GET /api/tabulasi/variables", s.handleTabulasiVariables)
 	mux.HandleFunc("GET /api/tabulasi", s.handleTabulasi)
+	mux.HandleFunc("GET /api/tabulasi/xlsx", s.handleTabulasiXLSX)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /login", s.handleLoginPage(staticFS))
 	mux.HandleFunc("POST /api/login", s.handleLogin)
@@ -754,6 +755,56 @@ func (s *Server) handleTabulasi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleTabulasiXLSX writes the complete tabulation — all five variables,
+// one sheet each, every SubSLS matching the wilayah filter — as an .xlsx.
+// No minimum wilayah, unlike the Daftar reports: this is aggregated, so
+// even the whole province is 17k rows per sheet, not 2 million.
+func (s *Server) handleTabulasiXLSX(w http.ResponseWriter, r *http.Request) {
+	filter, err := parseFilter(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	variables := points.TabulasiVariables()
+	tables := make([]points.TabulasiTable, 0, len(variables))
+	for _, v := range variables {
+		t, err := s.svc.TabulasiAll(r.Context(), filter, v)
+		if err != nil {
+			if r.Context().Err() != nil {
+				return
+			}
+			s.log.Error("tabulasi xlsx query failed", "var", v.Key, "err", err)
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		tables = append(tables, t)
+	}
+
+	scope := xlsxreport.TabulasiScope{
+		KabKotaCode: filter.KabKota,
+		KabKotaName: points.KabKotaName(filter.KabKota),
+		Kecamatan:   filter.Kecamatan,
+		Desa:        filter.Desa,
+		SLS:         filter.SLS,
+		SubSLS:      filter.SubSLS,
+	}
+	suffix := filter.FullCode()
+	if suffix == "" {
+		suffix = "semua"
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tabulasi-subsls-%s.xlsx"`, suffix))
+	// Live data behind one URL shape per filter: never let a browser or
+	// proxy hand back a stale copy on re-download.
+	w.Header().Set("Cache-Control", "no-store")
+	if err := xlsxreport.GenerateTabulasi(w, scope, tables); err != nil {
+		// Headers are already out; all that can be done is log it.
+		s.log.Error("tabulasi xlsx render failed", "err", err)
+	}
 }
 
 func (s *Server) handleSubSLSPolygon(w http.ResponseWriter, r *http.Request) {

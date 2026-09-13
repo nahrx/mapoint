@@ -882,16 +882,24 @@ Status dan pencarian, bukan cuma oleh wilayah.
 
 ### Menu Tabulasi
 
-Menu kelima (`/tabulasi`): tabulasi silang **SubSLS × kategori** untuk lima
-variabel kategorik, satu tab per variabel — Jenis Prelist, Penggunaan
-Bangunan, Keberadaan Keluarga, Keberadaan Usaha, Status. Baris adalah
+Menu kelima (`/tabulasi`): tabulasi silang **SubSLS × kategori** untuk enam
+variabel, satu tab per variabel — Jenis Prelist, Penggunaan Bangunan,
+Keberadaan Keluarga, Keberadaan Usaha, Status, dan Ditemukan di Regsosek.
+Yang terakhir bukan kolom tersimpan: ia ekspresi
+`if(dictHas(dict_regsosek_key, …), Ya, Tidak)` — uji keanggotaan
+dictionary yang sama persis dengan flag "Ditemukan di Regsosek" di menu Daftar
+dan Peta, dilipat jadi variabel dua kategori. Karena itu `TabulasiVariable.Column`
+adalah *ekspresi SQL* yang menghasilkan String, bukan selalu nama kolom —
+tapi tetap konstanta paket, tidak pernah dari request. Dilipat ke teks di SQL
+(bukan mentabulasi UInt8 mentahnya) supaya jalur scan-nya sama dengan variabel
+lain: `groupArray(val)` selalu `[]string`. Baris adalah
 `level_6_full_code`, kolom adalah kategori variabel itu, sel adalah jumlah
 baris `se2026_titik2`; kolom paling kanan total per SubSLS, baris paling
 bawah total per kategori **untuk seluruh filter** (bukan cuma halaman yang
 tampil), supaya total tidak melompat-lompat saat berpindah halaman.
 
 Daftar tab-nya tidak ditulis di frontend: `GET /api/tabulasi/variables`
-mengembalikan lima variabel itu berikut urutan kategorinya, dan itu daftar
+mengembalikan keenam variabel itu berikut urutan kategorinya, dan itu daftar
 yang sama yang dipakai server memvalidasi `?var=` — jadi kunci di URL memilih
 kolom SQL hanya lewat pemetaan tetap di `tabulasiVariables`
 (`internal/points/tabulasi.go`), tidak pernah lewat teks dari request. Kunci
@@ -936,11 +944,33 @@ satu halaman:
 | Keberadaan Keluarga | 0,33 s |
 | Keberadaan Usaha | 0,28 s |
 | Status | 0,25 s |
+| Ditemukan di Regsosek | 0,58 s (dictHas per baris) |
 
 Angkanya dicek silang ke ClickHouse langsung: total keseluruhan tiap tab =
 2.193.780 (= `count()` tabel), jumlah SubSLS = 17.120 (= `uniqExact`), dan
 satu SLS contoh (3 SubSLS, Keberadaan Usaha) cocok sel demi sel dengan
-`countIf` per kategori.
+`countIf` per kategori. Untuk Ditemukan di Regsosek: total "Ya" seluruh provinsi
+= 163.220, persis jumlah flag yang diverifikasi terhadap `IN (SELECT …)` saat
+dictionary diperbarui; satu SubSLS contoh (11 Ya / 278 Tidak) cocok dengan
+subquery `IN` / `NOT IN` langsung.
+
+**Unduh Excel** (tombol di baris aksi) mengunduh **keenam tabulasi sekaligus,
+satu sheet per variabel**, untuk filter wilayah yang sedang *diterapkan* —
+seluruh SubSLS-nya, bukan cuma halaman yang tampil. Tanpa filter berarti
+seluruh provinsi, dan itu memang diperbolehkan: berbeda dari laporan Daftar
+yang mewajibkan minimal desa, tabulasi sudah teragregasi (17 ribu baris per
+sheet, bukan 2 juta). Tiap sheet punya blok keterangan wilayah ("(Semua)"
+untuk level yang tidak difilter, jadi workbook provinsi menyatakannya
+eksplisit, bukan menampilkan kolom kosong yang terbaca seperti data hilang),
+header + kolom ID SUBSLS yang di-*freeze*, AutoFilter di atas data saja
+(supaya baris total tidak ikut terurut ke tengah), dan baris total tebal di
+bawah. Angka ditulis sebagai angka, bukan teks berformat — gunanya
+spreadsheet justru untuk dijumlah dan di-pivot lagi. Terukur: satu SLS 0,14 s
+/ 12 kB; **seluruh provinsi 6,2 s / 4,0 MB** (5 × 17.120 baris). Isinya dicek
+silang: SLS contoh cocok sel demi sel dengan ClickHouse, dan kelima sheet
+provinsi masing-masing 17.120 baris data dengan total keseluruhan 2.193.780.
+Endpoint-nya `GET /api/tabulasi/xlsx`, penulisnya `GenerateTabulasi` di
+`internal/xlsxreport/tabulasi.go`.
 
 Tampilan: kolom ID SUBSLS *sticky* di kiri dan baris total *sticky* di
 bawah, jadi saat tabel lebar di-scroll ke kanan barisnya tidak kehilangan
@@ -1318,8 +1348,9 @@ bagian "Login" di atas.
 - `GET /` — peta (frontend)
 - `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&search=` — data titik/cluster untuk satu viewport. Filter atributnya sama persis dengan `/api/list` (multi-nilai, ulangi parameternya per nilai) — keduanya lewat `parseFilter` yang sama. Titik individual ikut membawa kedua flag "Ditemukan di …" untuk tooltip (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
 - `GET /api/points-bounds?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&search=` — extent geografis baris yang cocok dengan filter (persentil 1%/99% dari `latitude_ppl`/`longitude_ppl`), untuk auto-zoom ke hasil pencarian nama di menu Peta. Parameternya sama persis dengan `/api/points` minus kotak viewport-nya. Balasannya `min_lat`/`max_lat`/`min_lon`/`max_lon` + `total`; kalau tidak ada baris yang cocok, `total` 0 dan keempat batasnya `null` (bukan NaN — `encoding/json` menolak NaN, lihat `points.FiniteOrNil`), jadi pemanggil tidak boleh nge-zoom ke situ. Dipanggil frontend hanya saat pencarian nama aktif — lihat "Cari nama di menu Peta" di atas
-- `GET /api/tabulasi/variables` — lima variabel tabulasi (kunci, label, urutan kategori) dalam urutan tab; statis, sumber kebenaran untuk `?var=` di bawah
+- `GET /api/tabulasi/variables` — enam variabel tabulasi (kunci, label, urutan kategori) dalam urutan tab; statis, sumber kebenaran untuk `?var=` di bawah
 - `GET /api/tabulasi?var=&kabkota=&kecamatan=&desa=&sls=&subsls=&page=&pageSize=` — satu halaman tabulasi silang SubSLS × kategori untuk variabel `var` (salah satu kunci dari endpoint di atas; lainnya ditolak 400). Filter sama dengan `/api/list` lewat `parseFilter`. `page`/`pageSize` menghitung **SubSLS**, bukan baris data; `pageSize` maks 200. Balasannya `columns` (urutan kategori, `""` terakhir kalau ada yang kosong), `rows[].counts` (kategori → jumlah) + `rows[].total`, `total_rows` (jumlah SubSLS di seluruh filter), `grand` + `grand_total` (total per kategori dan keseluruhan untuk seluruh filter)
+- `GET /api/tabulasi/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=` — workbook Excel berisi keenam tabulasi (satu sheet per variabel) untuk seluruh SubSLS yang cocok dengan filter, sampai `TabulasiMaxRows` (50.000) per sheet. Semua parameter opsional — tanpa filter = seluruh provinsi. Nama berkas `tabulasi-subsls-<kode wilayah|semua>.xlsx`
 - `GET /api/bounds` — extent geografis + total baris valid di seluruh dataset
 - `GET /api/kabkota` — daftar kabupaten/kota yang ada di data, dengan jumlah baris & bounding box masing-masing. Sama seperti keempat endpoint wilayah lainnya: daftarnya memuat SEMUA wilayah di tabel, dan `min_lat`/`max_lat`/`min_lon`/`max_lon` dihilangkan dari JSON untuk wilayah yang tidak punya titik berkoordinat
 - `GET /api/kecamatan?kabkota=` — daftar kecamatan di dalam satu kabupaten/kota (parameter wajib); `name` diisi dari PostGIS kalau `MAP_*` dikonfigurasi, kosong kalau tidak

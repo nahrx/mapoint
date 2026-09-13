@@ -26,6 +26,7 @@
   const prevBtn = document.getElementById("tabulasi-prev");
   const nextBtn = document.getElementById("tabulasi-next");
   const pageSizeSelect = document.getElementById("tabulasi-pagesize");
+  const downloadXlsxBtn = document.getElementById("download-xlsx-btn-tab");
 
   let variables = [];      // from /api/tabulasi/variables, in tab order
   let currentVar = "";     // key of the active tab
@@ -245,6 +246,27 @@
       ? `/api/subsls?kabkota=${enc(kabkota)}&kecamatan=${enc(kecamatan)}&desa=${enc(desa)}&sls=${enc(sls)}`
       : null);
   });
+
+  // The workbook holds all five variables for the *applied* wilayah — the
+  // same scope the table on screen shows, not whatever the dropdowns
+  // currently hold but haven't been applied. Every SubSLS, not one page.
+  // Always enabled: unlike the Daftar report there is no minimum wilayah,
+  // because the whole province is 17k aggregated rows, not 2 million.
+  function downloadXlsx() {
+    const params = new URLSearchParams();
+    if (appliedKabkota) params.set("kabkota", appliedKabkota);
+    if (appliedKecamatan) params.set("kecamatan", appliedKecamatan);
+    if (appliedDesa) params.set("desa", appliedDesa);
+    if (appliedSls) params.set("sls", appliedSls);
+    if (appliedSubsls) params.set("subsls", appliedSubsls);
+    const a = document.createElement("a");
+    a.href = `/api/tabulasi/xlsx?${params}`;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  downloadXlsxBtn.addEventListener("click", downloadXlsx);
 
   function applyFilters() {
     appliedKabkota = kabkotaSelect.value;
