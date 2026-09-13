@@ -496,9 +496,58 @@ memangkas 19% ukuran kirim dibanding default PostGIS. Ada juga batas keras
 `PolygonMaxRows` (400 baris): bukan batas yang pernah tersentuh wilayah nyata,
 melainkan penjaga kalau ada prefiks aneh yang mencoba menarik seluruh tabel.
 
-Tiap feature membawa `idsubsls`-nya sendiri di `properties`, jadi ke depan
-polygon-polygon itu bisa dibedakan (label, warna per status) tanpa mengubah
-endpoint-nya.
+#### Label nama SLS di atas polygon
+
+Tiap feature membawa `idsubsls`, `kdsls`, `kdsubsls` dan `nmsls` di
+`properties`, dan peta menuliskan **nama SLS** itu di tengah polygonnya.
+Kalau SLS-nya terpecah jadi **lebih dari satu SubSLS**, barisnya ditambah
+`SubSLS 01` di bawah nama — kalau tidak terpecah, tidak, karena "SubSLS 00"
+di bawah nama yang sudah tertulis tidak menambah apa pun. Dari 14.332 SLS di
+layer ini, 12.746 hanya punya satu SubSLS, jadi mayoritasnya berlabel satu
+baris. `nmsls` terisi di **seluruh** 17.039 baris (dicek, bukan diasumsikan),
+jadi tidak ada label yang jatuh ke kode.
+
+**Label hanya muncul kalau polygonnya memang terlihat jelas di layar.**
+Ukurannya dihitung dalam **piksel layar**, bukan level zoom dan bukan luas
+sebenarnya: polygon yang sama tidak terbaca di satu zoom dan lapang di zoom
+berikutnya, dan SubSLS pedesaan yang luas maupun SubSLS kota yang sempit
+harus dinilai dengan ukuran yang sama — yaitu apa yang sedang dilihat
+pengguna. Syaratnya sisi terpendek kotak pembatasnya ≥46px **dan** luas
+kotaknya ≥4.200px²; yang kedua menyingkirkan polygon panjang-tipis yang
+sisinya lolos tapi isinya tidak muat teks. Polygon di luar layar dilewati
+sama sekali.
+
+Daftarnya dihitung ulang tiap `zoomend` dan `moveend`, bukan disembunyikan
+lewat CSS: yang memenuhi syarat berubah mengikuti tampilan, dan dengan
+paling banyak beberapa ratus bentuk — batasnya sudah ada di tangan tiap
+layer Leaflet — ini cuma aritmetika ringan per bentuk.
+
+Terukur di desa dengan 164 SubSLS:
+
+| Tampilan | Polygon | Label muncul |
+|---|---|---|
+| Pas difilter (auto-fit ke desa) | 164 | 7 |
+| Zoom in 1 langkah | 164 | 12 |
+| Zoom out 1 langkah dari auto-fit | 164 | 4 |
+| Zoom out 2 langkah | 164 | 1 |
+| Zoom out 3 langkah | 164 | 0 |
+
+Jadi memperkecil peta memang mengosongkan labelnya sendiri, persis seperti
+yang diinginkan. (Zoom in jauh justru mengurangi hitungannya lagi, tapi
+karena alasan lain: polygon-polygonnya keluar dari layar.)
+
+Titik jangkar labelnya memakai `layer.getCenter()` — centroid polygon, bukan
+titik tengah kotak pembatas, supaya label SubSLS berbentuk L atau bulan
+sabit tetap jatuh di dalam bentuknya. Catatan implementasi: `getCenter()`
+melempar exception selama layer-nya belum menempel di peta, sedangkan
+`onEachFeature` jalan saat `L.geoJSON` masih membangunnya — versi pertama
+karena itu membuang seluruh lapisan polygon. Sekarang centroidnya dihitung
+saat label digambar (dan di-cache), dengan titik tengah kotak sebagai
+cadangan.
+
+Labelnya `pointer-events: none` dan pakai halo putih tanpa kotak, seperti
+label nomor bangunan — supaya tidak menutupi garis batas yang justru sedang
+dijelaskannya, dan tetap terbaca di atas peta jalan maupun citra satelit.
 
 ### Menu Daftar
 
@@ -830,6 +879,77 @@ Bedanya dari peta utama: extent untuk auto-zoom dihitung per request lewat
 `GET /api/match-bounds`, bukan dari bounding box per wilayah yang di-cache
 saat startup. Itu karena di sini extent-nya ikut berubah oleh filter Match
 Status dan pencarian, bukan cuma oleh wilayah.
+
+### Menu Tabulasi
+
+Menu kelima (`/tabulasi`): tabulasi silang **SubSLS × kategori** untuk lima
+variabel kategorik, satu tab per variabel — Jenis Prelist, Penggunaan
+Bangunan, Keberadaan Keluarga, Keberadaan Usaha, Status. Baris adalah
+`level_6_full_code`, kolom adalah kategori variabel itu, sel adalah jumlah
+baris `se2026_titik2`; kolom paling kanan total per SubSLS, baris paling
+bawah total per kategori **untuk seluruh filter** (bukan cuma halaman yang
+tampil), supaya total tidak melompat-lompat saat berpindah halaman.
+
+Daftar tab-nya tidak ditulis di frontend: `GET /api/tabulasi/variables`
+mengembalikan lima variabel itu berikut urutan kategorinya, dan itu daftar
+yang sama yang dipakai server memvalidasi `?var=` — jadi kunci di URL memilih
+kolom SQL hanya lewat pemetaan tetap di `tabulasiVariables`
+(`internal/points/tabulasi.go`), tidak pernah lewat teks dari request. Kunci
+yang tidak dikenal ditolak 400, bukan jatuh ke default: default diam-diam
+berarti mentabulasi kolom yang salah tanpa memberi tahu.
+
+Kolomnya **tetap**: semua kategori yang dikenal ikut ditampilkan meski
+nol di wilayah itu — tabel yang bentuknya berubah dari satu wilayah ke
+wilayah lain jauh lebih sulit dibandingkan daripada tabel dengan angka nol
+di dalamnya. Urutannya sama dengan urutan opsi di filter dropdown. Nilai
+yang muncul di data tapi tidak ada di enum (seharusnya tidak terjadi)
+ditambahkan setelahnya, terurut; kolom "(Kosong)" hanya muncul kalau memang
+ada baris yang kolomnya kosong, dan selalu paling kanan. Angka nol digambar
+sebagai tanda pisah redup — tabulasi kebanyakan isinya nol, dan lautan "0"
+menyembunyikan angka yang justru penting.
+
+Filternya wilayah berjenjang yang sama (kabupaten/kota → SubSLS) lewat
+`parseFilter` yang sama dengan menu lain, jadi filter atribut pun sebenarnya
+diterima endpoint-nya meski menunya hanya menampilkan wilayah. Paginasinya
+per **SubSLS**, bukan per baris data: satu halaman 50 SubSLS default,
+maksimal 200.
+
+Tiga query per halaman, semuanya di ClickHouse:
+
+1. `GROUP BY val` untuk baris total per kategori;
+2. `uniqExact(level_6_full_code)` untuk jumlah SubSLS (tidak bisa dijumlah
+   dari uniqExact per kategori — satu SubSLS memuat beberapa kategori);
+3. halamannya: `GROUP BY (subsls, val)` untuk menghitung, lalu `GROUP BY subsls`
+   dengan `groupArray(val)` + `groupArray(n)` untuk melipat tiap SubSLS jadi
+   sepasang array sejajar, dan `LIMIT/OFFSET` di GROUP BY luar itu — sehingga
+   halaman dihitung per SubSLS. Dua array sejajar, bukan `groupArray` tuple:
+   driver men-scan `[]string` dan `[]uint64` tanpa upacara, sedangkan tuple
+   kembali sebagai `[]any` tak bertipe.
+
+Terukur di data live, **seluruh provinsi** (17.120 SubSLS, 2,19 juta baris),
+satu halaman:
+
+| Variabel | Waktu |
+|---|---|
+| Jenis Prelist | 0,34 s |
+| Penggunaan Bangunan | 0,26 s |
+| Keberadaan Keluarga | 0,33 s |
+| Keberadaan Usaha | 0,28 s |
+| Status | 0,25 s |
+
+Angkanya dicek silang ke ClickHouse langsung: total keseluruhan tiap tab =
+2.193.780 (= `count()` tabel), jumlah SubSLS = 17.120 (= `uniqExact`), dan
+satu SLS contoh (3 SubSLS, Keberadaan Usaha) cocok sel demi sel dengan
+`countIf` per kategori.
+
+Tampilan: kolom ID SUBSLS *sticky* di kiri dan baris total *sticky* di
+bawah, jadi saat tabel lebar di-scroll ke kanan barisnya tidak kehilangan
+identitas dan totalnya tetap terlihat. Header kategori boleh membungkus
+sampai 160px (label Penggunaan Bangunan terpanjang ±100 karakter). Catatan
+CSS: aturan header `.list-table thead th` yang dipakai bersama tidak punya
+`z-index`, dan itu cukup untuk daftar biasa — tapi di sini sel ID SUBSLS
+yang sticky (`z-index: 1`) akan menimpa header saat di-scroll; `.tab-table`
+karenanya memberi header `z-index: 2` dan sel pojoknya 3.
 
 ### Kolom "Ditemukan di …" (join ke `se2026_match` & `se2026_match_regsosek`)
 
@@ -1198,6 +1318,8 @@ bagian "Login" di atas.
 - `GET /` — peta (frontend)
 - `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&search=` — data titik/cluster untuk satu viewport. Filter atributnya sama persis dengan `/api/list` (multi-nilai, ulangi parameternya per nilai) — keduanya lewat `parseFilter` yang sama. Titik individual ikut membawa kedua flag "Ditemukan di …" untuk tooltip (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
 - `GET /api/points-bounds?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&search=` — extent geografis baris yang cocok dengan filter (persentil 1%/99% dari `latitude_ppl`/`longitude_ppl`), untuk auto-zoom ke hasil pencarian nama di menu Peta. Parameternya sama persis dengan `/api/points` minus kotak viewport-nya. Balasannya `min_lat`/`max_lat`/`min_lon`/`max_lon` + `total`; kalau tidak ada baris yang cocok, `total` 0 dan keempat batasnya `null` (bukan NaN — `encoding/json` menolak NaN, lihat `points.FiniteOrNil`), jadi pemanggil tidak boleh nge-zoom ke situ. Dipanggil frontend hanya saat pencarian nama aktif — lihat "Cari nama di menu Peta" di atas
+- `GET /api/tabulasi/variables` — lima variabel tabulasi (kunci, label, urutan kategori) dalam urutan tab; statis, sumber kebenaran untuk `?var=` di bawah
+- `GET /api/tabulasi?var=&kabkota=&kecamatan=&desa=&sls=&subsls=&page=&pageSize=` — satu halaman tabulasi silang SubSLS × kategori untuk variabel `var` (salah satu kunci dari endpoint di atas; lainnya ditolak 400). Filter sama dengan `/api/list` lewat `parseFilter`. `page`/`pageSize` menghitung **SubSLS**, bukan baris data; `pageSize` maks 200. Balasannya `columns` (urutan kategori, `""` terakhir kalau ada yang kosong), `rows[].counts` (kategori → jumlah) + `rows[].total`, `total_rows` (jumlah SubSLS di seluruh filter), `grand` + `grand_total` (total per kategori dan keseluruhan untuk seluruh filter)
 - `GET /api/bounds` — extent geografis + total baris valid di seluruh dataset
 - `GET /api/kabkota` — daftar kabupaten/kota yang ada di data, dengan jumlah baris & bounding box masing-masing. Sama seperti keempat endpoint wilayah lainnya: daftarnya memuat SEMUA wilayah di tabel, dan `min_lat`/`max_lat`/`min_lon`/`max_lon` dihilangkan dari JSON untuk wilayah yang tidak punya titik berkoordinat
 - `GET /api/kecamatan?kabkota=` — daftar kecamatan di dalam satu kabupaten/kota (parameter wajib); `name` diisi dari PostGIS kalau `MAP_*` dikonfigurasi, kosong kalau tidak

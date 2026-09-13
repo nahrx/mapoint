@@ -127,7 +127,87 @@
       map.removeLayer(polygonLayer);
       polygonLayer = null;
     }
+    polygonLabels = [];
+    polygonLabelLayer.clearLayers();
   }
+
+  // --- polygon labels -----------------------------------------------------
+  // Each drawn SubSLS gets its SLS name written across it — but only while
+  // the shape is actually big enough on screen to read a label inside.
+  // Zoomed out, a desa is a mosaic of slivers a few pixels across, and a
+  // label per sliver would be a wall of overlapping text hiding the very
+  // boundaries it is describing.
+  //
+  // "Big enough" is measured in screen pixels, not in zoom level or in
+  // ground area: the same polygon is unreadable at one zoom and roomy at
+  // the next, and a large rural SubSLS and a tiny urban one need the same
+  // rule applied to what the user is actually looking at.
+  const POLY_LABEL_MIN_SIDE = 46; // px — the shorter side of the shape's box
+  const POLY_LABEL_MIN_AREA = 4200; // px² — keeps long thin slivers out
+
+  let polygonLabels = [];
+  const polygonLabelLayer = L.layerGroup().addTo(map);
+
+  function polygonLabelHTML(props, withSubSLS) {
+    const name = esc(props.nmsls || `SLS ${props.kdsls || ""}`.trim());
+    if (!withSubSLS) return `<span class="poly-label-sls">${name}</span>`;
+    return `<span class="poly-label-sls">${name}</span><span class="poly-label-sub">SubSLS ${esc(props.kdsubsls)}</span>`;
+  }
+
+  // Rebuilt on every zoom/pan rather than toggled: which polygons qualify
+  // changes with the view, and there are at most a few hundred of them —
+  // the bounds are already cached on each Leaflet layer, so this is a
+  // handful of arithmetic per shape.
+  // The polygon's own centroid, which stays inside an L-shaped or crescent
+  // SubSLS where the bounding box's centre would sit outside the shape.
+  // Computed here rather than when the feature is built, because
+  // L.Polygon.getCenter() throws until the layer is on the map, and
+  // onEachFeature runs while L.geoJSON is still constructing it — that
+  // threw away the whole polygon layer the first time round. Cached after
+  // the first success; the box centre is the fallback for the degenerate
+  // shapes getCenter still refuses.
+  function labelCenter(item) {
+    if (item.center) return item.center;
+    try {
+      item.center = item.layer.getCenter();
+    } catch (err) {
+      item.center = item.bounds.getCenter();
+    }
+    return item.center;
+  }
+
+  function refreshPolygonLabels() {
+    polygonLabelLayer.clearLayers();
+    if (polygonLabels.length === 0) return;
+    const view = map.getBounds();
+    for (const item of polygonLabels) {
+      // Off-screen shapes cost nothing to skip and would otherwise put
+      // markers far outside the viewport.
+      if (!view.intersects(item.bounds)) continue;
+      const nw = map.latLngToContainerPoint(item.bounds.getNorthWest());
+      const se = map.latLngToContainerPoint(item.bounds.getSouthEast());
+      const w = Math.abs(se.x - nw.x);
+      const h = Math.abs(se.y - nw.y);
+      if (Math.min(w, h) < POLY_LABEL_MIN_SIDE) continue;
+      if (w * h < POLY_LABEL_MIN_AREA) continue;
+      L.marker(labelCenter(item), {
+        icon: L.divIcon({
+          className: "poly-label",
+          html: item.html,
+          // Null size lets CSS size the box to the text; the anchor is set
+          // in CSS with a translate instead, because the width isn't known
+          // here.
+          iconSize: null,
+        }),
+        interactive: false,
+        keyboard: false,
+      }).addTo(polygonLabelLayer);
+    }
+  }
+
+  // Both events: zooming changes which shapes qualify, panning changes
+  // which are on screen at all.
+  map.on("zoomend moveend", refreshPolygonLabels);
 
   // Draws the SubSLS boundaries for whatever wilayah is filtered, from
   // desa/kelurahan downwards: a desa shows every SubSLS inside it, an SLS
@@ -155,7 +235,26 @@
       const geojson = await fetchWithRetry(`/api/subsls-polygon?${params}`, undefined);
       if (seq !== polygonSeq) return; // filter changed again while this was in flight
       if (!geojson.features || geojson.features.length === 0) return;
+      // An SLS split into several SubSLS gets the SubSLS spelled out under
+      // its name; one that isn't split doesn't, because "SubSLS 00" under
+      // the name it already carries says nothing. Counted over what was
+      // actually returned, which is the same thing: the response holds
+      // every SubSLS of every SLS it touches.
+      const perSLS = new Map();
+      for (const f of geojson.features) {
+        const key = (f.properties && f.properties.idsubsls || "").slice(0, 14);
+        perSLS.set(key, (perSLS.get(key) || 0) + 1);
+      }
+
       polygonLayer = L.geoJSON(geojson, {
+        onEachFeature: (feature, layer) => {
+          const props = feature.properties || {};
+          if (!props.nmsls && !props.kdsls) return;
+          const bounds = layer.getBounds();
+          if (!bounds.isValid()) return;
+          const split = (perSLS.get((props.idsubsls || "").slice(0, 14)) || 0) > 1;
+          polygonLabels.push({ layer, bounds, html: polygonLabelHTML(props, split) });
+        },
         style: { color: "#e63946", weight: 2, fillColor: "#e63946", fillOpacity: 0.08 },
         // Purely a visual boundary, not a clickable/hoverable shape — and
         // rendered via polygonRenderer (plain SVG) rather than the map's
@@ -165,6 +264,7 @@
         interactive: false,
         renderer: polygonRenderer,
       }).addTo(map);
+      refreshPolygonLabels();
     } catch (err) {
       if (seq !== polygonSeq) return;
       // Optional overlay — log and move on rather than surfacing an error

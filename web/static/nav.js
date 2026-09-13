@@ -6,6 +6,7 @@
     { btn: document.getElementById("nav-daftar"), view: document.getElementById("view-daftar"), name: "daftar", path: "/daftar" },
     { btn: document.getElementById("nav-reg2022"), view: document.getElementById("view-reg2022"), name: "reg2022", path: "/reg2022" },
     { btn: document.getElementById("nav-petamatch"), view: document.getElementById("view-petamatch"), name: "petamatch", path: "/peta-match" },
+    { btn: document.getElementById("nav-tabulasi"), view: document.getElementById("view-tabulasi"), name: "tabulasi", path: "/tabulasi" },
   ];
 
   function tabForPath(path) {

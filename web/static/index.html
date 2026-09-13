@@ -14,6 +14,7 @@
     <button id="nav-daftar" class="nav-btn">Daftar</button>
     <button id="nav-reg2022" class="nav-btn">Daftar Match Regsosek</button>
     <button id="nav-petamatch" class="nav-btn">Peta Match Reg2022</button>
+    <button id="nav-tabulasi" class="nav-btn">Tabulasi</button>
     <!-- A real form post, not fetch: logging out should work even if the
          page's scripts failed to load. -->
     <form id="logout-form" method="post" action="/api/logout">
@@ -485,12 +486,96 @@
 
     <div id="match-loading" class="map-loading hidden">Memuat data…</div>
   </section>
+
+  <section id="view-tabulasi" class="view">
+    <div id="tabulasi-container" class="list-container">
+      <div id="tabulasi-head" class="list-head">
+        <h1>Tabulasi</h1>
+        <button id="tabulasi-filter-toggle" class="list-filter-toggle" type="button" aria-expanded="true" aria-controls="tabulasi-filters">
+          Filter <span aria-hidden="true">&#9650;</span>
+        </button>
+      </div>
+
+      <p class="list-note">Jumlah data per SubSLS menurut kategori variabel. Pilih variabel lewat tab, persempit wilayah lewat filter.</p>
+
+      <!-- One tab per variable, built by tabulasi.js from
+           GET /api/tabulasi/variables — the same list the server validates
+           ?var= against, so the two can't drift apart. -->
+      <div id="tabulasi-tabs" class="tab-strip" role="tablist" aria-label="Variabel tabulasi"></div>
+
+      <div id="tabulasi-filters" class="list-filters">
+        <div class="filter-group" role="group" aria-label="Filter wilayah">
+          <div class="filter-row">
+            <label for="kabkota-select-tab">Kabupaten/Kota:</label>
+            <select id="kabkota-select-tab">
+              <option value="">Semua Kabupaten/Kota</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="kecamatan-select-tab">Kecamatan:</label>
+            <select id="kecamatan-select-tab" disabled>
+              <option value="">Semua Kecamatan</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="desa-select-tab">Desa/Kelurahan:</label>
+            <select id="desa-select-tab" disabled>
+              <option value="">Semua Desa/Kelurahan</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="sls-select-tab">Kode SLS:</label>
+            <select id="sls-select-tab" disabled>
+              <option value="">Semua SLS</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="subsls-select-tab">Kode SubSLS:</label>
+            <select id="subsls-select-tab" disabled>
+              <option value="">Semua SubSLS</option>
+            </select>
+          </div>
+        </div>
+        <div id="tabulasi-actions" class="list-actions">
+          <button id="apply-filter-btn-tab" class="apply-filter-btn" type="button">Terapkan Filter</button>
+        </div>
+      </div>
+
+      <div id="tabulasi-toolbar" class="list-toolbar">
+        <span id="tabulasi-page-info" class="list-page-info">Memuat…</span>
+        <div id="tabulasi-pagination" class="list-pagination">
+          <button id="tabulasi-prev">&laquo; Sebelumnya</button>
+          <button id="tabulasi-next">Selanjutnya &raquo;</button>
+          <label for="tabulasi-pagesize">SubSLS/halaman:</label>
+          <select id="tabulasi-pagesize" class="list-pagesize">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="tabulasi-error" class="list-error hidden"></div>
+
+      <div id="tabulasi-table-wrap" class="list-table-wrap">
+        <table id="tabulasi-table" class="list-table tab-table">
+          <thead id="tabulasi-thead"></thead>
+          <tbody id="tabulasi-tbody"></tbody>
+          <tfoot id="tabulasi-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <div id="tabulasi-loading" class="list-loading hidden">Memuat data…</div>
+  </section>
   <script src="/vendor/leaflet/leaflet.js"></script>
   <script src="/common.js"></script>
   <script src="/app.js"></script>
   <script src="/daftar.js"></script>
   <script src="/reg2022.js"></script>
   <script src="/match-map.js"></script>
+  <script src="/tabulasi.js"></script>
   <script src="/nav.js"></script>
 </body>
 </html>

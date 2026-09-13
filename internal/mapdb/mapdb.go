@@ -28,6 +28,13 @@ const (
 	table      = "peta_sls_6400_rev"
 	codeColumn = "idsubsls"
 	geomColumn = "wkb_geometry"
+	// Label columns. nmsls is the SLS's own name ("RT 01 DUSUN I SINGA
+	// KARTI") and is filled on every one of the 17,039 rows — checked, not
+	// assumed. There is no name column for a SubSLS, only kdsubsls, so the
+	// map labels that level by its two-digit code.
+	slsNameColumn   = "nmsls"
+	slsCodeColumn   = "kdsls"
+	subslsCodeColum = "kdsubsls"
 )
 
 // New opens a pooled connection to the PostGIS database and verifies it
@@ -72,6 +79,10 @@ const geojsonDecimals = 6
 // an SLS, 10 is every SubSLS in a desa/kelurahan. Each feature carries its
 // own idsubsls in properties so the caller can tell them apart.
 //
+// Each feature also carries nmsls / kdsls / kdsubsls, which the map draws
+// as the polygon's label once the shape is big enough on screen to hold
+// one.
+//
 // A prefix with no matching row yields an empty FeatureCollection
 // (features: []), not an error — the caller decides whether that is worth
 // a 404. codePrefix is passed as a query parameter, never interpolated
@@ -81,10 +92,12 @@ const geojsonDecimals = 6
 // admit digits, so there is no % or _ to act as a wildcard.
 func SubSLSPolygonsGeoJSON(ctx context.Context, pool *pgxpool.Pool, codePrefix string) ([]byte, error) {
 	rows, err := pool.Query(ctx, fmt.Sprintf(
-		`SELECT %s, coalesce(ST_AsGeoJSON(%s, %d), '{}')
+		`SELECT %s, coalesce(%s, ''), coalesce(%s, ''), coalesce(%s, ''),
+		        coalesce(ST_AsGeoJSON(%s, %d), '{}')
 		 FROM %s WHERE %s LIKE $1 || '%%'
 		 ORDER BY %s LIMIT %d`,
-		codeColumn, geomColumn, geojsonDecimals, table, codeColumn, codeColumn, PolygonMaxRows,
+		codeColumn, slsNameColumn, slsCodeColumn, subslsCodeColum,
+		geomColumn, geojsonDecimals, table, codeColumn, codeColumn, PolygonMaxRows,
 	), codePrefix)
 	if err != nil {
 		return nil, fmt.Errorf("mapdb: query: %w", err)
@@ -93,19 +106,25 @@ func SubSLSPolygonsGeoJSON(ctx context.Context, pool *pgxpool.Pool, codePrefix s
 
 	var features []string
 	for rows.Next() {
-		var code, geomJSON string
-		if err := rows.Scan(&code, &geomJSON); err != nil {
+		var code, slsName, slsCode, subslsCode, geomJSON string
+		if err := rows.Scan(&code, &slsName, &slsCode, &subslsCode, &geomJSON); err != nil {
 			return nil, fmt.Errorf("mapdb: scan: %w", err)
 		}
-		// code comes from the database, not the request, but it still goes
-		// into a JSON string that a browser will parse — encode it rather
-		// than trusting it to contain nothing that needs escaping.
-		idJSON, err := json.Marshal(code)
+		// These come from the database, not the request, but they still go
+		// into JSON strings a browser will parse — and nmsls is free text.
+		// Encode rather than trusting them to contain nothing that needs
+		// escaping.
+		props, err := json.Marshal(map[string]string{
+			"idsubsls": code,
+			"nmsls":    slsName,
+			"kdsls":    slsCode,
+			"kdsubsls": subslsCode,
+		})
 		if err != nil {
-			return nil, fmt.Errorf("mapdb: encode idsubsls: %w", err)
+			return nil, fmt.Errorf("mapdb: encode properties: %w", err)
 		}
 		features = append(features, fmt.Sprintf(
-			`{"type":"Feature","geometry":%s,"properties":{"idsubsls":%s}}`, geomJSON, idJSON))
+			`{"type":"Feature","geometry":%s,"properties":%s}`, geomJSON, props))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("mapdb: rows: %w", err)

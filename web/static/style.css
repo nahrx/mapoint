@@ -870,6 +870,113 @@ body {
   flex-wrap: wrap;
 }
 
+/* =====================================================================
+   Tabulasi menu: variable tabs + the cross-tabulation table
+   ===================================================================== */
+
+/* Underline tabs, sitting on the card's top edge. Buttons rather than
+   links: switching variables is state, not navigation — the URL stays
+   /tabulasi and Back leaves the menu, which is what a tab strip inside a
+   page is expected to do. */
+.tab-strip {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  margin-bottom: -1px; /* sits on the strip's rule so the active one covers it */
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.tab-btn:hover {
+  color: var(--navy);
+}
+
+.tab-btn[aria-selected="true"] {
+  color: var(--navy);
+  border-bottom-color: var(--orange);
+}
+
+/* Category headers can be long (the longest Penggunaan Bangunan label is
+   ~100 characters); let them wrap inside a bounded width rather than
+   turning the table into one row that scrolls for a screen. */
+.tab-table th.tab-cat {
+  max-width: 160px;
+  white-space: normal;
+  line-height: 1.25;
+  vertical-align: bottom;
+}
+
+.tab-table th.tab-cat-empty,
+.tab-table th.tab-cat-empty + * {
+  font-style: italic;
+}
+
+/* ID SUBSLS stays put while the categories scroll under it, so a row
+   never loses its identity off the left edge. */
+.tab-table .tab-subsls {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+
+/* The shared header rule has no z-index, which is fine for a plain list
+   but not here: the sticky ID SUBSLS cells (z-index 1) would scroll over
+   the header. Header above column, corner above both. */
+.tab-table thead th {
+  z-index: 2;
+}
+
+.tab-table thead .tab-subsls {
+  z-index: 3;
+}
+
+.tab-table tbody tr:nth-child(even) td.tab-subsls {
+  background: var(--surface-raised);
+}
+
+.tab-table td.tab-zero {
+  color: var(--text-faint);
+}
+
+.tab-table .tab-total {
+  font-weight: 650;
+  border-left: 1px solid var(--border);
+}
+
+/* Footer: the grand total row for the whole filter. Sticky to the bottom
+   for the same reason the header is sticky to the top. */
+.tab-table tfoot th,
+.tab-table tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--surface-sunken);
+  border-top: 2px solid var(--border-strong);
+  font-weight: 700;
+}
+
+.tab-table tfoot .tab-grand-label {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  z-index: 3;
+}
+
 /* Actions sit on their own full-width row under the filter grid: apply on
    the left (what you press first), downloads pushed to the right. */
 .list-actions {
@@ -1393,6 +1500,39 @@ body {
    drawn on, so without this the tooltip would die wherever a label
    overlaps a dot. White halo instead of a filled box so a dense cluster of
    labels stays readable without hiding the map. */
+/* SLS name written across its polygon, with the SubSLS under it when the
+   SLS is split into more than one. Same halo-on-text treatment as the
+   building numbers: no box, so it never hides the boundary it labels, and
+   still readable over both map tiles and satellite imagery.
+
+   The icon has no fixed size (the text decides), so Leaflet can't centre
+   it for us — translate does, from the anchor point Leaflet does know. */
+.poly-label {
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  font: 700 12px/1.15 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #7a1220;
+  text-shadow:
+    -1.5px -1.5px 0 #fff, 1.5px -1.5px 0 #fff,
+    -1.5px 1.5px 0 #fff, 1.5px 1.5px 0 #fff,
+    0 0 3px #fff;
+}
+
+.poly-label-sls,
+.poly-label-sub {
+  display: block;
+  white-space: nowrap;
+}
+
+/* Lighter and smaller: the SubSLS is a qualifier on the name above it, not
+   a second name. */
+.poly-label-sub {
+  font-size: 10.5px;
+  font-weight: 650;
+  opacity: 0.85;
+}
+
 .bangunan-label {
   pointer-events: none;
   white-space: nowrap;

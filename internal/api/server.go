@@ -93,6 +93,8 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /api/match-points", s.handleMatchPoints)
 	mux.HandleFunc("GET /api/match-bounds", s.handleMatchBounds)
 	mux.HandleFunc("GET /api/subsls-polygon", s.handleSubSLSPolygon)
+	mux.HandleFunc("GET /api/tabulasi/variables", s.handleTabulasiVariables)
+	mux.HandleFunc("GET /api/tabulasi", s.handleTabulasi)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /login", s.handleLoginPage(staticFS))
 	mux.HandleFunc("POST /api/login", s.handleLogin)
@@ -104,6 +106,7 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /daftar", s.serveIndex(staticFS))
 	mux.HandleFunc("GET /reg2022", s.serveIndex(staticFS))
 	mux.HandleFunc("GET /peta-match", s.serveIndex(staticFS))
+	mux.HandleFunc("GET /tabulasi", s.serveIndex(staticFS))
 	mux.Handle("/", http.FileServer(staticFS))
 
 	// requireAuth sits outside the mux so it covers every route including
@@ -698,6 +701,61 @@ func (s *Server) handleListXLSX(w http.ResponseWriter, r *http.Request) {
 // map to draw once a filter is pinned all the way down to one SubSLS —
 // same all-five-levels-required rule as the PDF download, since a
 // boundary polygon is only meaningful for one specific SubSLS.
+// handleTabulasiVariables lists the five cross-tabulation variables in tab
+// order, so the frontend builds its tabs from the same list the server
+// validates against instead of a copy that could drift.
+func (s *Server) handleTabulasiVariables(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, points.TabulasiVariables())
+}
+
+// handleTabulasi serves one page of the SubSLS × category cross-tabulation
+// for the variable named by ?var=. Filters are the same as /api/list —
+// parseFilter — though the menu only exposes the wilayah ones. page and
+// pageSize count SubSLS, not underlying rows.
+func (s *Server) handleTabulasi(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	variable, err := points.ParseTabulasiVariable(q.Get("var"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	filter, err := parseFilter(q)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	page := 1
+	if v := q.Get("page"); v != "" {
+		parsed, err := strconv.Atoi(v)
+		if err != nil || parsed < 1 {
+			writeError(w, http.StatusBadRequest, "invalid page")
+			return
+		}
+		page = parsed
+	}
+	pageSize := points.DefaultPageSize
+	if v := q.Get("pageSize"); v != "" {
+		parsed, err := strconv.Atoi(v)
+		if err != nil || parsed < 1 {
+			writeError(w, http.StatusBadRequest, "invalid pageSize")
+			return
+		}
+		pageSize = parsed
+	}
+
+	resp, err := s.svc.Tabulasi(r.Context(), filter, variable, page, pageSize)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		s.log.Error("tabulasi query failed", "var", variable.Key, "err", err)
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (s *Server) handleSubSLSPolygon(w http.ResponseWriter, r *http.Request) {
 	if s.mapPool == nil {
 		writeError(w, http.StatusServiceUnavailable, "SubSLS polygon layer is not configured on this server")
