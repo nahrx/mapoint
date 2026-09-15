@@ -465,6 +465,12 @@ body {
   margin: 3px 0;
 }
 
+/* Legend rows for optional layers are only shown while that layer is on
+   (there is no page-wide .hidden rule; this file scopes each one). */
+.legend-row.hidden {
+  display: none;
+}
+
 .dot {
   flex-shrink: 0;
   display: inline-block;
@@ -639,9 +645,40 @@ body {
   display: none;
 }
 
+/* Point tooltips. Leaflet gives .leaflet-tooltip white-space: nowrap, so
+   a long value — the longest Penggunaan Bangunan label is ~100 characters,
+   and an alamat can be longer — stretched the box to most of the screen.
+   Cap the width and let values wrap onto the next line instead; the label
+   stays on the same line as the start of its value, so a wrapped entry
+   still reads as one item. */
+.leaflet-tooltip:has(.titik-tooltip) {
+  white-space: normal;
+  /* width: max-content matters as much as the cap. The tooltip is
+     absolutely positioned, so without it the browser shrink-wraps it to
+     the space left between its anchor and the map edge — near the right
+     edge that collapsed the whole box to one character per line. */
+  width: max-content;
+  max-width: min(320px, 70vw);
+}
+
 .titik-tooltip {
   font-size: 12px;
-  line-height: 1.55;
+  line-height: 1.45;
+}
+
+.titik-tooltip > div {
+  /* Continuation lines indent under the value, not under the label, so a
+     wrapped value is visually one block. */
+  padding-left: 1em;
+  text-indent: -1em;
+  /* break-word, not anywhere: only a single word wider than the box gets
+     split; anywhere would also let the box shrink to one character wide
+     when space is tight, the very failure width: max-content guards. */
+  overflow-wrap: break-word;
+}
+
+.titik-tooltip > div + div {
+  margin-top: 2px;
 }
 
 .titik-tooltip b {
@@ -1700,4 +1737,71 @@ body {
    its legend. */
 .dot-match {
   background: #7b4fbf;
+}
+
+.dot-match-cluster {
+  background: rgba(123, 79, 191, 0.88);
+}
+
+/* Regsosek clusters on the main map. Purple like the points, so that a
+   viewport with both SE2026 clusters (orange) and Regsosek clusters never
+   reads as one set of numbers. */
+.cluster-icon.cluster-regsosek {
+  background: rgba(123, 79, 191, 0.88);
+}
+
+/* The "tampilkan titik Regsosek" switch in the Peta panel: a checkbox
+   styled as a toggle, because it flips a layer on and off rather than
+   picking a value — a <select> with Ya/Tidak would say "filter". */
+.layer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 2px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.layer-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.layer-toggle-switch {
+  flex-shrink: 0;
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  transition: background var(--transition);
+}
+
+.layer-toggle-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: transform var(--transition);
+}
+
+.layer-toggle input:checked + .layer-toggle-switch {
+  background: #7b4fbf;
+}
+
+.layer-toggle input:checked + .layer-toggle-switch::after {
+  transform: translateX(14px);
+}
+
+.layer-toggle input:focus-visible + .layer-toggle-switch {
+  box-shadow: var(--ring);
 }

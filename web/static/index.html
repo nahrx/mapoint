@@ -103,23 +103,17 @@
             <div class="multiselect" id="status-ms-peta"
                  data-placeholder="Semua Status" data-labelledby="status-label-peta"></div>
           </div>
-          <div class="filter-row">
-            <label for="flagbaru-select">Ditemukan di Assignment Baru:</label>
-            <select id="flagbaru-select">
-              <option value="">Semua</option>
-              <option value="1">Ya</option>
-              <option value="0">Tidak</option>
-            </select>
-          </div>
-          <div class="filter-row">
-            <label for="flagregsosek-select">Ditemukan di Regsosek:</label>
-            <select id="flagregsosek-select">
-              <option value="">Semua</option>
-              <option value="1">Ya</option>
-              <option value="0">Tidak</option>
-            </select>
-          </div>
         </div>
+        <!-- A layer switch, not a filter: it takes effect at once and is not
+             part of Terapkan Filter or of saved presets. The layer is the
+             Regsosek coordinates the Peta Match Reg2022 menu maps, drawn
+             here on top of the SE2026 points so the two can be compared in
+             one view. -->
+        <label class="layer-toggle" for="regsosek-layer-toggle">
+          <input type="checkbox" id="regsosek-layer-toggle">
+          <span class="layer-toggle-switch" aria-hidden="true"></span>
+          <span class="layer-toggle-text">Tampilkan titik Regsosek</span>
+        </label>
         <div class="filter-row" id="apply-filter-row">
           <button id="apply-filter-btn" class="apply-filter-btn" type="button">Terapkan Filter</button>
         </div>
@@ -135,6 +129,8 @@
         <div id="legend" class="map-legend">
           <div class="legend-row"><span class="dot dot-point"></span> Titik individual</div>
           <div class="legend-row"><span class="dot dot-cluster"></span> Kelompok (angka = jumlah titik)</div>
+          <div class="legend-row hidden" id="legend-regsosek"><span class="dot dot-match"></span> Titik Regsosek (Reg2022)</div>
+          <div class="legend-row hidden" id="legend-regsosek-cluster"><span class="dot dot-match-cluster"></span> Kelompok Regsosek</div>
         </div>
       </div>
     </div>

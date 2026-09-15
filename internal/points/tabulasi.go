@@ -78,11 +78,16 @@ type TabulasiRow struct {
 	Total         uint64            `json:"total"`
 }
 
-// TabulasiPage is one page of the cross-tabulation. Columns is the full
-// category order the client should render, blank ("") last when any row
-// in the whole filter has one; Grand holds the same categories summed over
-// the whole filter, not just this page, so the footer stays correct while
-// paging.
+// TabulasiPage is one page of the cross-tabulation, the JSON shape of
+// GET /api/tabulasi. Columns is the full category order the client should
+// render, blank ("") last when any row in the whole filter has one; Grand
+// holds the same categories summed over the whole filter, not just this
+// page, so the footer stays correct while paging.
+//
+// Assembled by the API layer, not here: paging happens after sorting, and
+// four of the sortable columns are wilayah names that come from PostGIS,
+// which this package doesn't know about. This package returns the whole
+// table (TabulasiAll); internal/api names, sorts and slices it.
 type TabulasiPage struct {
 	Variable   string            `json:"variable"`
 	Columns    []string          `json:"columns"`
@@ -113,59 +118,21 @@ type TabulasiTable struct {
 // hit it says so in its header rather than silently stopping short.
 const TabulasiMaxRows = 50000
 
-// Tabulasi cross-tabulates v against level_6_full_code for the rows
-// matching filter: one row per SubSLS, one column per category. page is
-// 1-indexed and counts SubSLS, not underlying rows; pageSize is clamped to
-// [1, MaxPageSize] like List.
+// TabulasiAll cross-tabulates v against level_6_full_code for the rows
+// matching filter: one row per SubSLS, one column per category, every
+// SubSLS up to TabulasiMaxRows, ordered by code. Both the on-screen table
+// and the Excel export go through this — there is no server-side LIMIT
+// path any more, because the table sorts on columns ClickHouse can't sort
+// by (wilayah names), and measured against the live table the whole
+// province's 17k rows cost 0.14s to fetch: the GROUP BY over 2.19M rows is
+// the work, and a LIMIT saved only the transfer of the result.
 //
-// Three queries, shared with TabulasiAll. The page query groups twice —
-// first (subsls, value) to count, then subsls to fold each SubSLS's counts
-// into a pair of parallel arrays — and pages on the outer GROUP BY, so
-// LIMIT/OFFSET apply to SubSLS. Parallel arrays rather than groupArray of
-// a tuple because the driver scans []string and []uint64 without
-// ceremony, and a tuple would come back as untyped []any. The other two
-// give the grand row and the SubSLS count.
-//
-// Measured against the live table: the whole province (17.1k SubSLS,
-// 2.19M rows) answers in 0.25–0.34s per variable — see README, Menu
-// Tabulasi.
-func (s *Service) Tabulasi(ctx context.Context, filter Filter, v TabulasiVariable, page, pageSize int) (TabulasiPage, error) {
-	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
-	defer cancel()
-
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = DefaultPageSize
-	}
-	if pageSize > MaxPageSize {
-		pageSize = MaxPageSize
-	}
-
-	grand, grandTotal, totalRows, err := s.tabulasiTotals(ctx, filter, v)
-	if err != nil {
-		return TabulasiPage{}, err
-	}
-	rows, err := s.tabulasiRows(ctx, filter, v, pageSize, (page-1)*pageSize)
-	if err != nil {
-		return TabulasiPage{}, err
-	}
-	return TabulasiPage{
-		Variable:   v.Key,
-		Columns:    tabulasiColumns(v, grand),
-		Rows:       rows,
-		TotalRows:  totalRows,
-		Grand:      grand,
-		GrandTotal: grandTotal,
-		Page:       page,
-		PageSize:   pageSize,
-	}, nil
-}
-
-// TabulasiAll is Tabulasi without paging: every SubSLS matching filter,
-// up to TabulasiMaxRows. For the Excel export, which wants the whole
-// table in one sheet rather than one screen's worth.
+// Three queries. The rows query groups twice — first (subsls, value) to
+// count, then subsls to fold each SubSLS's counts into a pair of parallel
+// arrays. Parallel arrays rather than groupArray of a tuple because the
+// driver scans []string and []uint64 without ceremony, and a tuple would
+// come back as untyped []any. The other two give the grand row and the
+// SubSLS count.
 func (s *Service) TabulasiAll(ctx context.Context, filter Filter, v TabulasiVariable) (TabulasiTable, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -174,7 +141,7 @@ func (s *Service) TabulasiAll(ctx context.Context, filter Filter, v TabulasiVari
 	if err != nil {
 		return TabulasiTable{}, err
 	}
-	rows, err := s.tabulasiRows(ctx, filter, v, TabulasiMaxRows, 0)
+	rows, err := s.tabulasiRows(ctx, filter, v, TabulasiMaxRows)
 	if err != nil {
 		return TabulasiTable{}, err
 	}
@@ -250,9 +217,9 @@ func tabulasiColumns(v TabulasiVariable, grand map[string]uint64) []string {
 	return columns
 }
 
-// tabulasiRows returns limit SubSLS from offset, each with its per-category
+// tabulasiRows returns up to limit SubSLS, each with its per-category
 // counts, ordered by code.
-func (s *Service) tabulasiRows(ctx context.Context, filter Filter, v TabulasiVariable, limit, offset int) ([]TabulasiRow, error) {
+func (s *Service) tabulasiRows(ctx context.Context, filter Filter, v TabulasiVariable, limit int) ([]TabulasiRow, error) {
 	where, args := filter.clause()
 	q := fmt.Sprintf(`SELECT subsls, groupArray(val) AS vals, groupArray(n) AS ns, sum(n) AS total
 		FROM (
@@ -262,7 +229,7 @@ func (s *Service) tabulasiRows(ctx context.Context, filter Filter, v TabulasiVar
 		)
 		GROUP BY subsls
 		ORDER BY subsls
-		LIMIT %d OFFSET %d`, v.Column, table, where, limit, offset)
+		LIMIT %d`, v.Column, table, where, limit)
 	rows, err := s.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("points: tabulasi page: %w", err)

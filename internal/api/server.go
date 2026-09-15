@@ -42,6 +42,10 @@ type Server struct {
 	// clear "not configured" response rather than a nil-pointer panic.
 	mapPool *pgxpool.Pool
 
+	// wilayahNames caches the PostGIS name table for the Tabulasi menu's
+	// name columns — see wilayahNameCache.
+	wilayahNames wilayahNameCache
+
 	// dataUpdatedAt is the free-text stamp shown above the Daftar filters,
 	// or "" when DATA_UPDATED_AT isn't set — see config.Config.
 	dataUpdatedAt string
@@ -711,9 +715,14 @@ func (s *Server) handleTabulasiVariables(w http.ResponseWriter, r *http.Request)
 }
 
 // handleTabulasi serves one page of the SubSLS × category cross-tabulation
-// for the variable named by ?var=. Filters are the same as /api/list —
-// parseFilter — though the menu only exposes the wilayah ones. page and
-// pageSize count SubSLS, not underlying rows.
+// for the variable named by ?var=, sorted by ?sortBy= (see tabulasiSort).
+// Filters are the same as /api/list — parseFilter — though the menu only
+// exposes the wilayah ones. page and pageSize count SubSLS, not underlying
+// rows.
+//
+// The whole table is fetched, named and sorted before the page is cut:
+// four of the sortable columns are PostGIS names ClickHouse can't order
+// by, and the fetch is cheap (see points.TabulasiAll).
 func (s *Server) handleTabulasi(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	variable, err := points.ParseTabulasiVariable(q.Get("var"))
@@ -722,6 +731,11 @@ func (s *Server) handleTabulasi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filter, err := parseFilter(q)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	sortOrder, err := parseTabulasiSort(q)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -746,7 +760,11 @@ func (s *Server) handleTabulasi(w http.ResponseWriter, r *http.Request) {
 		pageSize = parsed
 	}
 
-	resp, err := s.svc.Tabulasi(r.Context(), filter, variable, page, pageSize)
+	if pageSize > points.MaxPageSize {
+		pageSize = points.MaxPageSize
+	}
+
+	t, err := s.svc.TabulasiAll(r.Context(), filter, variable)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
@@ -755,8 +773,38 @@ func (s *Server) handleTabulasi(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	s.fillTabulasiNames(r.Context(), resp.Rows)
-	writeJSON(w, http.StatusOK, resp)
+
+	// A category sort is only meaningful for a column this table has —
+	// checked against the real column list, which includes any unexpected
+	// value the data turned up, not just the enum.
+	if sortOrder.key == "category" {
+		found := false
+		for _, c := range t.Columns {
+			if c == sortOrder.category {
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("category %q is not a column of %s", sortOrder.category, variable.Key))
+			return
+		}
+	}
+
+	// Names before sorting, since four of the sort keys are names.
+	s.fillTabulasiNames(r.Context(), t.Rows)
+	sortTabulasiRows(t.Rows, sortOrder)
+
+	writeJSON(w, http.StatusOK, points.TabulasiPage{
+		Variable:   variable.Key,
+		Columns:    t.Columns,
+		Rows:       pageOf(t.Rows, page, pageSize),
+		TotalRows:  uint64(len(t.Rows)),
+		Grand:      t.Grand,
+		GrandTotal: t.GrandTotal,
+		Page:       page,
+		PageSize:   pageSize,
+	})
 }
 
 // fillTabulasiNames adds the kabupaten/kota, kecamatan, desa and SLS names
@@ -768,36 +816,51 @@ func (s *Server) handleTabulasi(w http.ResponseWriter, r *http.Request) {
 // the tabulation is still served with those columns blank rather than
 // turned into an error. A failure is logged once per request.
 func (s *Server) fillTabulasiNames(ctx context.Context, rows []points.TabulasiRow) {
-	applyWilayahNames(rows, s.lookupWilayahNames(ctx, rows))
+	applyWilayahNames(rows, s.wilayahNameMap(ctx))
 }
 
-// lookupWilayahNames fetches the PostGIS names for every distinct SLS the
-// rows belong to. nil when PostGIS is not configured or the query fails
-// (logged) — applyWilayahNames treats nil as "no names".
-func (s *Server) lookupWilayahNames(ctx context.Context, rows []points.TabulasiRow) map[string]mapdb.WilayahNames {
-	if s.mapPool == nil || len(rows) == 0 {
+// wilayahNameCache holds the whole PostGIS name table (14k SLS, about a
+// megabyte) so that a Tabulasi page costs no PostGIS round trip at all.
+// Loaded on first use, refreshed after wilayahNamesTTL; if a refresh
+// fails the previous map stays in service (stale names beat blank ones)
+// and the failure is logged once per attempt.
+type wilayahNameCache struct {
+	mu       sync.Mutex
+	names    map[string]mapdb.WilayahNames
+	loadedAt time.Time
+}
+
+// wilayahNamesTTL is how long a loaded name table is trusted. The layer
+// changes only when someone reloads it in PostGIS, which is a manual,
+// infrequent event; half an hour of possible staleness on a name column
+// is the right trade against a query per page.
+const wilayahNamesTTL = 30 * time.Minute
+
+// wilayahNameMap returns the cached name table, loading or refreshing it
+// first if needed. nil when PostGIS is not configured — applyWilayahNames
+// treats nil as "no names". The lock is held across the load so that a
+// burst of requests on an empty cache runs one query, not one each.
+func (s *Server) wilayahNameMap(ctx context.Context) map[string]mapdb.WilayahNames {
+	if s.mapPool == nil {
 		return nil
 	}
-	seen := make(map[string]bool, len(rows))
-	codes := make([]string, 0, len(rows))
-	for _, r := range rows {
-		if len(r.SubSLS) < 14 {
-			continue
-		}
-		c := r.SubSLS[:14]
-		if !seen[c] {
-			seen[c] = true
-			codes = append(codes, c)
-		}
+	c := &s.wilayahNames
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.names != nil && time.Since(c.loadedAt) < wilayahNamesTTL {
+		return c.names
 	}
-	names, err := mapdb.SLSWilayahNames(ctx, s.mapPool, codes)
+	names, err := mapdb.AllSLSWilayahNames(ctx, s.mapPool)
 	if err != nil {
 		if ctx.Err() == nil {
-			s.log.Warn("tabulasi wilayah names unavailable", "err", err)
+			s.log.Warn("wilayah names unavailable, serving cached copy", "err", err, "cached", len(c.names))
 		}
-		return nil
+		return c.names // possibly nil on the very first attempt
 	}
-	return names
+	c.names = names
+	c.loadedAt = time.Now()
+	s.log.Info("wilayah names loaded", "sls", len(names))
+	return c.names
 }
 
 // applyWilayahNames writes the kabupaten/kota name (static, always
@@ -865,10 +928,7 @@ func (s *Server) handleTabulasiXLSX(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Every table covers the same SubSLS (same filter, same ordering), so
-	// the wilayah names are looked up once and applied to all six rather
-	// than fetched six times.
-	names := s.lookupWilayahNames(r.Context(), tables[0].Rows)
+	names := s.wilayahNameMap(r.Context())
 	for i := range tables {
 		applyWilayahNames(tables[i].Rows, names)
 	}

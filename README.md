@@ -329,6 +329,67 @@ Kalau tidak ada yang cocok, server mengirim `total: 0` dengan keempat batas
 non-finite — lihat catatan `Number.isFinite` vs `isFinite` di file yang
 sama, yang tanpa itu akan melempar tampilan ke 0,0 di Atlantik).
 
+### Tooltip titik: lebar dibatasi, nilai panjang membungkus
+
+Leaflet memberi `.leaflet-tooltip` `white-space: nowrap`, jadi satu nilai panjang —
+label Penggunaan Bangunan terpanjang ±100 karakter, alamat bisa lebih —
+meregangkan kotak tooltip sampai sebagian besar layar. Sekarang kotaknya
+dibatasi `max-width: min(320px, 70vw)` dan nilainya membungkus ke baris
+berikutnya; baris lanjutan diindentasi di bawah nilai (bukan di bawah
+label) lewat `padding-left: 1em; text-indent: -1em`, jadi satu entri yang
+membungkus tetap terbaca sebagai satu blok. Berlaku untuk tooltip di menu
+Peta dan Peta Match (keduanya `.titik-tooltip`).
+
+Dua detail yang penting agar tidak salah: (1) `width: max-content` wajib
+menyertai `max-width` — tooltip diposisikan absolut, dan tanpa itu browser
+menyusutkannya ke sisa ruang antara jangkar dan tepi peta; di dekat tepi
+kanan, percobaan pertama menghasilkan kotak **selebar satu karakter per
+baris**. (2) `overflow-wrap: break-word`, bukan `anywhere`: `anywhere` juga
+mengizinkan kotak menyusut sampai satu karakter saat ruang sempit —
+kegagalan yang sama dari arah lain. Diuji: tooltip dengan Assignment ID
+panjang kini 320px, ID-nya membungkus ke baris kedua dengan indentasi.
+
+### Layer titik Regsosek di menu Peta
+
+Sakelar **"Tampilkan titik Regsosek"** di panel filter Peta (di bawah
+kelompok filter, di atas tombol Terapkan Filter) menambahkan lapisan kedua
+ke peta: koordinat Regsosek (`latitude_regsosek`/`longitude_regsosek` dari
+`se2026_match_regsosek`) — titik yang sama yang dipetakan menu Peta Match
+Reg2022, digambar **ungu** (`#7b4fbf`, warna yang sama dengan menu itu) di atas
+titik SE2026 supaya keduanya bisa dibandingkan dalam satu tampilan.
+Titiknya sedikit lebih kecil (radius 4 vs 5) supaya kalau titik Regsosek dan
+SE2026 berimpit, keduanya tetap terlihat; kelompoknya ungu juga
+(`.cluster-regsosek`), supaya viewport yang memuat kelompok kedua tabel tidak
+terbaca sebagai satu deret angka.
+
+Ini **sakelar lapisan, bukan filter**: berlaku seketika, tidak menunggu
+Terapkan Filter, dan tidak ikut disimpan di preset. Endpoint-nya
+`/api/match-points` yang sudah ada, dengan cakupan **wilayah yang diterapkan
+saja** — filter atribut dan cari nama di panel ini bicara soal kolom SE2026
+dan tidak berarti apa-apa pada tabel Regsosek. Lapisan ini punya urutan
+request dan `AbortController` sendiri, jadi tidak pernah membatalkan (atau
+dibatalkan oleh) pemuatan lapisan utama. Saat menyala, panel statistik
+menambah baris "Titik Regsosek di area ini: N" dan legenda menampilkan
+entri ungu.
+
+Dua filter lama di panel Peta — "Ditemukan di Assignment Baru" dan
+"Ditemukan di Regsosek" — **dihapus** dari menu ini bersamaan dengan
+penambahan sakelar tersebut (filter yang sama tetap ada di menu Daftar, dan
+kedua kolom flag tetap tampil di tooltip titik). Endpoint `/api/points` tetap
+menerima `flagBaru`/`flagRegsosek`; hanya kontrolnya yang tidak lagi ada di
+panel. Preset yang disimpan dari Daftar dengan flag terisi tetap bisa
+diterapkan di Peta — field-nya diabaikan di sini.
+
+Diuji dengan filter desa Sangatta Utara (`6404040012`): sakelar menyala →
+satu request `/api/match-points` dengan wilayah yang sama, 2.179 titik
+Regsosek ungu tergambar, baris statistik dan legenda muncul; sakelar mati →
+lapisan, baris, dan legenda hilang. Catatan data yang terlihat saat itu:
+dari 2.297 baris Regsosek desa itu, **102 berkoordinat lebih dari 30 km**
+dari Sangatta (sampai Bontang dan Tenggarong) — titiknya memang muncul jauh
+di luar polygon desanya karena pencocokan wilayahnya lewat kode
+`level_6_full_code`, bukan lokasi. Itu kualitas koordinat sumbernya, bukan
+kesalahan lapisan.
+
 ### Jenis peta (OpenStreetMap / Satelit)
 
 Kontrol layer di pojok kiri bawah peta memilih basemap: "Peta Jalan
@@ -685,7 +746,8 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
   Panel Peta (sidebar ±260px) dan layar di bawah 600px memakai satu kontrol
   per baris — override `.map-panel-body .filter-group` dan media query-nya.
 
-  **Kelima filter ini juga ada di menu Peta**, memakai komponen dan
+  **Kelima filter ini juga ada di menu Peta** (dua filter flag "Ditemukan
+  di …" tidak — lihat "Layer titik Regsosek di menu Peta"), memakai komponen dan
   endpoint filter yang sama — `/api/points` dan `/api/list` sama-sama lewat
   `parseFilter`, jadi tidak ada apa pun di backend yang perlu ditambah
   untuk mendukungnya di peta. Satu beda perilaku yang perlu diketahui:
@@ -733,6 +795,14 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
     dicocokkan dengan data lain), jadi kolom `assignment_id` dan ID SUBSLS
     per baris selalu disertakan di sini (tidak kondisional seperti di PDF),
     plus header tabelnya di-freeze dan dikasih AutoFilter bawaan Excel.
+    Juga kolom **Latitude** dan **Longitude** (`latitude_ppl`/`longitude_ppl`)
+    tepat setelah ID SUBSLS — sebagai angka, bukan teks, supaya bisa
+    langsung dipetakan ulang di alat lain. Baris tanpa koordinat terpakai
+    (0 atau non-finite; 861 ribu dari 2,19 juta baris) dikosongkan, bukan
+    ditulis 0: angka 0 di kolom Latitude terbaca sebagai titik sungguhan di
+    khatulistiwa, dan itu lebih buruk daripada sel kosong (`coordCell` di
+    `internal/xlsxreport`). PDF tidak diberi kolom ini — lebarnya sudah
+    habis.
     Digenerate pakai `github.com/xuri/excelize/v2` lewat
     `internal/xlsxreport/`.
 
@@ -847,7 +917,14 @@ tanpa alasan. Aturannya ditegakkan di server (`prepareRegsosekReport` di
 Isi kedua format sama, dengan dua beda yang disengaja seperti pada laporan
 Daftar: PDF membuang kolom Assignment ID (bukan info yang dibaca dari
 kertas) sementara Excel menyertakannya, dan lebar yang tersisa di PDF
-dibagi ke kolom nama.
+dibagi ke kolom nama. Excel juga membawa **Latitude** dan **Longitude**
+(`latitude_regsosek`/`longitude_regsosek` — koordinat Regsosek yang dipetakan
+menu Peta Match) tepat setelah ID SubSLS, sebagai angka; untuk itu kedua
+kolom ikut di `rowColumns` dan `Row.Lat`/`Row.Lon`, jadi baris `/api/reg2022`
+pun membawanya meski tabel di layar tidak menampilkannya. Di tabel ini
+seluruh baris berkoordinat (dicek: tidak ada nol/non-finite), tapi
+`coordCell` yang sama tetap dipakai supaya kalau suatu saat ada, selnya
+kosong dan bukan 0.
 Keduanya memakai ulang blok "Keterangan Wilayah"/"Filter Tambahan" yang
 sama lewat `report.Region` — `match_status` menempati slot Status di blok
 itu, jadi tidak perlu menambah field yang cuma dipakai satu laporan.
@@ -909,11 +986,21 @@ berarti mentabulasi kolom yang salah tanpa memberi tahu.
 Empat kolom nama mendahului ID SUBSLS: **Kabupaten/Kota, Kecamatan,
 Desa/Kelurahan, Nama SLS**. Kabupaten/kota dari tabel statis di `points`;
 tiga lainnya dari layer PostGIS (`nmkec`/`nmdesa`/`nmsls` di
-`peta_sls_6400_rev`), diambil **sekali per request** dengan
-`idsls = ANY($1)` untuk semua SLS di halaman itu — bukan satu lookup per
-baris (`mapdb.SLSWilayahNames`, terukur 80 ms untuk seluruh provinsi /
-14.332 SLS, sequential scan tabel 17 ribu baris yang tidak butuh indeks).
-Pengisiannya di lapisan API (`fillTabulasiNames`), bukan di `points`,
+`peta_sls_6400_rev`). Seluruh tabel nama itu (14.332 SLS, ±1 MB) dimuat
+**sekali** dan di-cache di memori server selama 30 menit
+(`wilayahNameCache` di `internal/api`; `mapdb.AllSLSWilayahNames`, 80 ms),
+jadi satu halaman tabulasi tidak menyentuh PostGIS sama sekali. Namanya
+statis — berubah hanya kalau layer-nya dimuat ulang, kejadian manual yang
+jarang — dan kalau refresh gagal, peta lama tetap dipakai (nama basi lebih
+baik daripada kosong) dengan satu baris log.
+
+Cara itu dipilih setelah cara pertama terbukti jebakan: versi awal mengambil
+nama hanya untuk kode yang dibutuhkan lewat `idsls = ANY($1)` — untuk 200 kode
+di satu halaman itu sepele, tapi begitu pengurutan menuntut nama untuk
+*seluruh* baris, 14.332 kode di array membuat PostgreSQL menelusuri array
+itu per baris: 17 ribu × 14 ribu perbandingan, **4,3 detik**, di setiap
+halaman. `EXPLAIN ANALYZE` yang membongkarnya. Pengisian ke baris tetap di
+lapisan API (`fillTabulasiNames`), bukan di `points`,
 karena paket itu hanya bicara dengan ClickHouse; namanya *pengayaan*, bukan
 data — tanpa PostGIS, atau kalau query-nya gagal, tabulasi tetap disajikan
 dengan kolom nama kosong ("-"), bukan berubah jadi error. Kode SubSLS yang
@@ -936,22 +1023,48 @@ diterima endpoint-nya meski menunya hanya menampilkan wilayah. Paginasinya
 per **SubSLS**, bukan per baris data: satu halaman 50 SubSLS default,
 maksimal 200.
 
-Tiga query per halaman, semuanya di ClickHouse:
+**Setiap kolom bisa diurutkan** — klik header: keempat kolom nama, ID SUBSLS,
+tiap kategori, dan Total. Klik lagi membalik arah. Kolom angka (kategori,
+Total) mulai **menurun** saat pertama diklik — yang mengurutkan tabulasi
+menurut satu kategori sedang mencari di mana kategori itu paling banyak,
+bukan mencari nol — sedangkan kolom teks mulai menaik. Pindah tab
+mempertahankan urutan kecuali kalau urutannya menurut kategori: kategori
+milik variabel lama tidak berarti apa-apa di variabel baru, jadi kembali ke
+ID SUBSLS menaik. Di URL: `sortBy=kabkota|kecamatan|desa|sls|subsls|total|category`,
+`category=<nilai>` (kolom kosong lewat `__EMPTY__`, sentinel yang sama dengan
+filter), `dir=asc|desc`; `sortBy` tak dikenal atau kategori yang bukan kolom
+variabel itu ditolak 400 — default diam-diam akan membuat panah di header
+berbohong.
+
+Pengurutannya di lapisan API (`internal/api/tabulasi.go`), bukan di
+ClickHouse, dan itu keputusan yang dipaksa data: empat kolom yang bisa
+diurutkan adalah **nama** wilayah dari PostGIS, sementara ClickHouse hanya
+punya kodenya. Urutan yang server-side untuk sebagian kolom dan mustahil
+untuk sebagian lain adalah tabel yang aneh, jadi satu jalur untuk semua:
+ambil **seluruh** tabel, isi nama, urutkan di Go, potong satu halaman.
+Murah karena `GROUP BY` atas 2,19 juta baris memang pekerjaannya dan `LIMIT`
+hanya menghemat transfer hasil — terukur 0,14 s untuk 17 ribu baris seluruh
+provinsi. Teks dibandingkan tanpa peduli huruf besar-kecil dengan **nilai
+kosong selalu di akhir** apa pun arahnya (kosong berarti "tidak ada di layer
+polygon", bukan nama yang urut sebelum "A"), dan setiap urutan dibuat total
+dengan kode SubSLS sebagai pemecah seri supaya paging di antara nilai yang
+sama stabil.
+
+Tiga query per request, semuanya di ClickHouse:
 
 1. `GROUP BY val` untuk baris total per kategori;
 2. `uniqExact(level_6_full_code)` untuk jumlah SubSLS (tidak bisa dijumlah
    dari uniqExact per kategori — satu SubSLS memuat beberapa kategori);
-3. halamannya: `GROUP BY (subsls, val)` untuk menghitung, lalu `GROUP BY subsls`
+3. barisnya: `GROUP BY (subsls, val)` untuk menghitung, lalu `GROUP BY subsls`
    dengan `groupArray(val)` + `groupArray(n)` untuk melipat tiap SubSLS jadi
-   sepasang array sejajar, dan `LIMIT/OFFSET` di GROUP BY luar itu — sehingga
-   halaman dihitung per SubSLS. Dua array sejajar, bukan `groupArray` tuple:
+   sepasang array sejajar. Dua array sejajar, bukan `groupArray` tuple:
    driver men-scan `[]string` dan `[]uint64` tanpa upacara, sedangkan tuple
    kembali sebagai `[]any` tak bertipe.
 
 Terukur di data live, **seluruh provinsi** (17.120 SubSLS, 2,19 juta baris),
 satu halaman:
 
-| Variabel | Waktu |
+| Variabel | Waktu (halaman pertama, urut ID SUBSLS) |
 |---|---|
 | Jenis Prelist | 0,34 s |
 | Penggunaan Bangunan | 0,26 s |
@@ -959,6 +1072,12 @@ satu halaman:
 | Keberadaan Usaha | 0,28 s |
 | Status | 0,25 s |
 | Ditemukan di Regsosek | 0,58 s (dictHas per baris) |
+
+Dengan pengurutan (seluruh tabel diambil, dinamai, diurutkan, lalu dipotong):
+Total menurun 0,49 s, Nama SLS menaik 0,50 s, kategori UMKM menurun 0,33 s —
+seluruh provinsi; satu kabupaten diurutkan menurut desa 0,09 s. Hasil
+urutannya dicek ke ClickHouse: SubSLS terbesar 1.668 baris, DRAFT terbanyak
+233, keduanya cocok.
 
 Angkanya dicek silang ke ClickHouse langsung: total keseluruhan tiap tab =
 2.193.780 (= `count()` tabel), jumlah SubSLS = 17.120 (= `uniqExact`), dan

@@ -13,6 +13,7 @@ package xlsxreport
 import (
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	"github.com/xuri/excelize/v2"
@@ -22,6 +23,19 @@ import (
 )
 
 const sheetName = "Daftar Hasil Pendataan"
+
+// coordCell renders one coordinate for a spreadsheet cell: the number
+// itself when there is one, an empty cell when there isn't. Rows with no
+// usable coordinate carry 0 in both columns (see points.validCoords), and
+// a literal 0 in a Latitude column reads as a real fix on the equator —
+// worse than a blank. Non-finite values (a handful of rows) are blanked
+// for the same reason.
+func coordCell(v float64) any {
+	if v == 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+		return ""
+	}
+	return v
+}
 
 // flagWord renders one of the two membership flags for a spreadsheet cell.
 func flagWord(ada bool) string {
@@ -39,6 +53,8 @@ var columns = []struct {
 	{"Nama", 32},
 	{"Alamat", 40},
 	{"ID SUBSLS", 20},
+	{"Latitude", 13},
+	{"Longitude", 13},
 	{"Nomor Bangunan", 14},
 	{"Jenis Prelist", 18},
 	{"Penggunaan Bangunan", 46},
@@ -229,6 +245,7 @@ func writeTable(f *excelize.File, sheet string, st styles, headerRow int, items 
 			report.DashIfEmpty(p.Nama),
 			report.DashIfEmpty(p.Alamat),
 			report.DashIfEmpty(p.SubSLS),
+			coordCell(p.Lat), coordCell(p.Lon),
 			int(p.NomorBangunan),
 			report.DashIfEmpty(p.JenisPrelist),
 			report.DashIfEmpty(p.PenggunaanBangunan),

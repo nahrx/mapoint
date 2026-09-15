@@ -140,32 +140,31 @@ type WilayahNames struct {
 	SLS       string
 }
 
-// SLSWilayahNames returns kecamatan / desa / SLS names keyed by 14-digit
-// idsls, for the Tabulasi menu's name columns. One query for the whole
-// batch — a page is at most 200 SLS, an export at most the province's
-// 14,332 — rather than a lookup per row; measured 80ms for the whole
-// province, which is a sequential scan of the 17k-row table (idsls has no
-// index, and doesn't need one at that size).
+// AllSLSWilayahNames returns kecamatan / desa / SLS names for every SLS in
+// the polygon layer, keyed by 14-digit idsls — the whole table, 14,332
+// entries, in one query. Measured at 80ms: a sequential scan of the
+// 17k-row table sorted for DISTINCT ON, which is what an SLS with several
+// SubSLS (one row each, same names) needs to collapse to one entry.
 //
-// An SLS with several SubSLS has one row per SubSLS in the layer, all
-// carrying the same names — DISTINCT ON collapses them. Codes with no row
-// (the layer covers 14,332 SLS; ClickHouse has a few codes outside it)
-// are simply absent from the map, and the caller shows a blank.
-func SLSWilayahNames(ctx context.Context, pool *pgxpool.Pool, idsls []string) (map[string]WilayahNames, error) {
-	out := make(map[string]WilayahNames, len(idsls))
-	if len(idsls) == 0 {
-		return out, nil
-	}
+// Whole table rather than "the codes I need" on purpose. The first version
+// took a code list and used idsls = ANY($1); for a page of 200 that was
+// fine, but for the province's 14,332 codes PostgreSQL walked the array
+// per row — 17k × 14k comparisons, 4.3 seconds, on every page of the
+// Tabulasi menu. The names are static (they change when the layer is
+// reloaded, which is rare), so the caller keeps this map and refreshes it
+// on a timer; see wilayahNameCache in internal/api.
+func AllSLSWilayahNames(ctx context.Context, pool *pgxpool.Pool) (map[string]WilayahNames, error) {
 	rows, err := pool.Query(ctx, fmt.Sprintf(
 		`SELECT DISTINCT ON (idsls) idsls,
 		        coalesce(nmkec, ''), coalesce(nmdesa, ''), coalesce(%s, '')
-		 FROM %s WHERE idsls = ANY($1) ORDER BY idsls`,
+		 FROM %s ORDER BY idsls`,
 		slsNameColumn, table,
-	), idsls)
+	))
 	if err != nil {
 		return nil, fmt.Errorf("mapdb: sls names: %w", err)
 	}
 	defer rows.Close()
+	out := make(map[string]WilayahNames, 16384)
 	for rows.Next() {
 		var code string
 		var n WilayahNames

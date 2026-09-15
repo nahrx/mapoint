@@ -50,6 +50,14 @@
   let pageSize = parseInt(pageSizeSelect.value, 10) || 50;
   let requestSeq = 0;
 
+  // Sort order, sent to the server as sortBy / category / dir. Every column
+  // is sortable; "category" names one of the variable's categories via
+  // sortCategory (the blank column travels as App.EMPTY_VALUE, the same
+  // sentinel the filters use).
+  let sortKey = "subsls";
+  let sortCategory = "";
+  let sortDir = "asc";
+
   const fmt = (n) => n.toLocaleString("id-ID");
 
   // --- tabs ---------------------------------------------------------------
@@ -76,7 +84,13 @@
       btn.setAttribute("aria-selected", String(btn.dataset.key === key));
     }
     // A new variable is a new table shape; page 1 is the only page that
-    // means the same thing on both.
+    // means the same thing on both — and a sort by one of the old
+    // variable's categories means nothing on the new one.
+    if (sortKey === "category") {
+      sortKey = "subsls";
+      sortCategory = "";
+      sortDir = "asc";
+    }
     currentPage = 1;
     loadPage();
   }
@@ -98,6 +112,9 @@
     if (appliedSubsls) params.set("subsls", appliedSubsls);
     params.set("page", String(currentPage));
     params.set("pageSize", String(pageSize));
+    params.set("sortBy", sortKey);
+    if (sortKey === "category") params.set("category", sortCategory === "" ? App.EMPTY_VALUE : sortCategory);
+    params.set("dir", sortDir);
     return params;
   }
 
@@ -139,16 +156,25 @@
   function render(resp) {
     const cols = resp.columns;
 
+    // Every header but "No" sorts. Category headers carry the raw category
+    // value in data-cat (blank for the "(Kosong)" column) so the click
+    // handler doesn't have to map a label back to a value.
+    const th = (key, label, cls, extra = "") =>
+      `<th class="sortable${cls ? " " + cls : ""}" data-sort="${key}"${extra} title="${esc(label)}">${esc(label)}<span class="sort-arrow"></span></th>`;
     theadEl.innerHTML = `<tr>
       <th class="num">No</th>
-      <th>Kabupaten/Kota</th>
-      <th>Kecamatan</th>
-      <th>Desa/Kelurahan</th>
-      <th>Nama SLS</th>
-      <th class="tab-subsls">ID SUBSLS</th>
-      ${cols.map((c) => `<th class="num tab-cat${c === "" ? " tab-cat-empty" : ""}" title="${esc(colLabel(c))}">${esc(colLabel(c))}</th>`).join("")}
-      <th class="num tab-total">Total</th>
+      ${th("kabkota", "Kabupaten/Kota")}
+      ${th("kecamatan", "Kecamatan")}
+      ${th("desa", "Desa/Kelurahan")}
+      ${th("sls", "Nama SLS")}
+      ${th("subsls", "ID SUBSLS", "tab-subsls")}
+      ${cols.map((c) => th("category", colLabel(c), "num tab-cat" + (c === "" ? " tab-cat-empty" : ""), ` data-cat="${esc(c)}"`)).join("")}
+      ${th("total", "Total", "num tab-total")}
     </tr>`;
+    for (const cell of theadEl.querySelectorAll("th.sortable")) {
+      cell.addEventListener("click", () => onSortClick(cell));
+    }
+    updateSortHeaderUI();
 
     const startRow = (resp.page - 1) * resp.page_size + 1;
     tbodyEl.innerHTML = resp.rows.length
@@ -178,6 +204,34 @@
     pageInfoEl.textContent = `Halaman ${fmt(resp.page)} dari ${fmt(totalPages)} (${fmt(resp.total_rows)} SubSLS, ${fmt(resp.grand_total)} data)`;
     prevBtn.disabled = resp.page <= 1;
     nextBtn.disabled = resp.page >= totalPages;
+  }
+
+  // Clicking a header sorts by it; clicking the active one flips the
+  // direction. A first click on a count column starts descending — when
+  // someone sorts a tabulation by a category they are looking for where
+  // it is largest, not for the zeros — while text columns start ascending.
+  function onSortClick(cell) {
+    const key = cell.dataset.sort;
+    const cat = key === "category" ? (cell.dataset.cat || "") : "";
+    const same = key === sortKey && (key !== "category" || cat === sortCategory);
+    if (same) {
+      sortDir = sortDir === "asc" ? "desc" : "asc";
+    } else {
+      sortKey = key;
+      sortCategory = cat;
+      sortDir = (key === "category" || key === "total") ? "desc" : "asc";
+    }
+    currentPage = 1;
+    loadPage();
+  }
+
+  function updateSortHeaderUI() {
+    for (const cell of theadEl.querySelectorAll("th.sortable")) {
+      const key = cell.dataset.sort;
+      const active = key === sortKey && (key !== "category" || (cell.dataset.cat || "") === sortCategory);
+      cell.classList.toggle("sort-active", active);
+      cell.dataset.dir = active ? sortDir : "";
+    }
   }
 
   prevBtn.addEventListener("click", () => {

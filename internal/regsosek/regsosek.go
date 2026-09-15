@@ -45,6 +45,11 @@ type Row struct {
 	MatchStatus    string `json:"match_status"`
 	AlamatRegsosek string `json:"alamat_regsosek"` // alamat_gabung_regsosek
 	NamaMatched    string `json:"nama_matched"`    // nama_matched_regsosek
+	// Lat/Lon are latitude_regsosek/longitude_regsosek — the Regsosek
+	// coordinate the Peta Match menu plots. Carried on the list row so the
+	// Excel export can include them; the on-screen table doesn't show them.
+	Lat float64 `json:"lat"`
+	Lon float64 `json:"lon"`
 }
 
 // rowColumns is the SELECT list backing Row, in scan order.
@@ -56,13 +61,15 @@ type Row struct {
 // way they never reach the browser at all, and no future display code can
 // surface them by accident. nama_kk stays: it is a name, not a number.
 const rowColumns = `assignment_id, level_6_full_code, nama_prelist, nama_kk,
-		match_status, alamat_gabung_regsosek, nama_matched_regsosek`
+		match_status, alamat_gabung_regsosek, nama_matched_regsosek,
+		latitude_regsosek, longitude_regsosek`
 
 func scanRow(rows driver.Rows) (Row, error) {
 	var r Row
 	err := rows.Scan(
 		&r.AssignmentID, &r.SubSLS, &r.Nama, &r.NamaKK,
 		&r.MatchStatus, &r.AlamatRegsosek, &r.NamaMatched,
+		&r.Lat, &r.Lon,
 	)
 	return r, err
 }

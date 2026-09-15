@@ -10,8 +10,9 @@
   const desaSelect = document.getElementById("desa-select");
   const slsSelect = document.getElementById("sls-select");
   const subslsSelect = document.getElementById("subsls-select");
-  const flagBaruSelect = document.getElementById("flagbaru-select");
-  const flagRegsosekSelect = document.getElementById("flagregsosek-select");
+  const regsosekToggle = document.getElementById("regsosek-layer-toggle");
+  const legendRegsosek = document.getElementById("legend-regsosek");
+  const legendRegsosekCluster = document.getElementById("legend-regsosek-cluster");
   const applyFilterBtn = document.getElementById("apply-filter-btn");
   const searchInput = document.getElementById("peta-search");
 
@@ -293,8 +294,6 @@
   let appliedDesa = "";
   let appliedSls = "";
   let appliedSubsls = "";
-  let appliedFlagBaru = "";
-  let appliedFlagRegsosek = "";
   let appliedSearch = "";
   // Arrays: multi-select, one repeated query parameter per picked value.
   let appliedJenisPrelist = [];
@@ -431,7 +430,10 @@
 
   function scheduleLoad() {
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(loadViewport, LOAD_DEBOUNCE_MS);
+    debounceTimer = setTimeout(() => {
+      loadViewport();
+      if (regsosekToggle.checked) loadRegsosekViewport();
+    }, LOAD_DEBOUNCE_MS);
   }
 
   // Every applied filter except the viewport box, shared by /api/points
@@ -443,8 +445,6 @@
     if (appliedDesa) params.set("desa", appliedDesa);
     if (appliedSls) params.set("sls", appliedSls);
     if (appliedSubsls) params.set("subsls", appliedSubsls);
-    if (appliedFlagBaru) params.set("flagBaru", appliedFlagBaru);
-    if (appliedFlagRegsosek) params.set("flagRegsosek", appliedFlagRegsosek);
     if (appliedSearch) params.set("search", appliedSearch);
     for (const v of appliedJenisPrelist) params.append("jenisPrelist", v);
     for (const v of appliedKeberadaanKeluarga) params.append("keberadaanKeluarga", v);
@@ -490,7 +490,10 @@
 
   // --- rendering ---------------------------------------------------------
 
+  let lastMainResp = null;
+
   function render(resp) {
+    lastMainResp = resp;
     layer.clearLayers();
 
     const showLabels = shouldLabelBangunan();
@@ -555,12 +558,6 @@
       if (appliedSubsls) line += ` / SubSLS ${appliedSubsls}`;
       lines.push(line);
     }
-    if (appliedFlagBaru) {
-      lines.push(`Assignment baru: ${appliedFlagBaru === "1" ? "hanya yang ditemukan" : "hanya yang tidak ditemukan"}`);
-    }
-    if (appliedFlagRegsosek) {
-      lines.push(`Regsosek: ${appliedFlagRegsosek === "1" ? "hanya yang ditemukan" : "hanya yang tidak ditemukan"}`);
-    }
     // Attribute filters change the point count without changing the map
     // extent, so without a line here a filtered map is indistinguishable
     // from an empty area.
@@ -572,6 +569,9 @@
     if (appliedSearch) lines.push(`Cari nama: "${appliedSearch}"`);
     lines.push(`Di area ini: ${resp.total.toLocaleString("id-ID")} titik`);
     lines.push(`Ditampilkan: ${shown.toLocaleString("id-ID")} ${kind}`);
+    if (regsosekToggle.checked && regsosekLastTotal !== null) {
+      lines.push(`Titik Regsosek di area ini: ${regsosekLastTotal.toLocaleString("id-ID")}`);
+    }
     // Roughly 1 SubSLS in 5 (3,219 of 15,722, measured) is spread widely
     // enough that auto-fit lands below BANGUNAN_LABEL_MIN_ZOOM, so the
     // labels a SubSLS filter is supposed to bring don't appear. Say why,
@@ -712,8 +712,6 @@
     appliedDesa = desaSelect.value;
     appliedSls = slsSelect.value;
     appliedSubsls = subslsSelect.value;
-    appliedFlagBaru = flagBaruSelect.value;
-    appliedFlagRegsosek = flagRegsosekSelect.value;
     appliedJenisPrelist = jenisPrelistMS.getValues();
     appliedKeberadaanKeluarga = keberadaanKeluargaMS.getValues();
     appliedStatus = statusMS.getValues();
@@ -736,6 +734,119 @@
 
   applyFilterBtn.addEventListener("click", applyFilters);
 
+
+  // --- Regsosek layer -----------------------------------------------------
+  // The Regsosek (Reg2022) coordinates from se2026_match_regsosek, the same
+  // points the Peta Match Reg2022 menu maps, drawn here as a second layer
+  // over the SE2026 points so the two can be compared in one view. Same
+  // endpoint as that menu, /api/match-points, scoped to the applied
+  // wilayah only: the attribute filters and name search of this panel are
+  // about SE2026 columns and mean nothing on the Regsosek table.
+  //
+  // A switch, not a filter — it applies at once, survives Terapkan Filter,
+  // and is not part of saved presets. Its own request sequence and abort
+  // controller so it can never cancel, or be cancelled by, the main
+  // layer's load.
+  const regsosekLayer = L.layerGroup().addTo(map);
+  let regsosekSeq = 0;
+  let regsosekController = null;
+  let regsosekLastTotal = null;
+
+  function regsosekTooltipHTML(p) {
+    return `
+      <div class="titik-tooltip">
+        <div><b>Titik Regsosek (Reg2022)</b></div>
+        <div><b>Nama Prelist:</b> ${esc(p.nama)}</div>
+        <div><b>Nama KK:</b> ${esc(p.nama_kk)}</div>
+        <div><b>ID SubSLS:</b> ${esc(p.subsls)}</div>
+        <div><b>Alamat:</b> ${esc(p.alamat)}</div>
+      </div>`;
+  }
+
+  function clearRegsosekLayer() {
+    regsosekSeq++;
+    if (regsosekController) regsosekController.abort();
+    regsosekController = null;
+    regsosekLayer.clearLayers();
+    regsosekLastTotal = null;
+    legendRegsosek.classList.add("hidden");
+    legendRegsosekCluster.classList.add("hidden");
+  }
+
+  async function loadRegsosekViewport() {
+    const seq = ++regsosekSeq;
+    if (regsosekController) regsosekController.abort();
+    const controller = new AbortController();
+    regsosekController = controller;
+
+    const b = map.getBounds();
+    const params = new URLSearchParams({
+      minLat: b.getSouth(), maxLat: b.getNorth(),
+      minLon: b.getWest(), maxLon: b.getEast(),
+      zoom: String(map.getZoom()),
+    });
+    if (appliedKabkota) params.set("kabkota", appliedKabkota);
+    if (appliedKecamatan) params.set("kecamatan", appliedKecamatan);
+    if (appliedDesa) params.set("desa", appliedDesa);
+    if (appliedSls) params.set("sls", appliedSls);
+    if (appliedSubsls) params.set("subsls", appliedSubsls);
+
+    try {
+      const resp = await fetchWithRetry(`/api/match-points?${params}`, controller.signal);
+      if (seq !== regsosekSeq) return;
+      renderRegsosek(resp);
+    } catch (err) {
+      if (err.name === "AbortError") return;
+      console.error("failed to load regsosek layer", err);
+    }
+  }
+
+  function renderRegsosek(resp) {
+    regsosekLayer.clearLayers();
+    if (resp.type === "points") {
+      for (const p of resp.points || []) {
+        // Slightly smaller than the SE2026 dots (radius 5) so that where a
+        // Regsosek point and an SE2026 point coincide, both stay visible.
+        const marker = L.circleMarker([p.lat, p.lon], {
+          renderer: canvasRenderer,
+          radius: 4,
+          color: "#fff",
+          weight: 1,
+          fillColor: "#7b4fbf",
+          fillOpacity: 0.9,
+        });
+        marker.bindTooltip(regsosekTooltipHTML(p), { sticky: true, direction: "top" });
+        marker.addTo(regsosekLayer);
+      }
+    } else {
+      for (const c of resp.clusters || []) {
+        const size = clusterSize(c.count);
+        const icon = L.divIcon({
+          html: `<div class="cluster-icon cluster-regsosek" style="width:${size}px;height:${size}px;font-size:${fontSize(size)}px">${formatCount(c.count)}</div>`,
+          className: "",
+          iconSize: [size, size],
+        });
+        const marker = L.marker([c.lat, c.lon], { icon });
+        marker.on("click", () => map.setView([c.lat, c.lon], Math.min(map.getZoom() + 3, 19)));
+        marker.bindTooltip(`${formatCount(c.count)} titik Regsosek di area ini — klik untuk perbesar`, { direction: "top" });
+        marker.addTo(regsosekLayer);
+      }
+    }
+    regsosekLastTotal = resp.total;
+    legendRegsosek.classList.toggle("hidden", resp.type !== "points");
+    legendRegsosekCluster.classList.toggle("hidden", resp.type === "points");
+    // Re-render the stats box so the Regsosek count line appears without
+    // waiting for the next main-layer load.
+    if (lastMainResp) updateStats(lastMainResp);
+  }
+
+  regsosekToggle.addEventListener("change", () => {
+    if (regsosekToggle.checked) loadRegsosekViewport();
+    else {
+      clearRegsosekLayer();
+      if (lastMainResp) updateStats(lastMainResp);
+    }
+  });
 
   // --- GPS: "lokasi saya" -------------------------------------------------
   // For fieldwork: show where the phone actually is, on top of the points
@@ -965,8 +1076,6 @@
       keberadaanKeluarga: keberadaanKeluargaMS.getValues(),
       keberadaanBku: keberadaanBkuMS.getValues(),
       status: statusMS.getValues(),
-      flagBaru: flagBaruSelect.value,
-      flagRegsosek: flagRegsosekSelect.value,
     };
   }
 
@@ -1000,8 +1109,6 @@
     keberadaanKeluargaMS.setValues(f.keberadaanKeluarga);
     keberadaanBkuMS.setValues(f.keberadaanBku);
     statusMS.setValues(f.status);
-    flagBaruSelect.value = f.flagBaru || "";
-    flagRegsosekSelect.value = f.flagRegsosek || "";
 
     // Picking a preset means "show me this", so it applies straight away
     // rather than leaving the user to press Terapkan Filter as well.
