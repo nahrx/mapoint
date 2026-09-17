@@ -1374,15 +1374,32 @@ func (s *Service) List(ctx context.Context, filter Filter, page, pageSize int, s
 // truncated flag threaded through to pdfreport/xlsxreport.
 const ReportMaxRows = 40000
 
+// SplitReportMaxRows is the cap for the per-SubSLS ZIP download, whose
+// scope may be a whole kecamatan (see handleSplitReport in internal/api).
+// Measured on live data the largest kecamatan holds 111,636 rows across
+// 592 SubSLS, so this clears every kecamatan in the province with room to
+// spare. The rows are held in memory once, grouped, and streamed out as
+// they are rendered — at ~500 bytes a row that is under 100 MB even at
+// the cap, for a download that runs a few times a day at most.
+const SplitReportMaxRows = 200000
+
 // ListAll returns every row matching filter (up to ReportMaxRows), sorted
 // by sortColumn, with no pagination. Intended for the PDF/Excel reports,
 // which need the whole wilayah in one document rather than one page's
 // worth — call sites should ensure filter is pinned at least down to a
 // desa/kelurahan first, since anything wider is too big to be a report.
 func (s *Service) ListAll(ctx context.Context, filter Filter, sortColumn string, dir SortDir) ([]Point, error) {
+	return s.ListAllUpTo(ctx, filter, sortColumn, dir, ReportMaxRows)
+}
+
+// ListAllUpTo is ListAll with an explicit row cap, for the per-SubSLS
+// split download whose scope is wider than a desa (SplitReportMaxRows).
+// Callers pass one of the two named caps; the cap is what keeps a wide
+// filter from turning into an unbounded result.
+func (s *Service) ListAllUpTo(ctx context.Context, filter Filter, sortColumn string, dir SortDir, maxRows int) ([]Point, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
-	return s.listItems(ctx, filter, 1, ReportMaxRows, sortColumn, dir, true)
+	return s.listItems(ctx, filter, 1, maxRows, sortColumn, dir, true)
 }
 
 func (s *Service) listCount(ctx context.Context, filter Filter) (uint64, error) {

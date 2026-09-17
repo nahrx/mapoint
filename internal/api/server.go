@@ -622,13 +622,31 @@ type reportData struct {
 // optional — narrowing further just makes the report smaller. ok is false
 // when it has already written an error response and the caller should
 // return immediately.
-func (s *Server) prepareReport(w http.ResponseWriter, r *http.Request, q url.Values, downloadKind string) (data reportData, ok bool) {
+//
+// split relaxes the scope to one kecamatan and raises the cap to
+// points.SplitReportMaxRows: the per-SubSLS ZIP (see report_split.go)
+// renders one small document per SubSLS, so the size of a single document
+// no longer depends on how wide the filter is — only the number of files
+// does. A filter already pinned to one SubSLS has nothing to split and is
+// rejected, mirroring the disabled toggle on the frontend.
+func (s *Server) prepareReport(w http.ResponseWriter, r *http.Request, q url.Values, downloadKind string, split bool) (data reportData, ok bool) {
 	filter, err := parseFilter(q)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return reportData{}, false
 	}
-	if filter.KabKota == "" || filter.Kecamatan == "" || filter.Desa == "" {
+	maxRows := points.ReportMaxRows
+	if split {
+		if filter.KabKota == "" || filter.Kecamatan == "" {
+			writeError(w, http.StatusBadRequest, downloadKind+" per-SubSLS download requires filtering at least down to Kecamatan")
+			return reportData{}, false
+		}
+		if filter.SubSLS != "" {
+			writeError(w, http.StatusBadRequest, downloadKind+" per-SubSLS download needs a filter wider than one SubSLS")
+			return reportData{}, false
+		}
+		maxRows = points.SplitReportMaxRows
+	} else if filter.KabKota == "" || filter.Kecamatan == "" || filter.Desa == "" {
 		writeError(w, http.StatusBadRequest, downloadKind+" download requires filtering at least down to Desa/Kelurahan")
 		return reportData{}, false
 	}
@@ -636,7 +654,7 @@ func (s *Server) prepareReport(w http.ResponseWriter, r *http.Request, q url.Val
 	sortBy := points.ParseSortColumn(q.Get("sortBy"))
 	dir := points.ParseSortDir(q.Get("dir"))
 
-	items, err := s.svc.ListAll(r.Context(), filter, sortBy, dir)
+	items, err := s.svc.ListAllUpTo(r.Context(), filter, sortBy, dir, maxRows)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return reportData{}, false
@@ -665,14 +683,24 @@ func (s *Server) prepareReport(w http.ResponseWriter, r *http.Request, q url.Val
 		NonRespon:          filter.NonRespon,
 	}
 
-	return reportData{region: region, items: items, truncated: len(items) >= points.ReportMaxRows}, true
+	return reportData{region: region, items: items, truncated: len(items) >= maxRows}, true
 }
 
 // handleListPDF renders the "Daftar Hasil Pendataan" PDF for one
 // fully-drilled-down SubSLS — see prepareReport for the shared scope
 // rules.
 func (s *Server) handleListPDF(w http.ResponseWriter, r *http.Request) {
-	data, ok := s.prepareReport(w, r, r.URL.Query(), "PDF")
+	q := r.URL.Query()
+	split, err := parseSplit(q)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if split {
+		s.handleSplitReport(w, r, q, splitPDF)
+		return
+	}
+	data, ok := s.prepareReport(w, r, q, "PDF", false)
 	if !ok {
 		return
 	}
@@ -695,7 +723,17 @@ func (s *Server) handleListPDF(w http.ResponseWriter, r *http.Request) {
 // handleListPDF, as an Excel workbook instead — same scope rules, same
 // data, see prepareReport.
 func (s *Server) handleListXLSX(w http.ResponseWriter, r *http.Request) {
-	data, ok := s.prepareReport(w, r, r.URL.Query(), "Excel")
+	q := r.URL.Query()
+	split, err := parseSplit(q)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if split {
+		s.handleSplitReport(w, r, q, splitXLSX)
+		return
+	}
+	data, ok := s.prepareReport(w, r, q, "Excel", false)
 	if !ok {
 		return
 	}

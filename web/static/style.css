@@ -1405,6 +1405,11 @@ body {
     min-height: var(--tap);
   }
 
+  .download-dialog-actions button {
+    flex: 1;
+    min-height: var(--tap);
+  }
+
   .gps-control a.gps-btn {
     width: var(--tap);
     height: var(--tap);
@@ -1806,6 +1811,83 @@ body {
 
 .layer-toggle + .layer-toggle {
   padding-top: 2px;
+}
+
+/* The download dialog of the Daftar menu (a native <dialog>, opened with
+   showModal so Escape and the backdrop come for free). Its "Pisahkan per
+   SubSLS" switch reuses the layer-toggle switch in the navy of the download
+   buttons rather than a layer colour. A locked switch — forced on for a
+   kecamatan, forced off for a single SubSLS — fades like a disabled button
+   and the note below says why. */
+.download-dialog {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0;
+  width: min(440px, calc(100vw - 32px));
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.download-dialog::backdrop {
+  background: rgba(16, 58, 94, 0.35);
+}
+
+.download-dialog-body {
+  padding: 18px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.download-dialog h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.download-dialog-scope {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.split-toggle {
+  padding: 8px 0 0;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.split-toggle input:checked + .layer-toggle-switch {
+  background: var(--navy-600);
+}
+
+.split-toggle input:disabled + .layer-toggle-switch {
+  opacity: 0.6;
+}
+
+.split-toggle input:disabled ~ .layer-toggle-text {
+  opacity: 0.55;
+}
+
+.split-toggle:has(input:disabled) {
+  cursor: not-allowed;
+}
+
+.download-dialog-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-faint);
+}
+
+.download-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .layer-toggle input:checked + .layer-toggle-switch::after {

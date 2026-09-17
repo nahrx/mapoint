@@ -789,16 +789,39 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
   `latitude_ppl`/`longitude_ppl`-nya `0` atau kosong, karena tujuannya
   menelusuri data, bukan memetakannya.
 - **Unduh PDF & Unduh Excel** — dua tombol di sebelah filter, aktif begitu
-  filter wilayah sudah **minimal sampai Desa/Kelurahan**. Boleh dipersempit
-  lagi ke Kode SLS atau Kode SubSLS — itu cuma bikin laporannya lebih
-  kecil, bukan syarat. Yang tidak boleh cuma lebih luas dari desa: satu
-  kecamatan saja sudah ratusan ribu baris, bukan lagi sesuatu yang masuk
-  akal jadi satu laporan (aturan ini ditegakkan di server oleh
-  `prepareReport` di `internal/api/server.go`, bukan cuma oleh tombol yang
-  di-disable di frontend). Filter atribut dan cari nama boleh diisi atau
+  filter wilayah sudah **minimal sampai Kecamatan**. Keduanya membuka
+  **dialog unduh** dulu (judul, baris "Cakupan: Kab › Kec › Desa …", lalu
+  tombol Batal/Unduh) — unduhan baru berjalan dari tombol Unduh di dialog
+  itu. Satu-satunya opsi di dialog adalah sakelar **"Pisahkan per
+  SubSLS"**: aktif berarti hasilnya **satu ZIP berisi satu file per SubSLS**
+  (`daftar-hasil-pendataan-<16 digit>.pdf`/`.xlsx`, masing-masing dengan
+  header dan set kolom laporan satu-SubSLS), nonaktif berarti satu file
+  untuk seluruh cakupan seperti biasa. Aturan cakupannya:
+
+  | Filter sampai | Satu file | Pisahkan per SubSLS |
+  |---|---|---|
+  | Kecamatan | tidak ditawarkan — sakelar **terkunci aktif** | ya (592 SubSLS / 111.636 baris di kecamatan terbesar) |
+  | Desa/Kelurahan atau SLS | ya | ya — sakelar bebas, pilihan terakhir diingat selama sesi (tidak disimpan) |
+  | SubSLS | ya | tidak ada yang dipisahkan — sakelar **terkunci nonaktif** |
+
+  Satu file utuh tetap berhenti di desa/kelurahan karena satu kecamatan
+  saja sudah seratus ribu baris, bukan lagi sesuatu yang masuk akal jadi
+  satu dokumen; dipisah per SubSLS ukuran tiap dokumen tidak lagi
+  tergantung lebar filter (yang bertambah cuma jumlah file, dan untuk itu
+  ada ZIP-nya), jadi satu kecamatan boleh. Kedua aturan ditegakkan di
+  server oleh `prepareReport` di `internal/api/server.go` — mode pisah
+  dipilih lewat `split=subsls` di endpoint yang sama, lihat
+  `internal/api/report_split.go` — bukan cuma oleh sakelar yang terkunci
+  di frontend. Hasilnya ZIP karena browser memblokir halaman yang memicu
+  ratusan unduhan sekaligus; entri ZIP-nya disimpan tanpa kompresi ulang
+  (PDF dan XLSX sudah terkompresi) dan dialirkan per file, jadi unduhan
+  mulai begitu file pertama jadi. Terukur: desa 165 SubSLS ±2–3 detik,
+  kecamatan terbesar (592 SubSLS) PDF 7,4 detik / 38 MB dan Excel ±11
+  detik / 17 MB. Filter atribut dan cari nama boleh diisi atau
   tidak, tidak mempengaruhi aktif/tidaknya tombol, tapi tetap ikut
   mempersempit isi laporan kalau diisi, dan urutan barisnya ikut sort kolom
-  yang sedang aktif di tabel. Keduanya laporan yang sama persis secara isi
+  yang sedang aktif di tabel (di mode pisah: urutan di dalam tiap file;
+  file-nya sendiri urut kode SubSLS). Keduanya laporan yang sama persis secara isi
   ("Daftar Hasil Pendataan": keterangan wilayah — nama kab/kota + kode tiap
   level + kode wilayah gabungan; level yang tidak difilter ditulis
   "(Semua)" —, bagian "Filter Tambahan" kalau ada filter atribut atau cari
@@ -861,7 +884,12 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
   menuliskannya di header ("Catatan: daftar ini dibatasi hingga N baris
   pertama"), bukan memotong diam-diam. Sebagai gambaran beban: desa
   terbesar (27.146 baris) menghasilkan PDF ±5,4 MB dan Excel ±2,2 MB,
-  masing-masing ±2 detik.
+  masing-masing ±2 detik. Mode "Pisahkan per SubSLS" memakai batas sendiri,
+  `SplitReportMaxRows` (200.000), karena cakupannya boleh satu kecamatan
+  (terbesar 111.636 baris); barisnya diambil sekali untuk seluruh cakupan
+  lalu dikelompokkan di memori. Kalau batas itu kena, ZIP-nya berisi
+  `CATATAN.txt` yang mengatakan SubSLS berkode terbesar mungkin tidak
+  lengkap — satu-satunya tempat yang akan dibaca pengunduh.
 
   Kedua paket format ini berbagi metadata wilayah/filter yang sama lewat
   `report.Region` di `internal/report/` (satu sumber kebenaran soal apa
@@ -1575,8 +1603,8 @@ bagian "Login" di atas.
 - `GET /api/subsls?kabkota=&kecamatan=&desa=&sls=` — daftar Kode SubSLS di dalam satu SLS (keempat parameter wajib)
 - `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — batas SubSLS sebagai GeoJSON FeatureCollection, dari PostGIS. `kabkota`, `kecamatan` dan `desa` **wajib**; `sls` dan `subsls` opsional dan hanya mempersempit. Yang dikembalikan adalah semua SubSLS yang `idsubsls`-nya berawalan kode gabungan itu — satu desa bisa ratusan polygon (maksimal terukur 164), satu SubSLS tepat satu. Cakupan lebih luas dari desa ditolak 400. Tiap feature membawa `properties.idsubsls`. Tanpa PostGIS terkonfigurasi, endpoint ini menjawab 503 dan petanya tetap jalan tanpa overlay
 - `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `keberadaan_bku`, `status`, `penggunaan_bangunan`, `assignment_id`, `ada_assignment_baru`, `ada_regsosek`, `assignment_id_baru`, `non_respon` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`, `penggunaanBangunan`, `keberadaanBku`) semuanya opsional, **multi-nilai**, dan independen dari filter wilayah maupun satu sama lain — ulangi parameternya untuk tiap nilai (`?status=OPEN&status=DRAFT`), yang jadi satu `IN (...)`; nilainya divalidasi terhadap enum tetap di `internal/points/points.go` dan satu nilai tak dikenal menolak seluruh request dengan 400; pakai `__EMPTY__` untuk memfilter kolom yang kosong, boleh digabung dengan nilai biasa. `flagBaru`, `flagRegsosek` dan `nonRespon` hanya menerima `""` (semua), `"1"` (ada) atau `"0"` (tidak ada) — nilai lain ditolak 400
-- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
-- `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&sortBy=&dir=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf` (lihat `prepareReport` di `internal/api/server.go`, dipakai bareng oleh kedua handler)
+- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&sortBy=&dir=&split=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`. `split=subsls` mengubah balasannya jadi **ZIP** (`application/zip`, `daftar-hasil-pendataan-<kode>-per-subsls.zip`) berisi satu PDF per SubSLS; dalam mode ini `desa` tidak wajib (cukup `kabkota` + `kecamatan`) tapi `subsls` **tidak boleh** diisi (tidak ada yang dipisahkan) — keduanya 400; nilai `split` selain `subsls` juga 400. Batas barisnya `SplitReportMaxRows`, bukan `ReportMaxRows`
+- `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&sortBy=&dir=&split=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf`, termasuk `split=subsls` → ZIP berisi satu .xlsx per SubSLS (lihat `prepareReport` di `internal/api/server.go` dan `handleSplitReport` di `internal/api/report_split.go`, dipakai bareng oleh kedua handler)
 - `GET /api/reg2022?kabkota=&kecamatan=&desa=&sls=&subsls=&matchStatus=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar Reg2022 (tabel `se2026_match_regsosek`). Filter wilayah sama dengan endpoint lain; `matchStatus` divalidasi terhadap 7 nilai tetap di `internal/regsosek/regsosek.go` (pakai `__EMPTY__` untuk kolom kosong); `search` mencari substring di `nama_prelist` dan `nama_kk` saja, lewat parameter binding — nomor KK/NIK tidak dipakai sebagai kunci cari. `sortBy` salah satu dari `nama` (default), `nama_kk`, `subsls`, `match_status`, `alamat_regsosek`, `nama_matched`, `assignment_id`
 - `GET /api/reg2022/filter-options` — daftar nilai `match_status` untuk dropdown filter menu Daftar Reg2022
 - `GET /api/reg2022/pdf?...` dan `GET /api/reg2022/xlsx?...` — laporan "Daftar Match Regsosek". Parameter filternya sama dengan `/api/reg2022`; `kabkota` dan `kecamatan` **wajib** (cakupan minimal satu kecamatan, lebih luas ditolak 400)

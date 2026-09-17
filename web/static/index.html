@@ -276,16 +276,41 @@
             </div>
           </div>
           <div id="download-btn-group" class="download-btn-group">
-            <button id="download-pdf-btn" class="download-pdf" disabled title="Pilih filter minimal sampai Desa/Kelurahan untuk mengunduh">
+            <!-- Both open the download dialog below, where the split-per-SubSLS
+                 option lives; a kecamatan-wide filter is enough because the
+                 dialog can always fall back to the split ZIP. -->
+            <button id="download-pdf-btn" class="download-pdf" disabled title="Pilih filter minimal sampai Kecamatan untuk mengunduh">
               Unduh PDF
             </button>
-            <button id="download-xlsx-btn" class="download-xlsx" disabled title="Pilih filter minimal sampai Desa/Kelurahan untuk mengunduh">
+            <button id="download-xlsx-btn" class="download-xlsx" disabled title="Pilih filter minimal sampai Kecamatan untuk mengunduh">
               Unduh Excel
             </button>
           </div>
         </div>
         <p id="preset-status-list" class="preset-status" role="status" aria-live="polite"></p>
       </div>
+
+      <!-- Download options, shown after Unduh PDF / Unduh Excel is clicked.
+           The one option today is "Pisahkan per SubSLS": one file per SubSLS
+           packed in a ZIP (split=subsls on the same endpoints). It is forced
+           on for a kecamatan-wide filter — the single report stops at
+           desa/kelurahan — and off when the filter is already one SubSLS. -->
+      <dialog id="download-dialog" class="download-dialog" aria-labelledby="download-dialog-title">
+        <div class="download-dialog-body">
+          <h3 id="download-dialog-title">Unduh PDF</h3>
+          <p class="download-dialog-scope" id="download-dialog-scope"></p>
+          <label class="layer-toggle split-toggle" for="split-subsls-toggle">
+            <input type="checkbox" id="split-subsls-toggle">
+            <span class="layer-toggle-switch" aria-hidden="true"></span>
+            <span class="layer-toggle-text">Pisahkan per SubSLS</span>
+          </label>
+          <p class="download-dialog-note" id="download-dialog-note"></p>
+          <div class="download-dialog-actions">
+            <button type="button" class="preset-btn" id="download-dialog-cancel">Batal</button>
+            <button type="button" class="download-pdf" id="download-dialog-confirm">Unduh</button>
+          </div>
+        </div>
+      </dialog>
 
       <div id="daftar-toolbar" class="list-toolbar">
         <span id="daftar-page-info" class="list-page-info">Memuat…</span>

@@ -27,6 +27,13 @@
   const sortHeaders = document.querySelectorAll("#daftar-table th.sortable");
   const downloadPdfBtn = document.getElementById("download-pdf-btn");
   const downloadXlsxBtn = document.getElementById("download-xlsx-btn");
+  const downloadDialog = document.getElementById("download-dialog");
+  const downloadDialogTitle = document.getElementById("download-dialog-title");
+  const downloadDialogScope = document.getElementById("download-dialog-scope");
+  const downloadDialogNote = document.getElementById("download-dialog-note");
+  const downloadDialogCancel = document.getElementById("download-dialog-cancel");
+  const downloadDialogConfirm = document.getElementById("download-dialog-confirm");
+  const splitToggle = document.getElementById("split-subsls-toggle");
   const applyFilterBtn = document.getElementById("apply-filter-btn-list");
   const filtersEl = document.getElementById("daftar-filters");
   const filterToggleBtn = document.getElementById("daftar-filter-toggle");
@@ -165,11 +172,14 @@
   }
 
   // Both download buttons need the filter pinned at least down to one
-  // desa/kelurahan (see prepareReport on the server) — anything wider runs
-  // to hundreds of thousands of rows. Narrowing further to an SLS or
-  // SubSLS is allowed and just makes the report smaller.
+  // kecamatan. The single report itself stops at desa/kelurahan (see
+  // prepareReport on the server — a kecamatan runs to a hundred thousand
+  // rows), but the download dialog they open can always fall back to the
+  // per-SubSLS ZIP, which is fine at kecamatan width because each file is
+  // still one SubSLS. Narrowing further to an SLS or SubSLS just makes the
+  // report smaller.
   function updateDownloadButtonState() {
-    const ready = !!(appliedKabkota && appliedKecamatan && appliedDesa);
+    const ready = !!(appliedKabkota && appliedKecamatan);
     downloadPdfBtn.disabled = !ready;
     downloadXlsxBtn.disabled = !ready;
   }
@@ -509,15 +519,17 @@
 
   // --- PDF / Excel download ----------------------------------------------
 
-  // Shared by both download buttons — same filter/sort params, same
-  // "build a temporary link and click it" approach (works for any
+  // Shared by both formats — same filter/sort params, same "build a
+  // temporary link and click it" approach (works for any
   // Content-Disposition: attachment endpoint, and keeps this an explicit,
   // self-contained action rather than ever touching location.href).
-  function downloadReport(btn, apiPath) {
-    if (btn.disabled) return;
+  // split adds split=subsls: one file per SubSLS in a ZIP instead of one
+  // report — same endpoint, see report_split.go on the server.
+  function downloadReport(apiPath, split) {
     const params = buildFilterParams();
     params.set("sortBy", sortColumn);
     params.set("dir", sortDir);
+    if (split) params.set("split", "subsls");
     const url = `${apiPath}?${params}`;
     const a = document.createElement("a");
     a.href = url;
@@ -527,8 +539,85 @@
     a.remove();
   }
 
-  downloadPdfBtn.addEventListener("click", () => downloadReport(downloadPdfBtn, "/api/list/pdf"));
-  downloadXlsxBtn.addEventListener("click", () => downloadReport(downloadXlsxBtn, "/api/list/xlsx"));
+  // The download dialog: Unduh PDF/Excel open it, the actual download
+  // starts from its Unduh button. Its one option, "Pisahkan per SubSLS",
+  // is free at desa and SLS width, forced on for a kecamatan (the single
+  // report isn't offered that wide) and forced off for a single SubSLS
+  // (nothing to split — a one-file ZIP would only confuse). The user's last
+  // free choice is remembered for the session, not persisted: a switch
+  // that silently stays on across days would hand out ZIPs to someone who
+  // expected a PDF.
+  const SPLIT_NOTE_FREE = "Aktif: satu ZIP berisi satu file per SubSLS. Nonaktif: satu file untuk seluruh cakupan.";
+  const SPLIT_NOTE_KECAMATAN = "Cakupan satu kecamatan hanya bisa diunduh per SubSLS — hasilnya satu ZIP berisi satu file per SubSLS. Pilih desa/kelurahan untuk satu file utuh.";
+  const SPLIT_NOTE_SINGLE = "Filter sudah satu SubSLS, tidak ada yang perlu dipisahkan.";
+  let pendingDownloadPath = "";
+  let splitPreferred = false;
+
+  // "Kutai Timur › Kec. Sangatta Utara › Desa/Kel. Sangatta Utara", from
+  // the option labels of the applied codes. Falls back to the bare code
+  // when a select has since been re-populated for another parent (the
+  // user changed a select without applying).
+  function appliedScopeText() {
+    const name = (sel, code) => {
+      const opt = [...sel.options].find((o) => o.value === code);
+      // The option labels carry a row count ("Kutai Timur (201.291 data)")
+      // that is about the option list, not this download.
+      return opt ? opt.textContent.replace(/\s*\([\d.]+ data\)\s*$/, "").trim() : code;
+    };
+    const parts = [];
+    if (appliedKabkota) parts.push(name(kabkotaSelect, appliedKabkota));
+    if (appliedKecamatan) parts.push(name(kecamatanSelect, appliedKecamatan));
+    if (appliedDesa) parts.push(name(desaSelect, appliedDesa));
+    if (appliedSls) parts.push(name(slsSelect, appliedSls));
+    if (appliedSubsls) parts.push(name(subslsSelect, appliedSubsls));
+    return parts.join(" \u203a ");
+  }
+
+  function confirmLabel(kind) {
+    return splitToggle.checked ? "Unduh ZIP" : `Unduh ${kind}`;
+  }
+
+  function openDownloadDialog(kind, apiPath) {
+    pendingDownloadPath = apiPath;
+    const kecamatanOnly = !appliedDesa;
+    const single = !!appliedSubsls;
+    splitToggle.disabled = kecamatanOnly || single;
+    splitToggle.checked = kecamatanOnly ? true : single ? false : splitPreferred;
+    downloadDialogTitle.textContent = `Unduh ${kind}`;
+    downloadDialogScope.textContent = `Cakupan: ${appliedScopeText()}`;
+    downloadDialogNote.textContent = kecamatanOnly ? SPLIT_NOTE_KECAMATAN : single ? SPLIT_NOTE_SINGLE : SPLIT_NOTE_FREE;
+    downloadDialogConfirm.className = kind === "PDF" ? "download-pdf" : "download-xlsx";
+    downloadDialogConfirm.dataset.kind = kind;
+    downloadDialogConfirm.textContent = confirmLabel(kind);
+    if (typeof downloadDialog.showModal !== "function") {
+      // No <dialog> support: go straight to the download with the only
+      // valid choice for this width.
+      downloadReport(apiPath, splitToggle.checked);
+      return;
+    }
+    downloadDialog.showModal();
+  }
+
+  splitToggle.addEventListener("change", () => {
+    if (!splitToggle.disabled) splitPreferred = splitToggle.checked;
+    downloadDialogConfirm.textContent = confirmLabel(downloadDialogConfirm.dataset.kind);
+  });
+  downloadDialogCancel.addEventListener("click", () => downloadDialog.close());
+  downloadDialogConfirm.addEventListener("click", () => {
+    downloadDialog.close();
+    downloadReport(pendingDownloadPath, splitToggle.checked);
+  });
+  // A click on the backdrop (outside the body) closes, like Escape does.
+  downloadDialog.addEventListener("click", (e) => {
+    if (e.target === downloadDialog) downloadDialog.close();
+  });
+
+  downloadPdfBtn.addEventListener("click", () => {
+    if (!downloadPdfBtn.disabled) openDownloadDialog("PDF", "/api/list/pdf");
+  });
+  downloadXlsxBtn.addEventListener("click", () => {
+    if (!downloadXlsxBtn.disabled) openDownloadDialog("Excel", "/api/list/xlsx");
+  });
 
   // --- boot ------------------------------------------------------------
 
