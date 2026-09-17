@@ -365,12 +365,33 @@ terbaca sebagai satu deret angka.
 Ini **sakelar lapisan, bukan filter**: berlaku seketika, tidak menunggu
 Terapkan Filter, dan tidak ikut disimpan di preset. Endpoint-nya
 `/api/match-points` yang sudah ada, dengan cakupan **wilayah yang diterapkan
-saja** — filter atribut dan cari nama di panel ini bicara soal kolom SE2026
-dan tidak berarti apa-apa pada tabel Regsosek. Lapisan ini punya urutan
-request dan `AbortController` sendiri, jadi tidak pernah membatalkan (atau
-dibatalkan oleh) pemuatan lapisan utama. Saat menyala, panel statistik
-menambah baris "Titik Regsosek di area ini: N" dan legenda menampilkan
-entri ungu.
+dan kotak Cari Nama**. Cari nama adalah satu-satunya filter yang dipahami
+kedua tabel — di sisi Regsosek ia mencocokkan `nama_prelist` dan `nama_kk`,
+kolom yang sama yang dicari menu Daftar Match Regsosek — jadi nama yang
+diketik di sini menemukan orangnya di kedua lapisan. Filter atribut adalah
+kolom SE2026 dan tidak dikirim. Lapisan ini punya urutan request dan
+`AbortController` sendiri, jadi tidak pernah membatalkan (atau dibatalkan
+oleh) pemuatan lapisan utama. Saat menyala, panel statistik menambah baris
+"Titik Regsosek di area ini: N" dan legenda menampilkan entri ungu.
+
+Di atasnya ada sakelar **"Tampilkan titik SE2026"** (menyala secara default)
+untuk lapisan utama. Dimatikan: titik, kelompok, dan label nomor bangunan
+SE2026 dibersihkan, request yang sedang berjalan dibatalkan, dan pergeseran
+peta tidak lagi memuatnya sampai dinyalakan lagi — sementara panel filter
+tetap bekerja karena masih mencakup lapisan Regsosek. Panel statistik saat
+itu menampilkan header filter yang sama diikuti "Titik SE2026:
+disembunyikan". Dengan begitu peta bisa menampilkan Regsosek saja, SE2026
+saja, atau keduanya. Warna tiap sakelar mengikuti warna titiknya (biru
+SE2026, ungu Regsosek).
+
+**Zoom hasil pencarian mengikuti lapisan yang menyala**: extent SE2026 dari
+`/api/points-bounds`, extent Regsosek dari `/api/match-bounds` (sama-sama
+persentil 1%/99%), dan **gabungan keduanya** kalau kedua lapisan menyala —
+nama yang hanya ada di salah satu tabel tetap dibawa ke layar, nama yang ada
+di keduanya memperlihatkan keduanya. Diuji: Paser + cari "SUPRIYADI" → 113
+titik SE2026 dan 10 titik Regsosek, peta menyesuaikan ke gabungannya; SE2026
+dimatikan → tidak ada lagi request `/api/points` saat peta digeser, hanya
+`/api/match-points`; dinyalakan lagi → lapisan utama dimuat kembali.
 
 Dua filter lama di panel Peta — "Ditemukan di Assignment Baru" dan
 "Ditemukan di Regsosek" — **dihapus** dari menu ini bersamaan dengan
@@ -517,9 +538,9 @@ terpisah**, dikonfigurasi lewat variabel `MAP_*` di `.env` (lihat
 diisi, atau Postgres-nya tidak bisa dihubungi saat startup, server tetap
 jalan normal tanpa polygon dan dropdown kecamatan/desa kembali menampilkan
 kode saja (cuma di-log sebagai warning, tidak menghentikan server — lihat
-`run()` di `main.go`). Tabel sumbernya `peta_sls_6400_rev`: `idsubsls`
+`run()` di `main.go`). Tabel sumbernya `peta_sls_6400`: `idsubsls`
 formatnya persis sama dengan `level_6_full_code` di ClickHouse (16 digit),
-`wkb_geometry` geometrinya (SRID 4326 / WGS84, langsung dipakai Leaflet
+`geom` geometrinya (SRID 4326 / WGS84, langsung dipakai Leaflet
 tanpa reproyeksi), `kdkec`/`nmkec` dan `kddesa`/`nmdesa` sumber nama
 kecamatan/desa. Lihat `internal/mapdb/`.
 
@@ -986,7 +1007,7 @@ berarti mentabulasi kolom yang salah tanpa memberi tahu.
 Empat kolom nama mendahului ID SUBSLS: **Kabupaten/Kota, Kecamatan,
 Desa/Kelurahan, Nama SLS**. Kabupaten/kota dari tabel statis di `points`;
 tiga lainnya dari layer PostGIS (`nmkec`/`nmdesa`/`nmsls` di
-`peta_sls_6400_rev`). Seluruh tabel nama itu (14.332 SLS, ±1 MB) dimuat
+`peta_sls_6400`). Seluruh tabel nama itu (14.332 SLS, ±1 MB) dimuat
 **sekali** dan di-cache di memori server selama 30 menit
 (`wilayahNameCache` di `internal/api`; `mapdb.AllSLSWilayahNames`, 80 ms),
 jadi satu halaman tabulasi tidak menyentuh PostGIS sama sekali. Namanya

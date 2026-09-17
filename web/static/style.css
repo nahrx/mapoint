@@ -1798,6 +1798,16 @@ body {
   background: #7b4fbf;
 }
 
+/* The SE2026 switch takes the SE2026 point colour, the Regsosek switch the
+   Regsosek one, so each switch is the colour of the dots it controls. */
+.layer-toggle input:checked + .layer-toggle-switch-se {
+  background: #2a81cb;
+}
+
+.layer-toggle + .layer-toggle {
+  padding-top: 2px;
+}
+
 .layer-toggle input:checked + .layer-toggle-switch::after {
   transform: translateX(14px);
 }

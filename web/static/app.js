@@ -10,6 +10,7 @@
   const desaSelect = document.getElementById("desa-select");
   const slsSelect = document.getElementById("sls-select");
   const subslsSelect = document.getElementById("subsls-select");
+  const se2026Toggle = document.getElementById("se2026-layer-toggle");
   const regsosekToggle = document.getElementById("regsosek-layer-toggle");
   const legendRegsosek = document.getElementById("legend-regsosek");
   const legendRegsosekCluster = document.getElementById("legend-regsosek-cluster");
@@ -431,7 +432,7 @@
   function scheduleLoad() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      loadViewport();
+      if (se2026Toggle.checked) loadViewport();
       if (regsosekToggle.checked) loadRegsosekViewport();
     }, LOAD_DEBOUNCE_MS);
   }
@@ -544,9 +545,9 @@
     return String(n);
   }
 
-  function updateStats(resp) {
-    const shown = resp.type === "points" ? (resp.points || []).length : (resp.clusters || []).length;
-    const kind = resp.type === "points" ? "titik individual" : "kelompok";
+  // The lines that describe what is filtered, shared by both stats states
+  // (SE2026 layer on: followed by its counts; off: followed by a note).
+  function filterLines() {
     const lines = [];
     if (datasetTotal !== null) lines.push(`Total data: ${datasetTotal.toLocaleString("id-ID")} titik`);
     if (appliedKabkota) {
@@ -567,11 +568,32 @@
     attrLine(lines, "Penggunaan Bangunan", appliedPenggunaan);
     attrLine(lines, "Keberadaan Usaha", appliedKeberadaanBku);
     if (appliedSearch) lines.push(`Cari nama: "${appliedSearch}"`);
-    lines.push(`Di area ini: ${resp.total.toLocaleString("id-ID")} titik`);
-    lines.push(`Ditampilkan: ${shown.toLocaleString("id-ID")} ${kind}`);
+    return lines;
+  }
+
+  function regsosekLine(lines) {
     if (regsosekToggle.checked && regsosekLastTotal !== null) {
       lines.push(`Titik Regsosek di area ini: ${regsosekLastTotal.toLocaleString("id-ID")}`);
     }
+  }
+
+  // Stats with the SE2026 layer switched off: the filter header still
+  // applies (it scopes the Regsosek layer too), but there are no SE2026
+  // counts to report.
+  function updateStatsWithoutMain() {
+    const lines = filterLines();
+    lines.push("Titik SE2026: disembunyikan");
+    regsosekLine(lines);
+    statsEl.textContent = lines.join("\n");
+  }
+
+  function updateStats(resp) {
+    const shown = resp.type === "points" ? (resp.points || []).length : (resp.clusters || []).length;
+    const kind = resp.type === "points" ? "titik individual" : "kelompok";
+    const lines = filterLines();
+    lines.push(`Di area ini: ${resp.total.toLocaleString("id-ID")} titik`);
+    lines.push(`Ditampilkan: ${shown.toLocaleString("id-ID")} ${kind}`);
+    regsosekLine(lines);
     // Roughly 1 SubSLS in 5 (3,219 of 15,722, measured) is spread widely
     // enough that auto-fit lands below BANGUNAN_LABEL_MIN_ZOOM, so the
     // labels a SubSLS filter is supposed to bring don't appear. Say why,
@@ -740,8 +762,11 @@
   // points the Peta Match Reg2022 menu maps, drawn here as a second layer
   // over the SE2026 points so the two can be compared in one view. Same
   // endpoint as that menu, /api/match-points, scoped to the applied
-  // wilayah only: the attribute filters and name search of this panel are
-  // about SE2026 columns and mean nothing on the Regsosek table.
+  // wilayah and the name search. The search is the one filter both tables
+  // understand — on this side it matches nama_prelist and nama_kk, the
+  // same columns the Daftar Match Regsosek menu searches — so a name typed
+  // here finds the person on both layers. The attribute filters are SE2026
+  // columns and are not sent.
   //
   // A switch, not a filter — it applies at once, survives Terapkan Filter,
   // and is not part of saved presets. Its own request sequence and abort
@@ -790,6 +815,7 @@
     if (appliedDesa) params.set("desa", appliedDesa);
     if (appliedSls) params.set("sls", appliedSls);
     if (appliedSubsls) params.set("subsls", appliedSubsls);
+    if (appliedSearch) params.set("search", appliedSearch);
 
     try {
       const resp = await fetchWithRetry(`/api/match-points?${params}`, controller.signal);
@@ -837,15 +863,41 @@
     legendRegsosekCluster.classList.toggle("hidden", resp.type === "points");
     // Re-render the stats box so the Regsosek count line appears without
     // waiting for the next main-layer load.
-    if (lastMainResp) updateStats(lastMainResp);
+    refreshStats();
+  }
+
+  // Redraws the stats box for the current state of both switches.
+  function refreshStats() {
+    if (!se2026Toggle.checked) updateStatsWithoutMain();
+    else if (lastMainResp) updateStats(lastMainResp);
   }
 
   regsosekToggle.addEventListener("change", () => {
     if (regsosekToggle.checked) loadRegsosekViewport();
     else {
       clearRegsosekLayer();
-      if (lastMainResp) updateStats(lastMainResp);
+      refreshStats();
     }
+  });
+
+  // --- SE2026 layer switch -------------------------------------------------
+  // On by default. Off: the main layer (points, clusters, nomor-bangunan
+  // labels — all children of `layer`) is cleared, any in-flight load is
+  // dropped, and viewport moves stop loading it until it is switched back
+  // on. The filter panel keeps working meanwhile: it still scopes the
+  // Regsosek layer.
+  se2026Toggle.addEventListener("change", () => {
+    if (se2026Toggle.checked) {
+      loadViewport();
+      return;
+    }
+    requestSeq++; // orphans any response still on its way
+    if (inFlightController) inFlightController.abort();
+    inFlightController = null;
+    layer.clearLayers();
+    lastMainResp = null;
+    setLoading(false);
+    updateStatsWithoutMain();
   });
 
   // --- GPS: "lokasi saya" -------------------------------------------------
@@ -1135,13 +1187,38 @@
   // The four bounds are omitted from the JSON when nothing matches (the
   // server sends null for a non-finite percentile), so total > 0 alone
   // isn't enough of a guard — boundsOf re-checks the numbers.
+  // Zooms to the search results on whichever layers are switched on: the
+  // SE2026 extent from /api/points-bounds, the Regsosek extent from
+  // /api/match-bounds (both percentile-based), and the union when both
+  // layers are on — so a name that exists on only one of them is still
+  // brought into view, and one that exists on both shows both.
   async function fitToSearch(search) {
     try {
-      const params = appendFilterParams(new URLSearchParams());
-      const b = await fetchWithRetry(`/api/points-bounds?${params}`, undefined);
+      const wants = [];
+      if (se2026Toggle.checked) {
+        wants.push(fetchWithRetry(`/api/points-bounds?${appendFilterParams(new URLSearchParams())}`, undefined));
+      }
+      if (regsosekToggle.checked) {
+        const p = new URLSearchParams();
+        if (appliedKabkota) p.set("kabkota", appliedKabkota);
+        if (appliedKecamatan) p.set("kecamatan", appliedKecamatan);
+        if (appliedDesa) p.set("desa", appliedDesa);
+        if (appliedSls) p.set("sls", appliedSls);
+        if (appliedSubsls) p.set("subsls", appliedSubsls);
+        p.set("search", search);
+        wants.push(fetchWithRetry(`/api/match-bounds?${p}`, undefined));
+      }
+      if (wants.length === 0) return;
+      const results = await Promise.allSettled(wants);
       if (search !== appliedSearch) return; // filter changed while we waited
-      if (!b || !b.total) return;
-      fitTo(boundsOf(b)); // null-safe: fitTo ignores a null extent
+      let union = null;
+      for (const r of results) {
+        if (r.status !== "fulfilled" || !r.value || !r.value.total) continue;
+        const b = boundsOf(r.value);
+        if (!b) continue;
+        union = union ? L.latLngBounds(union).extend(L.latLngBounds(b)) : L.latLngBounds(b);
+      }
+      if (union) fitTo(union);
     } catch (err) {
       // Leave the wilayah extent in place; the points still load.
       console.error("failed to load search bounds", err);

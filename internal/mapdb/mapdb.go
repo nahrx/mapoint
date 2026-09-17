@@ -24,10 +24,15 @@ import (
 // data. geomColumn is a PostGIS geometry column in SRID 4326 (WGS84,
 // lat/lon), the same coordinate system Leaflet expects, so no
 // reprojection is needed.
+//
+// The layer moved once, from peta_sls_6400_rev (geometry in wkb_geometry)
+// to peta_sls_6400 (geometry in geom) on a different host. Same 17,039
+// rows, 14,332 SLS, SRID and names — checked when switching — only these
+// two identifiers changed.
 const (
-	table      = "peta_sls_6400_rev"
+	table      = "peta_sls_6400"
 	codeColumn = "idsubsls"
-	geomColumn = "wkb_geometry"
+	geomColumn = "geom"
 	// Label columns. nmsls is the SLS's own name ("RT 01 DUSUN I SINGA
 	// KARTI") and is filled on every one of the 17,039 rows — checked, not
 	// assumed. There is no name column for a SubSLS, only kdsubsls, so the
@@ -180,7 +185,7 @@ func AllSLSWilayahNames(ctx context.Context, pool *pgxpool.Pool) (map[string]Wil
 }
 
 // splitKabKota breaks a 4-digit ClickHouse kabkota code (2-digit kdprov +
-// 2-digit kdkab) into the two parts peta_sls_6400_rev keys by.
+// 2-digit kdkab) into the two parts peta_sls_6400 keys by.
 func splitKabKota(kabkotaCode string) (kdprov, kdkab string, err error) {
 	if len(kabkotaCode) != 4 {
 		return "", "", fmt.Errorf("mapdb: kabkota code must be 4 digits, got %q", kabkotaCode)

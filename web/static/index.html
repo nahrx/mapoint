@@ -104,11 +104,16 @@
                  data-placeholder="Semua Status" data-labelledby="status-label-peta"></div>
           </div>
         </div>
-        <!-- A layer switch, not a filter: it takes effect at once and is not
-             part of Terapkan Filter or of saved presets. The layer is the
-             Regsosek coordinates the Peta Match Reg2022 menu maps, drawn
-             here on top of the SE2026 points so the two can be compared in
-             one view. -->
+        <!-- Layer switches, not filters: they take effect at once and are not
+             part of Terapkan Filter or of saved presets. SE2026 is the main
+             layer (on by default); Regsosek is the Reg2022 coordinates the
+             Peta Match menu maps, drawn on top so the two can be compared
+             in one view — or alone, with SE2026 switched off. -->
+        <label class="layer-toggle" for="se2026-layer-toggle">
+          <input type="checkbox" id="se2026-layer-toggle" checked>
+          <span class="layer-toggle-switch layer-toggle-switch-se" aria-hidden="true"></span>
+          <span class="layer-toggle-text">Tampilkan titik SE2026</span>
+        </label>
         <label class="layer-toggle" for="regsosek-layer-toggle">
           <input type="checkbox" id="regsosek-layer-toggle">
           <span class="layer-toggle-switch" aria-hidden="true"></span>
