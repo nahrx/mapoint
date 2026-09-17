@@ -43,6 +43,8 @@ type Region struct {
 	// by FlagLabel.
 	FlagBaru     string
 	FlagRegsosek string
+	// NonRespon is the Non Respon filter's raw value, same vocabulary.
+	NonRespon string
 }
 
 // FlagLabel renders one of the two membership filter values for a report
@@ -132,6 +134,9 @@ func (r Region) ExtraFilters() [][2]string {
 	}
 	if lbl := FlagLabel(r.FlagRegsosek); lbl != "" {
 		extra = append(extra, [2]string{"Ditemukan di Regsosek", lbl})
+	}
+	if lbl := FlagLabel(r.NonRespon); lbl != "" {
+		extra = append(extra, [2]string{"Non Respon", lbl})
 	}
 	return extra
 }

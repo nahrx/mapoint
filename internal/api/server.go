@@ -492,6 +492,10 @@ func parseFilter(q url.Values) (points.Filter, error) {
 	if err != nil {
 		return points.Filter{}, err
 	}
+	nonRespon, err := points.ParseFlag(q.Get("nonRespon"))
+	if err != nil {
+		return points.Filter{}, err
+	}
 	search, err := parseSearch(q)
 	if err != nil {
 		return points.Filter{}, err
@@ -503,6 +507,7 @@ func parseFilter(q url.Values) (points.Filter, error) {
 	filter.KeberadaanBKU = keberadaanBKU
 	filter.FlagBaru = flagBaru
 	filter.FlagRegsosek = flagRegsosek
+	filter.NonRespon = nonRespon
 	filter.Search = search
 	return filter, nil
 }
@@ -657,6 +662,7 @@ func (s *Server) prepareReport(w http.ResponseWriter, r *http.Request, q url.Val
 		Search:             filter.Search,
 		FlagBaru:           filter.FlagBaru,
 		FlagRegsosek:       filter.FlagRegsosek,
+		NonRespon:          filter.NonRespon,
 	}
 
 	return reportData{region: region, items: items, truncated: len(items) >= points.ReportMaxRows}, true

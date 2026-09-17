@@ -650,8 +650,8 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
 
 - **Sort by kolom apa saja** — klik header kolom mana pun (Nama, Alamat, ID
   SUBSLS, Nomor Bangunan, Jenis Prelist, Penggunaan Bangunan, Keberadaan
-  Keluarga, Keberadaan Usaha, Status, Assignment ID, Ditemukan di
-  Assignment Baru, Assignment ID Baru, Ditemukan di Regsosek) untuk mengurutkan tabel berdasarkan kolom itu; klik lagi
+  Keluarga, Keberadaan Usaha, Status, Non Respon, Assignment ID, Ditemukan
+  di Assignment Baru, Assignment ID Baru, Ditemukan di Regsosek) untuk mengurutkan tabel berdasarkan kolom itu; klik lagi
   kolom yang sama untuk membalik arah (naik/turun), klik kolom lain untuk
   pindah kolom urut (default naik). Panah kecil di header cuma muncul di
   kolom yang sedang aktif. Nama kolom di query string (`sortBy=nama`,
@@ -728,7 +728,7 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
 
   Panel filternya dibagi jadi dua kelompok `.filter-group` — filter
   wilayah yang berjenjang, lalu sisanya (cari nama, kelima filter atribut,
-  dua flag) — **tanpa judul kelompok**. Urutannya sama persis di menu Peta
+  Non Respon, dua flag) — **tanpa judul kelompok**. Urutannya sama persis di menu Peta
   dan Daftar.
 
   Pemisah antar kelompok beda per konteks, dan itu disengaja. Di kartu
@@ -778,6 +778,12 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
   sedang tampil. Karena itu panel statistik menampilkan satu baris per
   filter atribut yang aktif — tanpa itu, peta yang terfilter ketat tidak
   bisa dibedakan dari area yang memang kosong.
+- **Filter Non Respon** — dropdown Semua/Ya/Tidak tepat setelah Status,
+  ada di menu Daftar **dan** Peta. "Ya" menyisakan baris yang kolom
+  `no_banr`-nya terisi (ada berita acara non-respon), "Tidak" yang kosong.
+  Parameter query-nya `nonRespon` dengan vocabulary yang sama dengan dua
+  flag "Ditemukan di …" (`""`/`"1"`/`"0"`, lewat `ParseFlag`) — lihat
+  "Kolom Non Respon" di bawah untuk isi kolomnya.
 - **Tidak difilter oleh validitas koordinat** — beda dari menu Peta, daftar
   ini menampilkan semua baris yang cocok filter, termasuk yang
   `latitude_ppl`/`longitude_ppl`-nya `0` atau kosong, karena tujuannya
@@ -805,13 +811,30 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
     satu SubSLS, nilainya sama untuk semua baris jadi cukup ditulis sekali
     di keterangan wilayah; kalau cakupannya lebih luas (satu desa atau satu
     SLS), nilainya beda-beda antar baris jadi harus jadi kolom sendiri —
-    lihat `columnsFor`/`rowFor` di `internal/pdfreport/`. Penggunaan
-    Bangunan dan Keberadaan Usaha juga tidak jadi kolom di sini: kedua set
-    kolom sudah 275–276mm dari 277mm yang tersedia di A4 landscape, jadi
-    keduanya tidak muat tanpa memangkas Nama/Alamat/Catatan. Kalau salah
-    satunya dipakai sebagai filter, PDF tetap menyebutkannya di blok
-    "Filter Tambahan". Digenerate pakai `github.com/go-pdf/fpdf` (pure Go,
-    tanpa Chrome/wkhtmltopdf).
+    lihat `columnsFor`/`rowFor` di `internal/pdfreport/`. **Keberadaan
+    Usaha** ikut sebagai kolom (24mm di set SubSLS, 22mm di set lebar),
+    dibayar dari Catatan (60→37mm dan 52→30mm) — satu-satunya kolom yang
+    membungkus bebas tanpa kehilangan apa pun. Penggunaan Bangunan tetap
+    tidak jadi kolom (labelnya sampai ±100 karakter); kalau dipakai sebagai
+    filter, PDF menyebutkannya di blok "Filter Tambahan". Digenerate pakai
+    `github.com/go-pdf/fpdf` (pure Go, tanpa Chrome/wkhtmltopdf).
+
+    **Header tabel PDF kini membungkus.** Saat menambah kolom itu, label
+    header diukur dengan `GetStringWidth` pada font header (Arial Bold 8pt)
+    dan ternyata **sudah meluap sejak lama**: "Nomor Bangunan" 23,7mm di sel
+    15mm, "Keberadaan Keluarga" 29,0mm di sel 28mm — `CellFormat` tidak
+    membungkus dan tidak memotong, jadi teksnya menjalar ke sel sebelah di
+    setiap halaman. `drawTableHeader` sekarang memecah label per kolom dengan
+    `SplitLines`, memberi seluruh baris header tinggi sel tertingginya (dua
+    baris, ±9mm), dan memusatkan tiap label secara vertikal di kotaknya.
+    Perhitungan pemenggalan halaman membaca `GetY()` setelah header, jadi
+    tinggi baru itu otomatis diperhitungkan. Jebakan kedua: `SplitLines`
+    memecah kata yang tidak muat di tengah kata — pada 17mm "Regsosek" jadi
+    "Regsose / k" — sehingga Nomor Bangunan dan Regsosek dilebarkan ke 18mm.
+    `TestHeaderLabelsWrapOnWordBoundaries` menjaga ini untuk ketiga set
+    kolom (Daftar SubSLS, Daftar lebar, Regsosek): setiap label harus
+    membungkus hanya di spasi, dan total lebarnya tidak boleh melebihi
+    halaman.
   - **Excel (.xlsx)** — buat diolah lebih lanjut (disortir, difilter,
     dicocokkan dengan data lain), jadi kolom `assignment_id` dan ID SUBSLS
     per baris selalu disertakan di sini (tidak kondisional seperti di PDF),
@@ -823,7 +846,9 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
     ditulis 0: angka 0 di kolom Latitude terbaca sebagai titik sungguhan di
     khatulistiwa, dan itu lebih buruk daripada sel kosong (`coordCell` di
     `internal/xlsxreport`). PDF tidak diberi kolom ini — lebarnya sudah
-    habis.
+    habis. Kolom **Non Respon** (Ya/Tidak, setelah Status) juga hanya ada
+    di Excel; di PDF ia muncul di blok "Filter Tambahan" kalau filternya
+    dipakai.
     Digenerate pakai `github.com/xuri/excelize/v2` lewat
     `internal/xlsxreport/`.
 
@@ -1537,8 +1562,8 @@ Semua endpoint di bawah butuh sesi login kecuali yang ditandai — lihat
 bagian "Login" di atas.
 
 - `GET /` — peta (frontend)
-- `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&search=` — data titik/cluster untuk satu viewport. Filter atributnya sama persis dengan `/api/list` (multi-nilai, ulangi parameternya per nilai) — keduanya lewat `parseFilter` yang sama. Titik individual ikut membawa kedua flag "Ditemukan di …" untuk tooltip (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
-- `GET /api/points-bounds?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&search=` — extent geografis baris yang cocok dengan filter (persentil 1%/99% dari `latitude_ppl`/`longitude_ppl`), untuk auto-zoom ke hasil pencarian nama di menu Peta. Parameternya sama persis dengan `/api/points` minus kotak viewport-nya. Balasannya `min_lat`/`max_lat`/`min_lon`/`max_lon` + `total`; kalau tidak ada baris yang cocok, `total` 0 dan keempat batasnya `null` (bukan NaN — `encoding/json` menolak NaN, lihat `points.FiniteOrNil`), jadi pemanggil tidak boleh nge-zoom ke situ. Dipanggil frontend hanya saat pencarian nama aktif — lihat "Cari nama di menu Peta" di atas
+- `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=` — data titik/cluster untuk satu viewport. Filter atributnya sama persis dengan `/api/list` (multi-nilai, ulangi parameternya per nilai) — keduanya lewat `parseFilter` yang sama. Titik individual ikut membawa kedua flag "Ditemukan di …" dan `non_respon` untuk tooltip (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
+- `GET /api/points-bounds?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=` — extent geografis baris yang cocok dengan filter (persentil 1%/99% dari `latitude_ppl`/`longitude_ppl`), untuk auto-zoom ke hasil pencarian nama di menu Peta. Parameternya sama persis dengan `/api/points` minus kotak viewport-nya. Balasannya `min_lat`/`max_lat`/`min_lon`/`max_lon` + `total`; kalau tidak ada baris yang cocok, `total` 0 dan keempat batasnya `null` (bukan NaN — `encoding/json` menolak NaN, lihat `points.FiniteOrNil`), jadi pemanggil tidak boleh nge-zoom ke situ. Dipanggil frontend hanya saat pencarian nama aktif — lihat "Cari nama di menu Peta" di atas
 - `GET /api/tabulasi/variables` — enam variabel tabulasi (kunci, label, urutan kategori) dalam urutan tab; statis, sumber kebenaran untuk `?var=` di bawah
 - `GET /api/tabulasi?var=&kabkota=&kecamatan=&desa=&sls=&subsls=&page=&pageSize=` — satu halaman tabulasi silang SubSLS × kategori untuk variabel `var` (salah satu kunci dari endpoint di atas; lainnya ditolak 400). Filter sama dengan `/api/list` lewat `parseFilter`. `page`/`pageSize` menghitung **SubSLS**, bukan baris data; `pageSize` maks 200. Balasannya `columns` (urutan kategori, `""` terakhir kalau ada yang kosong), `rows[].counts` (kategori → jumlah) + `rows[].total`, `total_rows` (jumlah SubSLS di seluruh filter), `grand` + `grand_total` (total per kategori dan keseluruhan untuk seluruh filter)
 - `GET /api/tabulasi/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=` — workbook Excel berisi keenam tabulasi (satu sheet per variabel) untuk seluruh SubSLS yang cocok dengan filter, sampai `TabulasiMaxRows` (50.000) per sheet. Semua parameter opsional — tanpa filter = seluruh provinsi. Nama berkas `tabulasi-subsls-<kode wilayah|semua>.xlsx`
@@ -1549,9 +1574,9 @@ bagian "Login" di atas.
 - `GET /api/sls?kabkota=&kecamatan=&desa=` — daftar Kode SLS di dalam satu desa/kelurahan (ketiga parameter wajib); `name` diisi dari kolom `nmsls` di PostGIS kalau `MAP_*` dikonfigurasi, kosong kalau tidak
 - `GET /api/subsls?kabkota=&kecamatan=&desa=&sls=` — daftar Kode SubSLS di dalam satu SLS (keempat parameter wajib)
 - `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — batas SubSLS sebagai GeoJSON FeatureCollection, dari PostGIS. `kabkota`, `kecamatan` dan `desa` **wajib**; `sls` dan `subsls` opsional dan hanya mempersempit. Yang dikembalikan adalah semua SubSLS yang `idsubsls`-nya berawalan kode gabungan itu — satu desa bisa ratusan polygon (maksimal terukur 164), satu SubSLS tepat satu. Cakupan lebih luas dari desa ditolak 400. Tiap feature membawa `properties.idsubsls`. Tanpa PostGIS terkonfigurasi, endpoint ini menjawab 503 dan petanya tetap jalan tanpa overlay
-- `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `keberadaan_bku`, `status`, `penggunaan_bangunan`, `assignment_id`, `ada_assignment_baru`, `ada_regsosek`, `assignment_id_baru` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`, `penggunaanBangunan`, `keberadaanBku`) semuanya opsional, **multi-nilai**, dan independen dari filter wilayah maupun satu sama lain — ulangi parameternya untuk tiap nilai (`?status=OPEN&status=DRAFT`), yang jadi satu `IN (...)`; nilainya divalidasi terhadap enum tetap di `internal/points/points.go` dan satu nilai tak dikenal menolak seluruh request dengan 400; pakai `__EMPTY__` untuk memfilter kolom yang kosong, boleh digabung dengan nilai biasa. `flagBaru` dan `flagRegsosek` hanya menerima `""` (semua), `"1"` (ada) atau `"0"` (tidak ada) — nilai lain ditolak 400
-- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
-- `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&search=&sortBy=&dir=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf` (lihat `prepareReport` di `internal/api/server.go`, dipakai bareng oleh kedua handler)
+- `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `keberadaan_bku`, `status`, `penggunaan_bangunan`, `assignment_id`, `ada_assignment_baru`, `ada_regsosek`, `assignment_id_baru`, `non_respon` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`, `penggunaanBangunan`, `keberadaanBku`) semuanya opsional, **multi-nilai**, dan independen dari filter wilayah maupun satu sama lain — ulangi parameternya untuk tiap nilai (`?status=OPEN&status=DRAFT`), yang jadi satu `IN (...)`; nilainya divalidasi terhadap enum tetap di `internal/points/points.go` dan satu nilai tak dikenal menolak seluruh request dengan 400; pakai `__EMPTY__` untuk memfilter kolom yang kosong, boleh digabung dengan nilai biasa. `flagBaru`, `flagRegsosek` dan `nonRespon` hanya menerima `""` (semua), `"1"` (ada) atau `"0"` (tidak ada) — nilai lain ditolak 400
+- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&sortBy=&dir=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`
+- `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&sortBy=&dir=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf` (lihat `prepareReport` di `internal/api/server.go`, dipakai bareng oleh kedua handler)
 - `GET /api/reg2022?kabkota=&kecamatan=&desa=&sls=&subsls=&matchStatus=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar Reg2022 (tabel `se2026_match_regsosek`). Filter wilayah sama dengan endpoint lain; `matchStatus` divalidasi terhadap 7 nilai tetap di `internal/regsosek/regsosek.go` (pakai `__EMPTY__` untuk kolom kosong); `search` mencari substring di `nama_prelist` dan `nama_kk` saja, lewat parameter binding — nomor KK/NIK tidak dipakai sebagai kunci cari. `sortBy` salah satu dari `nama` (default), `nama_kk`, `subsls`, `match_status`, `alamat_regsosek`, `nama_matched`, `assignment_id`
 - `GET /api/reg2022/filter-options` — daftar nilai `match_status` untuk dropdown filter menu Daftar Reg2022
 - `GET /api/reg2022/pdf?...` dan `GET /api/reg2022/xlsx?...` — laporan "Daftar Match Regsosek". Parameter filternya sama dengan `/api/reg2022`; `kabkota` dan `kecamatan` **wajib** (cakupan minimal satu kecamatan, lebih luas ditolak 400)
@@ -1606,11 +1631,42 @@ di `keberadaanBKUValues`. Nilai kosong adalah yang paling umum dan sengaja
 tidak masuk daftar enum — ia dijangkau lewat opsi "(Kosong)" (`__EMPTY__`)
 seperti filter atribut lainnya.
 
-Kolom ini ikut ke **Excel** (kolom ke-9, setelah Keberadaan Keluarga), tapi
-**tidak** jadi kolom di PDF — sama perlakuannya dengan Penggunaan Bangunan,
-karena tabel PDF sudah 275–276mm dari 277mm yang tersedia di A4 landscape.
-Kalau filternya dipakai, PDF tetap mencantumkannya di blok "Filter
-Tambahan" di header, jadi cakupan laporan tidak pernah ambigu.
+Kolom ini ikut ke **Excel** (setelah Keberadaan Keluarga) dan, sejak header
+PDF dibuat membungkus, juga ke **PDF** (24mm di set SubSLS, 22mm di set
+lebar, dibayar dari Catatan — lihat "Unduh PDF & Unduh Excel" di atas).
+Kalau filternya dipakai, PDF juga mencantumkannya di blok "Filter Tambahan"
+di header, jadi cakupan laporan tidak pernah ambigu.
+
+### Kolom "Non Respon" (`no_banr`)
+
+`no_banr` menyimpan nomor berita acara non-respon (BANR) — misalnya
+`6401060.003/BANR/SE2026` — untuk responden yang tidak berhasil dicacah,
+dan kosong untuk yang lain. Aplikasi tidak menampilkan nomornya; yang
+dipakai cuma **terisi atau tidak**: `no_banr != ''` (`nonResponExpr` di
+`internal/points/points.go`). Diperiksa di data live sebelum memilih
+ekspresi sesederhana itu: 24.290 dari ±2,2 juta baris terisi, dan tidak ada
+satu pun yang berisi spasi saja, jadi `trim` tidak diperlukan. Dari yang
+terisi, 20.211 punya koordinat valid — itulah yang bisa tampil di peta;
+sisanya hanya muncul di menu Daftar.
+
+Di layar ia jadi:
+
+- kolom **Non Respon** di tabel Daftar, tepat setelah Status — centang
+  kalau terisi, strip kalau kosong (glyph yang sama dengan dua kolom
+  "Ditemukan di …", supaya tabel tidak punya tiga gaya centang), bisa
+  diurutkan (`sortBy=non_respon`);
+- baris `Non Respon: Ya/Tidak` di tooltip titik menu Peta;
+- filter Semua/Ya/Tidak di menu Daftar **dan** Peta (parameter
+  `nonRespon`, divalidasi `ParseFlag` — lihat "Filter Non Respon" di
+  atas), ikut disimpan di preset filter, dan di Peta menambah satu baris
+  di panel statistik saat aktif seperti filter atribut lainnya;
+- kolom **Non Respon** (Ya/Tidak) di unduhan Excel menu Daftar; di PDF ia
+  hanya muncul di blok "Filter Tambahan" — tabelnya sudah penuh.
+
+Endpoint-nya tidak bertambah: `parseFilter` yang sama dipakai
+`/api/points`, `/api/points-bounds`, `/api/list`, kedua unduhan Daftar,
+dan `/api/tabulasi`, jadi `nonRespon` diterima di semuanya. Di JSON,
+`Point.NonRespon` keluar sebagai `non_respon` (boolean).
 
 ### Kolom `jumlah_usaha` (dulu `keberadaan_usaha`) — sementara disembunyikan
 

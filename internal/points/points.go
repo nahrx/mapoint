@@ -315,6 +315,23 @@ func flagClause(dict, val string) string {
 	return expr
 }
 
+// nonResponExpr is the SQL that says "this row is a non-response": no_banr
+// holds a BANR (berita acara non-respon) reference such as
+// "6401060.003/BANR/SE2026" when the respondent could not be enumerated,
+// and is empty otherwise. Checked against the live column: 24,290 of
+// 2.2M rows are filled, none are whitespace-only, so a plain inequality
+// is the whole test.
+const nonResponExpr = "no_banr != ''"
+
+// nonResponClause turns a validated flag value into the WHERE fragment
+// for the Non Respon filter.
+func nonResponClause(val string) string {
+	if val == FlagNo {
+		return "no_banr = ''"
+	}
+	return nonResponExpr
+}
+
 // EmptyValue is the sentinel a caller passes to explicitly filter for rows
 // where the column itself is blank, as distinct from leaving the filter
 // unset entirely. Parse*'s zero value ("") already means "no filter", so
@@ -418,6 +435,12 @@ type Filter struct {
 	PenggunaanBangunan []string
 	KeberadaanBKU      []string
 
+	// NonRespon filters on whether no_banr is filled: FlagYes keeps only
+	// rows with a BANR reference (non-response cases), FlagNo only rows
+	// without one, "" leaves the filter off. Validated by ParseFlag, the
+	// same Ya/Tidak vocabulary as the two membership flags.
+	NonRespon string
+
 	// FlagBaru and FlagRegsosek filter on the two membership flags:
 	// FlagYes keeps only rows found in that table, FlagNo only rows not
 	// found in it, "" leaves the filter off. Validated by ParseFlag.
@@ -510,6 +533,9 @@ func (f Filter) clause() (string, []any) {
 	if f.FlagRegsosek != "" {
 		parts = append(parts, flagClause(regsosekDict, f.FlagRegsosek))
 	}
+	if f.NonRespon != "" {
+		parts = append(parts, nonResponClause(f.NonRespon))
+	}
 	if f.Search != "" {
 		// positionCaseInsensitive is a plain substring search, not a LIKE
 		// pattern, so there's no %/_ wildcard to escape on top of the bind
@@ -595,6 +621,10 @@ type Point struct {
 	// neither source table contributes any other column here.
 	AdaAssignmentBaru bool `json:"ada_assignment_baru"`
 	AdaRegsosek       bool `json:"ada_regsosek"`
+	// NonRespon is true when no_banr is filled — see nonResponExpr. Shown
+	// as a checkmark column in the Daftar table and a tooltip line on the
+	// map; the BANR reference itself is not surfaced.
+	NonRespon bool `json:"non_respon"`
 	// AssignmentIDBaru is se2026_match.assignment_id_baru for this row, or
 	// "" when there is none. Only populated by the Daftar list path —
 	// /api/points doesn't select it, so it is omitted from the map payload
@@ -764,11 +794,11 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 		jumlah_usaha, nomor_bangunan, keberadaan_keluarga, keberadaan_BKU,
 		assignment_status_alias,
 		latitude_ppl, longitude_ppl,
-		%s, %s
+		%s, %s, %s
 	FROM %s
 	WHERE %s AND %s AND %s
 	LIMIT %d`,
-		dictHasExpr(matchDict, "assignment_id"), dictHasExpr(regsosekDict, "assignment_id"),
+		dictHasExpr(matchDict, "assignment_id"), dictHasExpr(regsosekDict, "assignment_id"), nonResponExpr,
 		table, validCoords, bboxClause(b), where, IndividualLimit)
 
 	rows, err := s.conn.Query(ctx, q, args...)
@@ -782,18 +812,19 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 		var p Point
 		// ClickHouse types an IN expression as UInt8, which the driver
 		// won't scan straight into a bool — hence the two temporaries.
-		var adaBaru, adaRegsosek uint8
+		var adaBaru, adaRegsosek, nonRespon uint8
 		if err := rows.Scan(
 			&p.AssignmentID, &p.Nama, &p.Alamat, &p.SubSLS, &p.JenisPrelist,
 			&p.PenggunaanBangunan,
 			&p.KeberadaanUsaha, &p.NomorBangunan, &p.KeberadaanKeluarga,
 			&p.KeberadaanBKU, &p.Status,
-			&p.Lat, &p.Lon, &adaBaru, &adaRegsosek,
+			&p.Lat, &p.Lon, &adaBaru, &adaRegsosek, &nonRespon,
 		); err != nil {
 			return nil, err
 		}
 		p.AdaAssignmentBaru = adaBaru == 1
 		p.AdaRegsosek = adaRegsosek == 1
+		p.NonRespon = nonRespon == 1
 		pts = append(pts, p)
 	}
 	return pts, rows.Err()
@@ -1275,6 +1306,7 @@ var listSortColumns = map[string]string{
 	"ada_assignment_baru": dictHasExpr(matchDict, "assignment_id"),
 	"ada_regsosek":        dictHasExpr(regsosekDict, "assignment_id"),
 	"assignment_id_baru":  dictGetBaruExpr("assignment_id"),
+	"non_respon":          nonResponExpr,
 }
 
 // DefaultSortColumn is used by ParseSortColumn when sortBy is empty or not
@@ -1385,10 +1417,11 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 	// 19ms without these columns at all, and read_rows stays at the left
 	// side's own 57,344 — the dictionaries are already in memory, so
 	// neither source table is touched.
-	cols += fmt.Sprintf(", %s, %s, %s",
+	cols += fmt.Sprintf(", %s, %s, %s, %s",
 		dictHasExpr(matchDict, "assignment_id"),
 		dictHasExpr(regsosekDict, "assignment_id"),
-		dictGetBaruExpr("assignment_id"))
+		dictGetBaruExpr("assignment_id"),
+		nonResponExpr)
 	where, args := filter.clause()
 	q := fmt.Sprintf(`SELECT
 		%s
@@ -1418,13 +1451,14 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 		}
 		// UInt8 in ClickHouse, bool in Point — same as queryPoints.
 		// dictHas returns UInt8, so a miss scans as 0.
-		var adaBaru, adaRegsosek uint8
-		dest = append(dest, &adaBaru, &adaRegsosek, &p.AssignmentIDBaru)
+		var adaBaru, adaRegsosek, nonRespon uint8
+		dest = append(dest, &adaBaru, &adaRegsosek, &p.AssignmentIDBaru, &nonRespon)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
 		p.AdaAssignmentBaru = adaBaru == 1
 		p.AdaRegsosek = adaRegsosek == 1
+		p.NonRespon = nonRespon == 1
 		items = append(items, p)
 	}
 	return items, rows.Err()

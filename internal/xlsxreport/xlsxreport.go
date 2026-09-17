@@ -61,6 +61,7 @@ var columns = []struct {
 	{"Keberadaan Keluarga", 34},
 	{"Keberadaan Usaha", 34},
 	{"Status", 34},
+	{"Non Respon", 12},
 	{"Assignment ID", 38},
 	{"Ditemukan di Assignment Baru", 24},
 	{"Assignment ID Baru", 38},
@@ -252,6 +253,7 @@ func writeTable(f *excelize.File, sheet string, st styles, headerRow int, items 
 			report.DashIfEmpty(p.KeberadaanKeluarga),
 			report.DashIfEmpty(p.KeberadaanBKU),
 			report.DashIfEmpty(p.Status),
+			flagWord(p.NonRespon),
 			report.DashIfEmpty(p.AssignmentID),
 			// Spelled out rather than a checkmark glyph: these two columns
 			// are meant to be filtered and pivoted on in Excel, where a

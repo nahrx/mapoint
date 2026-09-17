@@ -10,6 +10,7 @@
   const desaSelect = document.getElementById("desa-select");
   const slsSelect = document.getElementById("sls-select");
   const subslsSelect = document.getElementById("subsls-select");
+  const nonResponSelect = document.getElementById("nonrespon-select");
   const se2026Toggle = document.getElementById("se2026-layer-toggle");
   const regsosekToggle = document.getElementById("regsosek-layer-toggle");
   const legendRegsosek = document.getElementById("legend-regsosek");
@@ -302,6 +303,7 @@
   let appliedStatus = [];
   let appliedPenggunaan = [];
   let appliedKeberadaanBku = [];
+  let appliedNonRespon = "";
 
   // --- status labels -------------------------------------------------
 
@@ -350,6 +352,7 @@
         <div><b>Status:</b> ${esc(p.status)}</div>
         <div><b>Ditemukan di Assignment Baru:</b> ${flagText(p.ada_assignment_baru)}</div>
         <div><b>Ditemukan di Regsosek:</b> ${flagText(p.ada_regsosek)}</div>
+        <div><b>Non Respon:</b> ${p.non_respon ? "Ya" : "Tidak"}</div>
       </div>`;
   }
 
@@ -447,6 +450,7 @@
     if (appliedSls) params.set("sls", appliedSls);
     if (appliedSubsls) params.set("subsls", appliedSubsls);
     if (appliedSearch) params.set("search", appliedSearch);
+    if (appliedNonRespon) params.set("nonRespon", appliedNonRespon);
     for (const v of appliedJenisPrelist) params.append("jenisPrelist", v);
     for (const v of appliedKeberadaanKeluarga) params.append("keberadaanKeluarga", v);
     for (const v of appliedStatus) params.append("status", v);
@@ -568,6 +572,7 @@
     attrLine(lines, "Penggunaan Bangunan", appliedPenggunaan);
     attrLine(lines, "Keberadaan Usaha", appliedKeberadaanBku);
     if (appliedSearch) lines.push(`Cari nama: "${appliedSearch}"`);
+    if (appliedNonRespon) lines.push(`Non respon: ${appliedNonRespon === "1" ? "hanya yang non respon" : "hanya yang bukan non respon"}`);
     return lines;
   }
 
@@ -739,6 +744,7 @@
     appliedStatus = statusMS.getValues();
     appliedPenggunaan = penggunaanMS.getValues();
     appliedKeberadaanBku = keberadaanBkuMS.getValues();
+    appliedNonRespon = nonResponSelect.value;
     appliedSearch = searchInput.value.trim();
 
     // Wilayah extent first: it is cached client-side, so the view is
@@ -1128,6 +1134,7 @@
       keberadaanKeluarga: keberadaanKeluargaMS.getValues(),
       keberadaanBku: keberadaanBkuMS.getValues(),
       status: statusMS.getValues(),
+      nonRespon: nonResponSelect.value,
     };
   }
 
@@ -1161,6 +1168,7 @@
     keberadaanKeluargaMS.setValues(f.keberadaanKeluarga);
     keberadaanBkuMS.setValues(f.keberadaanBku);
     statusMS.setValues(f.status);
+    nonResponSelect.value = f.nonRespon || "";
 
     // Picking a preset means "show me this", so it applies straight away
     // rather than leaving the user to press Terapkan Filter as well.

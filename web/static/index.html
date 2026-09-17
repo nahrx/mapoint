@@ -103,6 +103,14 @@
             <div class="multiselect" id="status-ms-peta"
                  data-placeholder="Semua Status" data-labelledby="status-label-peta"></div>
           </div>
+          <div class="filter-row">
+            <label for="nonrespon-select">Non Respon:</label>
+            <select id="nonrespon-select">
+              <option value="">Semua</option>
+              <option value="1">Ya</option>
+              <option value="0">Tidak</option>
+            </select>
+          </div>
         </div>
         <!-- Layer switches, not filters: they take effect at once and are not
              part of Terapkan Filter or of saved presets. SE2026 is the main
@@ -232,6 +240,14 @@
                  data-placeholder="Semua Status" data-labelledby="status-label-list"></div>
           </div>
           <div class="filter-row">
+            <label for="nonrespon-select-list">Non Respon:</label>
+            <select id="nonrespon-select-list">
+              <option value="">Semua</option>
+              <option value="1">Ya</option>
+              <option value="0">Tidak</option>
+            </select>
+          </div>
+          <div class="filter-row">
             <label for="flagbaru-select-list">Ditemukan di Assignment Baru:</label>
             <select id="flagbaru-select-list">
               <option value="">Semua</option>
@@ -302,6 +318,7 @@
               <th class="sortable" data-sort="keberadaan_keluarga">Keberadaan Keluarga<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="keberadaan_bku">Keberadaan Usaha<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="status">Status<span class="sort-arrow"></span></th>
+              <th class="sortable col-flag" data-sort="non_respon">Non Respon<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="assignment_id">Assignment ID<span class="sort-arrow"></span></th>
               <th class="sortable col-joined col-flag" data-sort="ada_assignment_baru">Ditemukan di<br>Assignment Baru<span class="sort-arrow"></span></th>
               <th class="sortable col-joined" data-sort="assignment_id_baru">Assignment ID Baru<span class="sort-arrow"></span></th>

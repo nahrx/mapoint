@@ -15,6 +15,7 @@
   const keberadaanBkuMS = makeMultiSelect(document.getElementById("keberadaanbku-ms-list"));
   const flagBaruSelect = document.getElementById("flagbaru-select-list");
   const flagRegsosekSelect = document.getElementById("flagregsosek-select-list");
+  const nonResponSelect = document.getElementById("nonrespon-select-list");
   const searchInput = document.getElementById("daftar-search");
   const tbody = document.getElementById("daftar-tbody");
   const loadingEl = document.getElementById("daftar-loading");
@@ -58,6 +59,7 @@
   let appliedKeberadaanBku = [];
   let appliedFlagBaru = "";
   let appliedFlagRegsosek = "";
+  let appliedNonRespon = "";
   let appliedSearch = "";
 
   // Must match points.EmptyValue on the server — the sentinel a dropdown
@@ -100,6 +102,7 @@
         <td>${esc(p.keberadaan_keluarga)}</td>
         <td>${esc(p.keberadaan_bku)}</td>
         <td><span class="status-dot" style="background:${color}"></span>${esc(p.status)}</td>
+        <td class="col-flag">${nonResponCell(p.non_respon)}</td>
         <td class="mono">${esc(p.assignment_id)}</td>
         <td class="col-joined col-flag">${flagCell(p.ada_assignment_baru)}</td>
         <td class="col-joined mono">${esc(p.assignment_id_baru || "-")}</td>
@@ -114,6 +117,14 @@
     return ada
       ? `<span class="check-yes" title="Ditemukan">&#10003;</span>`
       : `<span class="check-no" title="Tidak ditemukan">&#8211;</span>`;
+  }
+
+  // Same glyphs, different meaning: checked when the row carries a BANR
+  // (berita acara non-respon) reference in no_banr.
+  function nonResponCell(yes) {
+    return yes
+      ? `<span class="check-yes" title="Non respon (ada BANR)">&#10003;</span>`
+      : `<span class="check-no" title="Bukan non respon">&#8211;</span>`;
   }
 
   function setLoading(v) {
@@ -139,6 +150,7 @@
     for (const v of appliedKeberadaanBku) params.append("keberadaanBku", v);
     if (appliedFlagBaru) params.set("flagBaru", appliedFlagBaru);
     if (appliedFlagRegsosek) params.set("flagRegsosek", appliedFlagRegsosek);
+    if (appliedNonRespon) params.set("nonRespon", appliedNonRespon);
     if (appliedSearch) params.set("search", appliedSearch);
     return params;
   }
@@ -184,7 +196,7 @@
     const startRow = (resp.page - 1) * resp.page_size + 1;
     tbody.innerHTML = resp.items.length
       ? resp.items.map((p, i) => rowHTML(p, startRow + i)).join("")
-      : `<tr><td colspan="14" class="empty-row">Tidak ada data yang cocok dengan filter ini.</td></tr>`;
+      : `<tr><td colspan="15" class="empty-row">Tidak ada data yang cocok dengan filter ini.</td></tr>`;
 
     const totalPages = Math.max(1, Math.ceil(resp.total / resp.page_size));
     pageInfoEl.textContent = `Halaman ${resp.page.toLocaleString("id-ID")} dari ${totalPages.toLocaleString("id-ID")} (${resp.total.toLocaleString("id-ID")} data)`;
@@ -381,6 +393,7 @@
     appliedKeberadaanBku = keberadaanBkuMS.getValues();
     appliedFlagBaru = flagBaruSelect.value;
     appliedFlagRegsosek = flagRegsosekSelect.value;
+    appliedNonRespon = nonResponSelect.value;
     appliedSearch = searchInput.value.trim();
 
     updateDownloadButtonState();
@@ -410,6 +423,7 @@
       status: statusMS.getValues(),
       flagBaru: flagBaruSelect.value,
       flagRegsosek: flagRegsosekSelect.value,
+      nonRespon: nonResponSelect.value,
     };
   }
 
@@ -445,6 +459,7 @@
     statusMS.setValues(f.status);
     flagBaruSelect.value = f.flagBaru || "";
     flagRegsosekSelect.value = f.flagRegsosek || "";
+    nonResponSelect.value = f.nonRespon || "";
 
     // Picking a preset means "show me this", so it applies straight away
     // rather than leaving the user to press Terapkan Filter as well.

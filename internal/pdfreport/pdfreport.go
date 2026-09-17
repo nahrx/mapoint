@@ -2,10 +2,10 @@
 // Daftar menu's download button: every row in the filtered wilayah
 // (desa/kelurahan level or narrower), laid out as a wrapped table
 // (assignment_id deliberately excluded — it's an internal id, not
-// something field staff need on a printed list). Keberadaan Usaha is
-// temporarily dropped from the table too — see points.Point's doc
-// comment on that field — with Nomor Bangunan and Catatan taking its
-// place; see columnsFor/rowFor.
+// something field staff need on a printed list). The jumlah_usaha count
+// stays out — see points.Point's doc comment on KeberadaanUsaha — but the
+// keberadaan_BKU status column ("Keberadaan Usaha" on screen) is in, paid
+// for by a narrower Catatan; see columnsFor/rowFor.
 package pdfreport
 
 import (
@@ -37,35 +37,50 @@ var (
 	// ID SUBSLS is identical on every row there, so the header states it
 	// once (see report.Region.WilayahRows) and the table spends the space
 	// on Nama/Alamat/Catatan instead. Total: 276mm.
+	//
+	// Keberadaan Usaha's 24mm came out of Catatan (60 -> 37) and Keberadaan
+	// Keluarga (34 -> 30): Catatan is the one column that wraps freely
+	// without losing anything, and the longest Keberadaan Usaha value
+	// ("7. Data diperoleh dari Kantor Pusat (KP)") wraps to two lines at
+	// 24mm, which the row height already accounts for. Nomor Bangunan and
+	// Regsosek are 18mm because that is the narrowest column in which
+	// SplitLines keeps "Bangunan" / "Regsosek" whole (see
+	// TestHeaderLabelsWrapOnWordBoundaries) — at 17mm the header would
+	// have read "Regsose / k".
 	subslsColumns = []column{
 		{"No", 8},
 		{"Nama", 36},
 		{"Alamat", 40},
-		{"Nomor Bangunan", 16},
+		{"Nomor Bangunan", 18},
 		{"Jenis Prelist", 18},
-		{"Keberadaan Keluarga", 34},
+		{"Keberadaan Keluarga", 30},
+		{"Keberadaan Usaha", 24},
 		{"Status", 30},
 		{"Ass. Baru", 17},
-		{"Regsosek", 17},
-		{"Catatan", 60},
+		{"Regsosek", 18},
+		{"Catatan", 37},
 	}
 
 	// wideColumns is used for anything broader than one SubSLS (a whole
 	// desa/kelurahan, or an SLS): level_6_full_code then differs from row
 	// to row, so it has to be a column of its own or the report couldn't
-	// tell you which SubSLS a given row belongs to. Total: 275mm.
+	// tell you which SubSLS a given row belongs to. Total: 275mm. Same
+	// trade as above for Keberadaan Usaha: Catatan 52 -> 30, Keberadaan
+	// Keluarga 30 -> 28, Alamat 33 -> 31, with Nomor Bangunan and Regsosek
+	// widened to 18mm for the same whole-word reason.
 	wideColumns = []column{
 		{"No", 8},
 		{"Nama", 32},
-		{"Alamat", 33},
+		{"Alamat", 31},
 		{"ID SUBSLS", 26},
-		{"Nomor Bangunan", 15},
+		{"Nomor Bangunan", 18},
 		{"Jenis Prelist", 17},
-		{"Keberadaan Keluarga", 30},
+		{"Keberadaan Keluarga", 28},
+		{"Keberadaan Usaha", 22},
 		{"Status", 28},
 		{"Ass. Baru", 17},
-		{"Regsosek", 17},
-		{"Catatan", 52},
+		{"Regsosek", 18},
+		{"Catatan", 30},
 	}
 )
 
@@ -88,11 +103,11 @@ func columnsFor(region Region) []column {
 	return wideColumns
 }
 
-// rowFor renders one row of the report table. Keberadaan Usaha is
-// deliberately not one of these columns right now — see the field's doc
-// comment on points.Point for why — and Catatan comes from ListAll's
+// rowFor renders one row of the report table. Catatan comes from ListAll's
 // includeCatatan=true, so it's always populated here even though it's
-// empty for every other Point-returning endpoint.
+// empty for every other Point-returning endpoint. The jumlah_usaha count
+// (points.Point.KeberadaanUsaha) is still not a column — see that field's
+// doc comment; "Keberadaan Usaha" here is keberadaan_BKU.
 func rowFor(region Region, no int, p points.Point) []string {
 	if region.PinnedToSubSLS() {
 		return []string{
@@ -102,6 +117,7 @@ func rowFor(region Region, no int, p points.Point) []string {
 			strconv.Itoa(int(p.NomorBangunan)),
 			report.DashIfEmpty(p.JenisPrelist),
 			report.DashIfEmpty(p.KeberadaanKeluarga),
+			report.DashIfEmpty(p.KeberadaanBKU),
 			report.DashIfEmpty(p.Status),
 			flagMark(p.AdaAssignmentBaru),
 			flagMark(p.AdaRegsosek),
@@ -116,6 +132,7 @@ func rowFor(region Region, no int, p points.Point) []string {
 		strconv.Itoa(int(p.NomorBangunan)),
 		report.DashIfEmpty(p.JenisPrelist),
 		report.DashIfEmpty(p.KeberadaanKeluarga),
+		report.DashIfEmpty(p.KeberadaanBKU),
 		report.DashIfEmpty(p.Status),
 		flagMark(p.AdaAssignmentBaru),
 		flagMark(p.AdaRegsosek),
@@ -223,17 +240,55 @@ func writeHeader(pdf *fpdf.Fpdf, tr func(string) string, region Region, total in
 	pdf.Ln(3)
 }
 
+// headerLineHeight is the per-line height of a wrapped header label at
+// the 8pt bold the header uses.
+const headerLineHeight = 3.6
+
+// drawTableHeader draws the column header row, wrapping any label that is
+// wider than its column and giving the whole row the height of its
+// tallest cell.
+//
+// It used to be one CellFormat per column at a fixed 7mm, which does not
+// wrap and does not clip: a label wider than its cell simply ran on into
+// the neighbour. Measured with GetStringWidth at this font, that was
+// already the case before Keberadaan Usaha arrived — "Nomor Bangunan" is
+// 23.7mm in a 15mm column, "Keberadaan Keluarga" 29.0mm in 28mm — so the
+// header row had overlapping text on every page. Adding a 22mm
+// "Keberadaan Usaha" (25.4mm) made it one more. Wrapping fixes all of
+// them at once: the header now takes two lines (about 9mm), and each
+// label sits inside its own box.
 func drawTableHeader(pdf *fpdf.Fpdf, tr func(string) string, cols []column) {
 	pdf.SetFont("Arial", "B", 8)
 	pdf.SetFillColor(230, 230, 230)
 	startX, y := pdf.GetXY()
+
+	// Wrap every label first, so the row height is known before anything
+	// is drawn: every cell's box must be the same height regardless of how
+	// many lines its own label needs.
+	lines := make([][][]byte, len(cols))
+	maxLines := 1
+	for i, c := range cols {
+		lines[i] = pdf.SplitLines([]byte(tr(c.header)), c.width-2*cellPadding)
+		if len(lines[i]) > maxLines {
+			maxLines = len(lines[i])
+		}
+	}
+	h := float64(maxLines)*headerLineHeight + 2*cellPadding
+
 	x := startX
-	for _, c := range cols {
-		pdf.SetXY(x, y)
-		pdf.CellFormat(c.width, 7, tr(c.header), "1", 0, "C", true, 0, "")
+	for i, c := range cols {
+		// Box first (fill + border at the full row height), then the text
+		// vertically centred inside it — a label with fewer lines than the
+		// tallest one still sits in the middle of its cell.
+		pdf.Rect(x, y, c.width, h, "FD")
+		top := y + (h-float64(len(lines[i]))*headerLineHeight)/2
+		for j, ln := range lines[i] {
+			pdf.SetXY(x, top+float64(j)*headerLineHeight)
+			pdf.CellFormat(c.width, headerLineHeight, string(ln), "", 0, "C", false, 0, "")
+		}
 		x += c.width
 	}
-	pdf.SetXY(startX, y+7)
+	pdf.SetXY(startX, y+h)
 	pdf.SetFont("Arial", "", 9)
 }
 
