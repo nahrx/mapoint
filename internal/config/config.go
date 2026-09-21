@@ -46,6 +46,14 @@ type Config struct {
 	MapDatabase string
 	MapUsername string
 	MapPassword string
+
+	// ReportKabKotaPassword unlocks the Daftar menu's per-SubSLS download
+	// for a whole kabupaten/kota — thousands of files and up to ~550k rows
+	// in one ZIP, which is why it sits behind a second password rather
+	// than being open to every dashboard account. Optional: empty keeps
+	// that width unavailable (the download stops at kecamatan), it never
+	// opens it up.
+	ReportKabKotaPassword string
 }
 
 // MapEnabled reports whether enough PostgreSQL connection info was
@@ -111,6 +119,7 @@ func Load(envPath string) (*Config, error) {
 	}
 
 	cfg.DataUpdatedAt = get("DATA_UPDATED_AT", "")
+	cfg.ReportKabKotaPassword = get("REPORT_KABKOTA_PASSWORD", "")
 
 	cfg.AuthUsers, err = parseAuthUsers(get("AUTH_USERS", ""), get("AUTH_USERNAME", ""), get("AUTH_PASSWORD", ""))
 	if err != nil {

@@ -279,10 +279,10 @@
             <!-- Both open the download dialog below, where the split-per-SubSLS
                  option lives; a kecamatan-wide filter is enough because the
                  dialog can always fall back to the split ZIP. -->
-            <button id="download-pdf-btn" class="download-pdf" disabled title="Pilih filter minimal sampai Kecamatan untuk mengunduh">
+            <button id="download-pdf-btn" class="download-pdf" disabled title="Pilih filter minimal sampai Kabupaten/Kota untuk mengunduh">
               Unduh PDF
             </button>
-            <button id="download-xlsx-btn" class="download-xlsx" disabled title="Pilih filter minimal sampai Kecamatan untuk mengunduh">
+            <button id="download-xlsx-btn" class="download-xlsx" disabled title="Pilih filter minimal sampai Kabupaten/Kota untuk mengunduh">
               Unduh Excel
             </button>
           </div>
@@ -293,8 +293,11 @@
       <!-- Download options, shown after Unduh PDF / Unduh Excel is clicked.
            The one option today is "Pisahkan per SubSLS": one file per SubSLS
            packed in a ZIP (split=subsls on the same endpoints). It is forced
-           on for a kecamatan-wide filter — the single report stops at
-           desa/kelurahan — and off when the filter is already one SubSLS. -->
+           on for a kecamatan- or kabupaten/kota-wide filter — the single
+           report stops at desa/kelurahan — and off when the filter is already
+           one SubSLS. Kabupaten/kota width additionally asks for the second
+           password (REPORT_KABKOTA_PASSWORD), exchanged for a short-lived
+           token at /api/report-unlock before the download starts. -->
       <dialog id="download-dialog" class="download-dialog" aria-labelledby="download-dialog-title">
         <div class="download-dialog-body">
           <h3 id="download-dialog-title">Unduh PDF</h3>
@@ -305,6 +308,11 @@
             <span class="layer-toggle-text">Pisahkan per SubSLS</span>
           </label>
           <p class="download-dialog-note" id="download-dialog-note"></p>
+          <div class="download-dialog-password" id="download-dialog-password" hidden>
+            <label for="download-password-input">Password unduh kabupaten/kota:</label>
+            <input type="password" id="download-password-input" autocomplete="off" spellcheck="false">
+            <p class="download-dialog-error" id="download-dialog-error" role="alert" hidden></p>
+          </div>
           <div class="download-dialog-actions">
             <button type="button" class="preset-btn" id="download-dialog-cancel">Batal</button>
             <button type="button" class="download-pdf" id="download-dialog-confirm">Unduh</button>

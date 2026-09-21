@@ -119,7 +119,7 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("dashboard accounts loaded", "count", len(accounts))
 
-	srv := api.NewServer(svc, regsvc, conn, bounds, kabkotaList, mapPool, accounts, cfg.DataUpdatedAt, log)
+	srv := api.NewServer(svc, regsvc, conn, bounds, kabkotaList, mapPool, accounts, cfg.DataUpdatedAt, cfg.ReportKabKotaPassword, log)
 	go refreshBoundsPeriodically(ctx, svc, srv, log)
 
 	httpServer := &http.Server{

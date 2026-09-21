@@ -28,6 +28,9 @@ services:
       - AUTH_USERS=${AUTH_USERS}
       - AUTH_USERNAME=${AUTH_USERNAME}
       - AUTH_PASSWORD=${AUTH_PASSWORD}
+      # Password kedua untuk unduhan satu kabupaten/kota utuh (per SubSLS,
+      # dalam ZIP) di menu Daftar. Opsional — kosong menutup lebar itu.
+      - REPORT_KABKOTA_PASSWORD=${REPORT_KABKOTA_PASSWORD}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
       interval: 30s

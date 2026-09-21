@@ -33,6 +33,9 @@
   const downloadDialogNote = document.getElementById("download-dialog-note");
   const downloadDialogCancel = document.getElementById("download-dialog-cancel");
   const downloadDialogConfirm = document.getElementById("download-dialog-confirm");
+  const downloadDialogPassword = document.getElementById("download-dialog-password");
+  const downloadPasswordInput = document.getElementById("download-password-input");
+  const downloadDialogError = document.getElementById("download-dialog-error");
   const splitToggle = document.getElementById("split-subsls-toggle");
   const applyFilterBtn = document.getElementById("apply-filter-btn-list");
   const filtersEl = document.getElementById("daftar-filters");
@@ -172,14 +175,15 @@
   }
 
   // Both download buttons need the filter pinned at least down to one
-  // kecamatan. The single report itself stops at desa/kelurahan (see
+  // kabupaten/kota. The single report itself stops at desa/kelurahan (see
   // prepareReport on the server — a kecamatan runs to a hundred thousand
   // rows), but the download dialog they open can always fall back to the
-  // per-SubSLS ZIP, which is fine at kecamatan width because each file is
-  // still one SubSLS. Narrowing further to an SLS or SubSLS just makes the
-  // report smaller.
+  // per-SubSLS ZIP, which is fine at any width because each file is still
+  // one SubSLS; a whole kabupaten/kota additionally asks for the second
+  // password in the dialog. Narrowing further to an SLS or SubSLS just
+  // makes the report smaller.
   function updateDownloadButtonState() {
-    const ready = !!(appliedKabkota && appliedKecamatan);
+    const ready = !!appliedKabkota;
     downloadPdfBtn.disabled = !ready;
     downloadXlsxBtn.disabled = !ready;
   }
@@ -524,12 +528,15 @@
   // Content-Disposition: attachment endpoint, and keeps this an explicit,
   // self-contained action rather than ever touching location.href).
   // split adds split=subsls: one file per SubSLS in a ZIP instead of one
-  // report — same endpoint, see report_split.go on the server.
-  function downloadReport(apiPath, split) {
+  // report — same endpoint, see report_split.go on the server. unlock is
+  // the token /api/report-unlock handed out for the second password, only
+  // needed (and only asked for) at kabupaten/kota width.
+  function downloadReport(apiPath, split, unlock) {
     const params = buildFilterParams();
     params.set("sortBy", sortColumn);
     params.set("dir", sortDir);
     if (split) params.set("split", "subsls");
+    if (unlock) params.set("unlock", unlock);
     const url = `${apiPath}?${params}`;
     const a = document.createElement("a");
     a.href = url;
@@ -541,17 +548,26 @@
 
   // The download dialog: Unduh PDF/Excel open it, the actual download
   // starts from its Unduh button. Its one option, "Pisahkan per SubSLS",
-  // is free at desa and SLS width, forced on for a kecamatan (the single
-  // report isn't offered that wide) and forced off for a single SubSLS
-  // (nothing to split — a one-file ZIP would only confuse). The user's last
-  // free choice is remembered for the session, not persisted: a switch
-  // that silently stays on across days would hand out ZIPs to someone who
-  // expected a PDF.
+  // is free at desa and SLS width, forced on for a kecamatan or a whole
+  // kabupaten/kota (the single report isn't offered that wide) and forced
+  // off for a single SubSLS (nothing to split — a one-file ZIP would only
+  // confuse). Kabupaten/kota width also shows the second-password row: the
+  // password is exchanged for a token at /api/report-unlock first, so a
+  // wrong one is reported inside the dialog and the password itself never
+  // appears in a download URL. The user's last free choice is remembered
+  // for the session, not persisted: a switch that silently stays on across
+  // days would hand out ZIPs to someone who expected a PDF.
   const SPLIT_NOTE_FREE = "Aktif: satu ZIP berisi satu file per SubSLS. Nonaktif: satu file untuk seluruh cakupan.";
   const SPLIT_NOTE_KECAMATAN = "Cakupan satu kecamatan hanya bisa diunduh per SubSLS — hasilnya satu ZIP berisi satu file per SubSLS. Pilih desa/kelurahan untuk satu file utuh.";
+  const SPLIT_NOTE_KABKOTA = "Cakupan satu kabupaten/kota hanya bisa diunduh per SubSLS — ribuan file dalam satu ZIP, prosesnya bisa sekitar satu menit — dan memerlukan password tambahan.";
   const SPLIT_NOTE_SINGLE = "Filter sudah satu SubSLS, tidak ada yang perlu dipisahkan.";
+  const UNLOCK_ERRORS = {
+    403: "Password salah.",
+    503: "Unduhan satu kabupaten/kota tidak diaktifkan di server ini.",
+  };
   let pendingDownloadPath = "";
   let splitPreferred = false;
+  let unlockPending = false;
 
   // "Kutai Timur › Kec. Sangatta Utara › Desa/Kel. Sangatta Utara", from
   // the option labels of the applied codes. Falls back to the bare code
@@ -577,25 +593,91 @@
     return splitToggle.checked ? "Unduh ZIP" : `Unduh ${kind}`;
   }
 
+  function needsUnlock() {
+    return !appliedKecamatan;
+  }
+
   function openDownloadDialog(kind, apiPath) {
     pendingDownloadPath = apiPath;
+    const kabkotaOnly = needsUnlock();
     const kecamatanOnly = !appliedDesa;
     const single = !!appliedSubsls;
     splitToggle.disabled = kecamatanOnly || single;
     splitToggle.checked = kecamatanOnly ? true : single ? false : splitPreferred;
     downloadDialogTitle.textContent = `Unduh ${kind}`;
     downloadDialogScope.textContent = `Cakupan: ${appliedScopeText()}`;
-    downloadDialogNote.textContent = kecamatanOnly ? SPLIT_NOTE_KECAMATAN : single ? SPLIT_NOTE_SINGLE : SPLIT_NOTE_FREE;
+    downloadDialogNote.textContent = kabkotaOnly ? SPLIT_NOTE_KABKOTA : kecamatanOnly ? SPLIT_NOTE_KECAMATAN : single ? SPLIT_NOTE_SINGLE : SPLIT_NOTE_FREE;
+    downloadDialogPassword.hidden = !kabkotaOnly;
+    downloadPasswordInput.value = "";
+    setUnlockError("");
+    setUnlockPending(false);
     downloadDialogConfirm.className = kind === "PDF" ? "download-pdf" : "download-xlsx";
     downloadDialogConfirm.dataset.kind = kind;
     downloadDialogConfirm.textContent = confirmLabel(kind);
     if (typeof downloadDialog.showModal !== "function") {
       // No <dialog> support: go straight to the download with the only
-      // valid choice for this width.
-      downloadReport(apiPath, splitToggle.checked);
+      // valid choice for this width. Kabupaten/kota width can't be served
+      // this way (no place to ask for the password), so it stays a no-op.
+      if (!kabkotaOnly) downloadReport(apiPath, splitToggle.checked);
       return;
     }
     downloadDialog.showModal();
+    if (kabkotaOnly) downloadPasswordInput.focus();
+  }
+
+  function setUnlockError(msg) {
+    downloadDialogError.textContent = msg;
+    downloadDialogError.hidden = !msg;
+  }
+
+  function setUnlockPending(v) {
+    unlockPending = v;
+    downloadDialogConfirm.disabled = v;
+    downloadPasswordInput.disabled = v;
+  }
+
+  // Trade the second password for a download token. Resolves to the token,
+  // or to "" after showing the reason in the dialog.
+  async function requestUnlock(password) {
+    setUnlockPending(true);
+    try {
+      const res = await fetch("/api/report-unlock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) {
+        setUnlockError(UNLOCK_ERRORS[res.status] || `Gagal memverifikasi password (HTTP ${res.status}).`);
+        return "";
+      }
+      const data = await res.json();
+      return data.token || "";
+    } catch (err) {
+      setUnlockError("Tidak bisa menghubungi server. Coba lagi.");
+      return "";
+    } finally {
+      setUnlockPending(false);
+    }
+  }
+
+  async function confirmDownload() {
+    if (unlockPending) return;
+    let unlock = "";
+    if (needsUnlock()) {
+      const password = downloadPasswordInput.value;
+      if (!password) {
+        setUnlockError("Masukkan password unduh kabupaten/kota.");
+        downloadPasswordInput.focus();
+        return;
+      }
+      unlock = await requestUnlock(password);
+      if (!unlock) {
+        downloadPasswordInput.select();
+        return;
+      }
+    }
+    downloadDialog.close();
+    downloadReport(pendingDownloadPath, splitToggle.checked, unlock);
   }
 
   splitToggle.addEventListener("change", () => {
@@ -603,10 +685,14 @@
     downloadDialogConfirm.textContent = confirmLabel(downloadDialogConfirm.dataset.kind);
   });
   downloadDialogCancel.addEventListener("click", () => downloadDialog.close());
-  downloadDialogConfirm.addEventListener("click", () => {
-    downloadDialog.close();
-    downloadReport(pendingDownloadPath, splitToggle.checked);
+  downloadDialogConfirm.addEventListener("click", confirmDownload);
+  downloadPasswordInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      confirmDownload();
+    }
   });
+  downloadPasswordInput.addEventListener("input", () => setUnlockError(""));
   // A click on the backdrop (outside the body) closes, like Escape does.
   downloadDialog.addEventListener("click", (e) => {
     if (e.target === downloadDialog) downloadDialog.close();

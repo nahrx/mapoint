@@ -54,10 +54,15 @@ type Server struct {
 	// /healthz — see auth.go. Never empty: config.Load refuses to start
 	// without at least one.
 	auth *auth
+
+	// unlock gates the kabupaten/kota-wide per-SubSLS download behind the
+	// second password (REPORT_KABKOTA_PASSWORD) — see report_unlock.go.
+	// Disabled (every check fails) when that password is empty.
+	unlock *reportUnlock
 }
 
-func NewServer(svc *points.Service, regsvc *regsosek.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, mapPool *pgxpool.Pool, accounts []Account, dataUpdatedAt string, log *slog.Logger) *Server {
-	s := &Server{svc: svc, regsvc: regsvc, conn: conn, mapPool: mapPool, auth: newAuth(accounts), dataUpdatedAt: dataUpdatedAt, log: log}
+func NewServer(svc *points.Service, regsvc *regsosek.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, mapPool *pgxpool.Pool, accounts []Account, dataUpdatedAt, kabkotaPassword string, log *slog.Logger) *Server {
+	s := &Server{svc: svc, regsvc: regsvc, conn: conn, mapPool: mapPool, auth: newAuth(accounts), unlock: newReportUnlock(kabkotaPassword), dataUpdatedAt: dataUpdatedAt, log: log}
 	s.bounds.Store(&bounds)
 	s.kabkota.Store(&kabkota)
 	return s
@@ -89,6 +94,7 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /api/list", s.handleList)
 	mux.HandleFunc("GET /api/list/pdf", s.handleListPDF)
 	mux.HandleFunc("GET /api/list/xlsx", s.handleListXLSX)
+	mux.HandleFunc("POST /api/report-unlock", s.handleReportUnlock)
 	mux.HandleFunc("GET /api/filter-options", s.handleFilterOptions)
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
 	mux.HandleFunc("GET /api/reg2022", s.handleReg2022)
@@ -623,38 +629,25 @@ type reportData struct {
 // when it has already written an error response and the caller should
 // return immediately.
 //
-// split relaxes the scope to one kecamatan and raises the cap to
-// points.SplitReportMaxRows: the per-SubSLS ZIP (see report_split.go)
-// renders one small document per SubSLS, so the size of a single document
-// no longer depends on how wide the filter is — only the number of files
-// does. A filter already pinned to one SubSLS has nothing to split and is
-// rejected, mirroring the disabled toggle on the frontend.
+// split relaxes the scope and raises the cap to points.SplitReportMaxRows:
+// the per-SubSLS ZIP (see report_split.go) renders one small document per
+// SubSLS, so the size of a single document no longer depends on how wide
+// the filter is — only the number of files does. One kecamatan is allowed
+// outright; a whole kabupaten/kota additionally needs a valid unlock token
+// (the second password — see report_unlock.go), because that is thousands
+// of files and up to ~550k rows. A filter already pinned to one SubSLS has
+// nothing to split and is rejected, mirroring the locked toggle on the
+// frontend.
+//
+// prepareReport fetches the rows in one go, which is what every scope
+// except kabupaten/kota width wants; that one streams per kecamatan
+// instead and only uses parseReportScope.
 func (s *Server) prepareReport(w http.ResponseWriter, r *http.Request, q url.Values, downloadKind string, split bool) (data reportData, ok bool) {
-	filter, err := parseFilter(q)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	scope, ok := s.parseReportScope(w, q, downloadKind, split)
+	if !ok {
 		return reportData{}, false
 	}
-	maxRows := points.ReportMaxRows
-	if split {
-		if filter.KabKota == "" || filter.Kecamatan == "" {
-			writeError(w, http.StatusBadRequest, downloadKind+" per-SubSLS download requires filtering at least down to Kecamatan")
-			return reportData{}, false
-		}
-		if filter.SubSLS != "" {
-			writeError(w, http.StatusBadRequest, downloadKind+" per-SubSLS download needs a filter wider than one SubSLS")
-			return reportData{}, false
-		}
-		maxRows = points.SplitReportMaxRows
-	} else if filter.KabKota == "" || filter.Kecamatan == "" || filter.Desa == "" {
-		writeError(w, http.StatusBadRequest, downloadKind+" download requires filtering at least down to Desa/Kelurahan")
-		return reportData{}, false
-	}
-
-	sortBy := points.ParseSortColumn(q.Get("sortBy"))
-	dir := points.ParseSortDir(q.Get("dir"))
-
-	items, err := s.svc.ListAllUpTo(r.Context(), filter, sortBy, dir, maxRows)
+	items, err := s.svc.ListAllUpTo(r.Context(), scope.filter, scope.sortBy, scope.dir, scope.maxRows)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return reportData{}, false
@@ -663,8 +656,56 @@ func (s *Server) prepareReport(w http.ResponseWriter, r *http.Request, q url.Val
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return reportData{}, false
 	}
+	return reportData{region: regionFor(scope.filter), items: items, truncated: len(items) >= scope.maxRows}, true
+}
 
-	region := report.Region{
+// reportScope is a validated download request: what to fetch, in what
+// order, and how many rows at most.
+type reportScope struct {
+	filter  points.Filter
+	sortBy  string
+	dir     points.SortDir
+	maxRows int
+}
+
+// parseReportScope is the validation half of prepareReport — see there for
+// the scope rules. ok is false when it has already written the error.
+func (s *Server) parseReportScope(w http.ResponseWriter, q url.Values, downloadKind string, split bool) (scope reportScope, ok bool) {
+	filter, err := parseFilter(q)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return reportScope{}, false
+	}
+	maxRows := points.ReportMaxRows
+	if split {
+		if filter.KabKota == "" {
+			writeError(w, http.StatusBadRequest, downloadKind+" per-SubSLS download requires filtering at least down to Kabupaten/Kota")
+			return reportScope{}, false
+		}
+		if filter.SubSLS != "" {
+			writeError(w, http.StatusBadRequest, downloadKind+" per-SubSLS download needs a filter wider than one SubSLS")
+			return reportScope{}, false
+		}
+		if filter.Kecamatan == "" && !s.unlock.valid(q.Get(unlockParam)) {
+			writeError(w, http.StatusForbidden, downloadKind+" per-SubSLS download of a whole Kabupaten/Kota requires the additional password (unlock token missing, invalid or expired)")
+			return reportScope{}, false
+		}
+		maxRows = points.SplitReportMaxRows
+	} else if filter.KabKota == "" || filter.Kecamatan == "" || filter.Desa == "" {
+		writeError(w, http.StatusBadRequest, downloadKind+" download requires filtering at least down to Desa/Kelurahan")
+		return reportScope{}, false
+	}
+	return reportScope{
+		filter:  filter,
+		sortBy:  points.ParseSortColumn(q.Get("sortBy")),
+		dir:     points.ParseSortDir(q.Get("dir")),
+		maxRows: maxRows,
+	}, true
+}
+
+// regionFor is the report header's view of a validated filter.
+func regionFor(filter points.Filter) report.Region {
+	return report.Region{
 		KabKotaCode: filter.KabKota,
 		KabKotaName: points.KabKotaName(filter.KabKota),
 		Kecamatan:   filter.Kecamatan,
@@ -682,8 +723,6 @@ func (s *Server) prepareReport(w http.ResponseWriter, r *http.Request, q url.Val
 		FlagRegsosek:       filter.FlagRegsosek,
 		NonRespon:          filter.NonRespon,
 	}
-
-	return reportData{region: region, items: items, truncated: len(items) >= maxRows}, true
 }
 
 // handleListPDF renders the "Daftar Hasil Pendataan" PDF for one

@@ -20,6 +20,11 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap lets http.ResponseController reach the underlying writer, so a
+// handler can extend the write deadline for a long download (see
+// handleSplitReport) through this wrapper.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 // withLogging logs every request's method, path, status and duration.
 func withLogging(log *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +75,9 @@ type gzipResponseWriter struct {
 	gz          *gzip.Writer
 	wroteHeader bool
 }
+
+// Unwrap — same reason as statusRecorder.Unwrap.
+func (w *gzipResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *gzipResponseWriter) WriteHeader(code int) {
 	if w.wroteHeader {

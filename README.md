@@ -789,7 +789,7 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
   `latitude_ppl`/`longitude_ppl`-nya `0` atau kosong, karena tujuannya
   menelusuri data, bukan memetakannya.
 - **Unduh PDF & Unduh Excel** — dua tombol di sebelah filter, aktif begitu
-  filter wilayah sudah **minimal sampai Kecamatan**. Keduanya membuka
+  filter wilayah sudah **minimal sampai Kabupaten/Kota**. Keduanya membuka
   **dialog unduh** dulu (judul, baris "Cakupan: Kab › Kec › Desa …", lalu
   tombol Batal/Unduh) — unduhan baru berjalan dari tombol Unduh di dialog
   itu. Satu-satunya opsi di dialog adalah sakelar **"Pisahkan per
@@ -800,6 +800,7 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
 
   | Filter sampai | Satu file | Pisahkan per SubSLS |
   |---|---|---|
+  | Kabupaten/Kota | tidak ditawarkan — sakelar **terkunci aktif** | ya, **dengan password tambahan** (lihat di bawah; 2.988 SubSLS / 552.636 baris di Samarinda) |
   | Kecamatan | tidak ditawarkan — sakelar **terkunci aktif** | ya (592 SubSLS / 111.636 baris di kecamatan terbesar) |
   | Desa/Kelurahan atau SLS | ya | ya — sakelar bebas, pilihan terakhir diingat selama sesi (tidak disimpan) |
   | SubSLS | ya | tidak ada yang dipisahkan — sakelar **terkunci nonaktif** |
@@ -817,7 +818,33 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
   (PDF dan XLSX sudah terkompresi) dan dialirkan per file, jadi unduhan
   mulai begitu file pertama jadi. Terukur: desa 165 SubSLS ±2–3 detik,
   kecamatan terbesar (592 SubSLS) PDF 7,4 detik / 38 MB dan Excel ±11
-  detik / 17 MB. Filter atribut dan cari nama boleh diisi atau
+  detik / 17 MB; Samarinda utuh (2.988 SubSLS) PDF 36 detik / 184 MB dan
+  Excel 63 detik / 94 MB.
+
+  **Satu kabupaten/kota — password kedua.** Lebar ini dibuka untuk semua
+  akun dashboard tapi di balik password tambahan, `REPORT_KABKOTA_PASSWORD`
+  di `.env` (opsional; kosong berarti lebar ini **tertutup**, unduhan
+  berhenti di kecamatan — bukan terbuka tanpa password). Di dialog unduh
+  muncul baris "Password unduh kabupaten/kota"; tombol Unduh menukarkan
+  password itu dulu ke `POST /api/report-unlock` dan baru memulai unduhan
+  dengan token yang dikembalikan (`unlock=` di URL). Dengan begitu password
+  salah dilaporkan di dalam dialog ("Password salah.", setelah jeda satu
+  detik di server sebagai rem tebak-tebakan), dan password-nya sendiri
+  tidak pernah ada di URL unduhan — yang masuk riwayat browser dan log
+  request. Token-nya `<kedaluwarsa unix>.<HMAC-SHA256>`, berlaku 10 menit,
+  kuncinya diturunkan dari password itu sendiri (pola yang sama dengan
+  cookie sesi di `newAuth`): tanpa state di server dan tetap berlaku
+  setelah restart. Semua di `internal/api/report_unlock.go`.
+
+  Dua hal teknis yang dibutuhkan lebar ini: (1) barisnya **tidak** diambil
+  sekaligus — `handleSplitReport` mengambil dan menulis **per kecamatan**,
+  jadi puncak memori tetap satu kecamatan (≤ `SplitReportMaxRows`) walau
+  totalnya 550 ribu baris; (2) `WriteTimeout` server yang 30 detik
+  diperpanjang khusus untuk unduhan pisah lewat
+  `http.ResponseController.SetWriteDeadline` (15 menit, `splitWriteTimeout`)
+  — tanpa itu ZIP Samarinda putus di tengah tanpa pesan apa pun. Supaya
+  `ResponseController` bisa menembus pembungkus logging dan gzip, keduanya
+  diberi metode `Unwrap()`. Filter atribut dan cari nama boleh diisi atau
   tidak, tidak mempengaruhi aktif/tidaknya tombol, tapi tetap ikut
   mempersempit isi laporan kalau diisi, dan urutan barisnya ikut sort kolom
   yang sedang aktif di tabel (di mode pisah: urutan di dalam tiap file;
@@ -1447,6 +1474,11 @@ menolak jalan dengan pesan jelas. Entri yang salah bentuk, username
 duplikat, atau password kosong juga ditolak saat startup. Untuk Docker,
 `AUTH_USERS` sudah diteruskan lewat `docker-compose.yml`.
 
+Ada satu password lagi yang **bukan** akun: `REPORT_KABKOTA_PASSWORD`,
+password kedua yang diminta dialog unduh menu Daftar untuk mengunduh satu
+kabupaten/kota utuh (per SubSLS, dalam ZIP). Opsional — kosong menutup
+lebar itu. Lihat "Unduh PDF & Unduh Excel" di bagian menu Daftar.
+
 **Yang dilindungi:** semuanya kecuali `/login`, `/api/login`, `/api/logout`,
 dan `/healthz`. Gerbangnya (`requireAuth` di `internal/api/auth.go`)
 dipasang di luar mux, jadi aset statis pun ikut terlindungi — kalau hanya
@@ -1603,13 +1635,14 @@ bagian "Login" di atas.
 - `GET /api/subsls?kabkota=&kecamatan=&desa=&sls=` — daftar Kode SubSLS di dalam satu SLS (keempat parameter wajib)
 - `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — batas SubSLS sebagai GeoJSON FeatureCollection, dari PostGIS. `kabkota`, `kecamatan` dan `desa` **wajib**; `sls` dan `subsls` opsional dan hanya mempersempit. Yang dikembalikan adalah semua SubSLS yang `idsubsls`-nya berawalan kode gabungan itu — satu desa bisa ratusan polygon (maksimal terukur 164), satu SubSLS tepat satu. Cakupan lebih luas dari desa ditolak 400. Tiap feature membawa `properties.idsubsls`. Tanpa PostGIS terkonfigurasi, endpoint ini menjawab 503 dan petanya tetap jalan tanpa overlay
 - `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `keberadaan_bku`, `status`, `penggunaan_bangunan`, `assignment_id`, `ada_assignment_baru`, `ada_regsosek`, `assignment_id_baru`, `non_respon` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`, `penggunaanBangunan`, `keberadaanBku`) semuanya opsional, **multi-nilai**, dan independen dari filter wilayah maupun satu sama lain — ulangi parameternya untuk tiap nilai (`?status=OPEN&status=DRAFT`), yang jadi satu `IN (...)`; nilainya divalidasi terhadap enum tetap di `internal/points/points.go` dan satu nilai tak dikenal menolak seluruh request dengan 400; pakai `__EMPTY__` untuk memfilter kolom yang kosong, boleh digabung dengan nilai biasa. `flagBaru`, `flagRegsosek` dan `nonRespon` hanya menerima `""` (semua), `"1"` (ada) atau `"0"` (tidak ada) — nilai lain ditolak 400
-- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&sortBy=&dir=&split=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`. `split=subsls` mengubah balasannya jadi **ZIP** (`application/zip`, `daftar-hasil-pendataan-<kode>-per-subsls.zip`) berisi satu PDF per SubSLS; dalam mode ini `desa` tidak wajib (cukup `kabkota` + `kecamatan`) tapi `subsls` **tidak boleh** diisi (tidak ada yang dipisahkan) — keduanya 400; nilai `split` selain `subsls` juga 400. Batas barisnya `SplitReportMaxRows`, bukan `ReportMaxRows`
+- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&sortBy=&dir=&split=` — PDF "Daftar Hasil Pendataan". `kabkota`, `kecamatan` dan `desa` **wajib** (cakupan minimal satu desa/kelurahan; lebih luas dari itu ditolak 400), `sls` dan `subsls` opsional untuk mempersempit. Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`. `split=subsls` mengubah balasannya jadi **ZIP** (`application/zip`, `daftar-hasil-pendataan-<kode>-per-subsls.zip`) berisi satu PDF per SubSLS; dalam mode ini cukup `kabkota` (+ `kecamatan` opsional) tapi `subsls` **tidak boleh** diisi (tidak ada yang dipisahkan) — keduanya 400; nilai `split` selain `subsls` juga 400. Tanpa `kecamatan` (satu kabupaten/kota utuh) wajib ada `unlock=<token>` dari `/api/report-unlock`, kalau tidak 403. Batas barisnya `SplitReportMaxRows` per kecamatan, bukan `ReportMaxRows`
 - `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&sortBy=&dir=&split=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf`, termasuk `split=subsls` → ZIP berisi satu .xlsx per SubSLS (lihat `prepareReport` di `internal/api/server.go` dan `handleSplitReport` di `internal/api/report_split.go`, dipakai bareng oleh kedua handler)
 - `GET /api/reg2022?kabkota=&kecamatan=&desa=&sls=&subsls=&matchStatus=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar Reg2022 (tabel `se2026_match_regsosek`). Filter wilayah sama dengan endpoint lain; `matchStatus` divalidasi terhadap 7 nilai tetap di `internal/regsosek/regsosek.go` (pakai `__EMPTY__` untuk kolom kosong); `search` mencari substring di `nama_prelist` dan `nama_kk` saja, lewat parameter binding — nomor KK/NIK tidak dipakai sebagai kunci cari. `sortBy` salah satu dari `nama` (default), `nama_kk`, `subsls`, `match_status`, `alamat_regsosek`, `nama_matched`, `assignment_id`
 - `GET /api/reg2022/filter-options` — daftar nilai `match_status` untuk dropdown filter menu Daftar Reg2022
 - `GET /api/reg2022/pdf?...` dan `GET /api/reg2022/xlsx?...` — laporan "Daftar Match Regsosek". Parameter filternya sama dengan `/api/reg2022`; `kabkota` dan `kecamatan` **wajib** (cakupan minimal satu kecamatan, lebih luas ditolak 400)
 - `GET /api/match-points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&...&matchStatus=&search=` — titik/cluster untuk viewport menu Peta Match Reg2022, memakai `latitude_regsosek`/`longitude_regsosek`
 - `GET /api/match-bounds?kabkota=&...&matchStatus=&search=` — extent geografis baris yang cocok dengan filter, untuk auto-zoom peta match (dihitung per request karena bergantung pada filter, bukan cuma wilayah)
+- `POST /api/report-unlock` — body JSON `{"password": "…"}`; menukar password kedua (`REPORT_KABKOTA_PASSWORD`) dengan token unduhan satu kabupaten/kota: `200 {"token": "…", "expires_in": 600}`, `403 {"error": "wrong password"}` setelah jeda 1 detik, `503` kalau password-nya tidak dikonfigurasi di server. Di balik login seperti route `/api` lainnya. Token dipakai sebagai `unlock=` pada `/api/list/pdf|xlsx?split=subsls&kabkota=…`
 - `GET /api/filter-options` — daftar nilai enum untuk dropdown filter Jenis Prelist, Keberadaan Keluarga, Status, Penggunaan Bangunan dan Keberadaan Usaha (statis, bukan query ke ClickHouse)
 - `GET /api/meta` — metadata dataset yang cuma ditampilkan, bukan di-query: saat ini hanya `data_updated_at` dari `DATA_UPDATED_AT` di `.env`, string kosong kalau tidak dikonfigurasi
 - `GET /healthz` — health check (ping ClickHouse); satu dari sedikit endpoint yang tidak butuh login
