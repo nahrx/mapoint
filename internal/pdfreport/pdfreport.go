@@ -11,6 +11,7 @@ package pdfreport
 import (
 	"fmt"
 	"io"
+	"iter"
 	"strconv"
 	"time"
 
@@ -150,9 +151,11 @@ const (
 	rowSafetyMargin = 0.5
 )
 
-// Generate writes the report PDF to w. items should already be sorted the
-// way the report should read (see points.Service.ListAll).
-func Generate(w io.Writer, region Region, items []points.Point, truncated bool) error {
+// Generate writes the report PDF to w. rows should already come in the
+// order the report should read (see points.Service.ListAll); total is how
+// many of them there are, for the "Jumlah Data" line in the header, which
+// is drawn before the first row is seen.
+func Generate(w io.Writer, region Region, total int, rows iter.Seq[points.Point], truncated bool) error {
 	pdf := fpdf.New("L", "mm", "A4", "")
 	pdf.SetMargins(pageMargin, pageMargin, pageMargin)
 	pdf.SetAutoPageBreak(false, pageMargin)
@@ -161,7 +164,7 @@ func Generate(w io.Writer, region Region, items []points.Point, truncated bool) 
 	cols := columnsFor(region)
 
 	pdf.AddPage()
-	writeHeader(pdf, tr, region, len(items), truncated)
+	writeHeader(pdf, tr, region, total, truncated)
 	drawTableHeader(pdf, tr, cols)
 
 	// GetPageSize returns (width, height) — for landscape A4 that's
@@ -171,8 +174,10 @@ func Generate(w io.Writer, region Region, items []points.Point, truncated bool) 
 	bottom := pageH - pageMargin
 
 	fill := false
-	for i, p := range items {
-		row := rowFor(region, i+1, p)
+	n := 0
+	for p := range rows {
+		n++
+		row := rowFor(region, n, p)
 		for i := range row {
 			row[i] = tr(row[i])
 		}

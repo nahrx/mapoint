@@ -13,6 +13,7 @@ package xlsxreport
 import (
 	"fmt"
 	"io"
+	"iter"
 	"math"
 	"time"
 
@@ -69,9 +70,20 @@ var columns = []struct {
 	{"Catatan", 40},
 }
 
-// Generate writes the report workbook to w. items should already be
-// sorted the way the report should read (see points.Service.ListAll).
-func Generate(w io.Writer, region report.Region, items []points.Point, truncated bool) error {
+// Generate writes the report workbook to w. rows should already come in
+// the order the report should read (see points.Service.ListAll); total is
+// how many of them there are, for the "Jumlah Data" line, which is written
+// before the first row is seen.
+//
+// Written through excelize's StreamWriter, not the cell-by-cell API: a
+// whole kabupaten/kota is 552k rows × 18 columns, and the cell map the
+// ordinary API keeps for that (every cell an object) runs to gigabytes,
+// while the stream writer serialises each row as it comes and holds
+// nothing. Same reason the Tabulasi workbook uses it. The constraints
+// that brings are the same as there — column widths and panes before the
+// first SetRow, the AutoFilter as an Excel table after the last, Flush
+// once at the end — see tabulasi.go.
+func Generate(w io.Writer, region report.Region, total int, rows iter.Seq[points.Point], truncated bool) error {
 	f := excelize.NewFile()
 	defer f.Close()
 
@@ -80,25 +92,17 @@ func Generate(w io.Writer, region report.Region, items []points.Point, truncated
 		return fmt.Errorf("xlsxreport: rename sheet: %w", err)
 	}
 
-	styles, err := newStyles(f)
+	st, err := newStyles(f)
 	if err != nil {
 		return fmt.Errorf("xlsxreport: styles: %w", err)
 	}
 
-	headerRow, err := writeInfoBlock(f, sheet, styles, region, len(items), truncated)
+	sw, err := f.NewStreamWriter(sheet)
 	if err != nil {
-		return fmt.Errorf("xlsxreport: info block: %w", err)
+		return fmt.Errorf("xlsxreport: stream writer: %w", err)
 	}
-	if err := writeTable(f, sheet, styles, headerRow, items); err != nil {
-		return fmt.Errorf("xlsxreport: table: %w", err)
-	}
-
 	for i, c := range columns {
-		col, err := excelize.ColumnNumberToName(i + 1)
-		if err != nil {
-			return fmt.Errorf("xlsxreport: column width: %w", err)
-		}
-		if err := f.SetColWidth(sheet, col, col, c.width); err != nil {
+		if err := sw.SetColWidth(i+1, i+1, c.width); err != nil {
 			return fmt.Errorf("xlsxreport: column width: %w", err)
 		}
 	}
@@ -106,12 +110,45 @@ func Generate(w io.Writer, region report.Region, items []points.Point, truncated
 	// Keep everything from the title row down through the table header
 	// visible while scrolling through data rows — the same sticky-header
 	// idea the Daftar table itself uses (see #daftar-table thead th in
-	// style.css), just Excel's version of it.
-	if err := f.SetPanes(sheet, &excelize.Panes{
+	// style.css), just Excel's version of it. The stream writer wants the
+	// panes before the first row, so the info block's height is computed
+	// first (infoRows) and written afterwards.
+	headerRow := infoBlockHeight(region, truncated)
+	if err := sw.SetPanes(&excelize.Panes{
 		Freeze: true, Split: false, XSplit: 0, YSplit: headerRow,
 		TopLeftCell: fmt.Sprintf("A%d", headerRow+1), ActivePane: "bottomLeft",
 	}); err != nil {
 		return fmt.Errorf("xlsxreport: freeze panes: %w", err)
+	}
+
+	if err := writeInfoBlock(sw, st, region, total, truncated, headerRow); err != nil {
+		return fmt.Errorf("xlsxreport: info block: %w", err)
+	}
+	n, err := writeTable(sw, st, headerRow, rows)
+	if err != nil {
+		return fmt.Errorf("xlsxreport: table: %w", err)
+	}
+
+	// An Excel table is the stream writer's way of getting AutoFilter on
+	// the header. Excel refuses a table with no data rows, so an empty
+	// report just has a plain header.
+	if n > 0 {
+		lastCol, err := excelize.ColumnNumberToName(len(columns))
+		if err != nil {
+			return fmt.Errorf("xlsxreport: table range: %w", err)
+		}
+		noStripes := false
+		if err := sw.AddTable(&excelize.Table{
+			Range:          fmt.Sprintf("A%d:%s%d", headerRow, lastCol, headerRow+n),
+			Name:           "daftar",
+			StyleName:      "TableStyleLight1",
+			ShowRowStripes: &noStripes,
+		}); err != nil {
+			return fmt.Errorf("xlsxreport: table: %w", err)
+		}
+	}
+	if err := sw.Flush(); err != nil {
+		return fmt.Errorf("xlsxreport: flush: %w", err)
 	}
 
 	if err := f.Write(w); err != nil {
@@ -175,74 +212,95 @@ func newStyles(f *excelize.File) (styles, error) {
 	return s, err
 }
 
-// writeInfoBlock renders the title and "Keterangan Wilayah" / "Filter
-// Tambahan" key-value rows — the spreadsheet's counterpart to
-// pdfreport's writeHeader — and returns the row number the table header
-// should start on.
-func writeInfoBlock(f *excelize.File, sheet string, st styles, region report.Region, total int, truncated bool) (int, error) {
-	row := 1
-	set := func(cell string, style int, value any) {
-		f.SetCellValue(sheet, cell, value)
-		f.SetCellStyle(sheet, cell, cell, style)
-	}
-	kv := func(label, value string) {
-		set(fmt.Sprintf("A%d", row), st.label, label)
-		set(fmt.Sprintf("B%d", row), st.label, value)
-		row++
-	}
+// infoBlockLines lists the info block's rows top to bottom — nil for a
+// blank row, otherwise the cells of that row — so the block's height is
+// known before anything is written (SetPanes needs it) and writing it is a
+// plain loop over the same list.
+func infoBlockLines(st styles, region report.Region, total int, truncated bool) [][]excelize.Cell {
+	cell := func(style int, v any) excelize.Cell { return excelize.Cell{StyleID: style, Value: v} }
+	kv := func(e [2]string) []excelize.Cell { return []excelize.Cell{cell(st.label, e[0]), cell(st.label, e[1])} }
 
-	set(fmt.Sprintf("A%d", row), st.title, "Daftar Hasil Pendataan")
-	row += 2
-
-	set(fmt.Sprintf("A%d", row), st.section, "Keterangan Wilayah")
-	row++
+	lines := [][]excelize.Cell{
+		{cell(st.title, "Daftar Hasil Pendataan")},
+		nil,
+		{cell(st.section, "Keterangan Wilayah")},
+	}
 	for _, e := range region.WilayahRows(total) {
-		kv(e[0], e[1])
+		lines = append(lines, kv(e))
 	}
-
 	if extra := region.ExtraFilters(); len(extra) > 0 {
-		row++
-		set(fmt.Sprintf("A%d", row), st.section, "Filter Tambahan")
-		row++
+		lines = append(lines, nil, []excelize.Cell{cell(st.section, "Filter Tambahan")})
 		for _, e := range extra {
-			kv(e[0], e[1])
+			lines = append(lines, kv(e))
 		}
 	}
-
 	if truncated {
-		row++
-		set(fmt.Sprintf("A%d", row), st.warn, fmt.Sprintf("Catatan: daftar ini dibatasi hingga %d baris pertama.", points.ReportMaxRows))
-		row++
+		lines = append(lines, nil, []excelize.Cell{cell(st.warn, fmt.Sprintf("Catatan: daftar ini dibatasi hingga %d baris pertama.", points.ReportMaxRows))})
 	}
+	lines = append(lines, nil,
+		[]excelize.Cell{cell(st.footnote, fmt.Sprintf("Diunduh %s — Peta Titik SE2026", time.Now().Format("2 January 2006 15:04")))},
+		nil)
+	return lines
+}
 
-	row++
-	set(fmt.Sprintf("A%d", row), st.footnote, fmt.Sprintf("Diunduh %s — Peta Titik SE2026", time.Now().Format("2 January 2006 15:04")))
-	row += 2
+// infoBlockHeight is the row the table header lands on: one past the info
+// block. Computed from the same list writeInfoBlock writes, so the two
+// cannot disagree. Styles don't affect the count, hence the zero value.
+func infoBlockHeight(region report.Region, truncated bool) int {
+	return len(infoBlockLines(styles{}, region, 0, truncated)) + 1
+}
 
-	return row, nil
+// writeInfoBlock renders the title and "Keterangan Wilayah" / "Filter
+// Tambahan" key-value rows — the spreadsheet's counterpart to pdfreport's
+// writeHeader. headerRow is what infoBlockHeight returned for the same
+// inputs; it is checked rather than trusted because the panes were already
+// set from it.
+func writeInfoBlock(sw *excelize.StreamWriter, st styles, region report.Region, total int, truncated bool, headerRow int) error {
+	lines := infoBlockLines(st, region, total, truncated)
+	if len(lines)+1 != headerRow {
+		return fmt.Errorf("info block is %d rows but panes were set for %d", len(lines)+1, headerRow)
+	}
+	for i, cells := range lines {
+		if cells == nil {
+			continue
+		}
+		if err := sw.SetRow(fmt.Sprintf("A%d", i+1), cellsAny(cells)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// cellsAny is the []any the stream writer wants for a row of styled cells.
+func cellsAny(cells []excelize.Cell) []any {
+	out := make([]any, len(cells))
+	for i, c := range cells {
+		out[i] = c
+	}
+	return out
 }
 
 // writeTable renders the column header row at headerRow and one data row
-// per item below it, zebra-striped the same way the PDF table is.
-func writeTable(f *excelize.File, sheet string, st styles, headerRow int, items []points.Point) error {
+// per item below it, zebra-striped the same way the PDF table is. Returns
+// how many data rows were written.
+func writeTable(sw *excelize.StreamWriter, st styles, headerRow int, rows iter.Seq[points.Point]) (int, error) {
+	head := make([]excelize.Cell, len(columns))
 	for i, c := range columns {
-		col, err := excelize.ColumnNumberToName(i + 1)
-		if err != nil {
-			return err
-		}
-		cell := fmt.Sprintf("%s%d", col, headerRow)
-		f.SetCellValue(sheet, cell, c.header)
-		f.SetCellStyle(sheet, cell, cell, st.tblHead)
+		head[i] = excelize.Cell{StyleID: st.tblHead, Value: c.header}
+	}
+	if err := sw.SetRow(fmt.Sprintf("A%d", headerRow), cellsAny(head)); err != nil {
+		return 0, err
 	}
 
-	for i, p := range items {
-		r := headerRow + 1 + i
+	n := 0
+	cells := make([]any, len(columns))
+	for p := range rows {
 		style := st.tblCell
-		if i%2 == 1 {
+		if n%2 == 1 {
 			style = st.tblFill
 		}
-		values := []any{
-			i + 1,
+		values := [...]any{
+			n + 1,
 			report.DashIfEmpty(p.Nama),
 			report.DashIfEmpty(p.Alamat),
 			report.DashIfEmpty(p.SubSLS),
@@ -264,20 +322,12 @@ func writeTable(f *excelize.File, sheet string, st styles, headerRow int, items 
 			report.DashIfEmpty(p.Catatan),
 		}
 		for ci, v := range values {
-			col, err := excelize.ColumnNumberToName(ci + 1)
-			if err != nil {
-				return err
-			}
-			cell := fmt.Sprintf("%s%d", col, r)
-			f.SetCellValue(sheet, cell, v)
-			f.SetCellStyle(sheet, cell, cell, style)
+			cells[ci] = excelize.Cell{StyleID: style, Value: v}
 		}
+		if err := sw.SetRow(fmt.Sprintf("A%d", headerRow+1+n), cells); err != nil {
+			return n, err
+		}
+		n++
 	}
-
-	lastCol, err := excelize.ColumnNumberToName(len(columns))
-	if err != nil {
-		return err
-	}
-	lastRow := headerRow + len(items)
-	return f.AutoFilter(sheet, fmt.Sprintf("A%d:%s%d", headerRow, lastCol, lastRow), nil)
+	return n, nil
 }

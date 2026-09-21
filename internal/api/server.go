@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -609,55 +610,25 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// reportData is what handleListPDF and handleListXLSX both need to render
-// their respective format — gathered once by prepareReport so the two
-// handlers can't drift out of sync on how a report's scope or row set is
-// determined.
-type reportData struct {
-	region    report.Region
-	items     []points.Point
-	truncated bool
-}
-
-// prepareReport validates and parses the wilayah/attribute/sort filter
-// from q, requires it to be pinned at least down to one desa/kelurahan
-// (mirroring the download buttons' disabled state on the frontend: a
-// report scoped any wider isn't what either button is for, and a whole
-// kecamatan would run to hundreds of thousands of rows), and fetches every
-// matching row (capped at points.ReportMaxRows). SLS and SubSLS stay
-// optional — narrowing further just makes the report smaller. ok is false
-// when it has already written an error response and the caller should
-// return immediately.
+// The Daftar downloads share one scope rule set, applied by
+// parseReportScope, and one way of getting rows, reportPlan (see
+// report_plan.go). The download buttons' enabled state on the frontend
+// mirrors the same rules, but the server is what enforces them.
 //
-// split relaxes the scope and raises the cap to points.SplitReportMaxRows:
-// the per-SubSLS ZIP (see report_split.go) renders one small document per
-// SubSLS, so the size of a single document no longer depends on how wide
-// the filter is — only the number of files does. One kecamatan is allowed
-// outright; a whole kabupaten/kota additionally needs a valid unlock token
-// (the second password — see report_unlock.go), because that is thousands
-// of files and up to ~550k rows. A filter already pinned to one SubSLS has
-// nothing to split and is rejected, mirroring the locked toggle on the
-// frontend.
+// Scope: the filter must name at least a kabupaten/kota. Down to one
+// kecamatan that is all; a whole kabupaten/kota additionally needs a valid
+// unlock token — the second password, see report_unlock.go — because it
+// is up to ~550k rows (single file) or thousands of files (split), about
+// a minute of server time either way. split (the per-SubSLS ZIP, see
+// report_split.go) follows the same rules; on a filter already pinned to
+// one SubSLS it simply yields a one-file ZIP — the switch is the user's at
+// every width, and a rule that only bites at one of them is a surprise.
 //
-// prepareReport fetches the rows in one go, which is what every scope
-// except kabupaten/kota width wants; that one streams per kecamatan
-// instead and only uses parseReportScope.
-func (s *Server) prepareReport(w http.ResponseWriter, r *http.Request, q url.Values, downloadKind string, split bool) (data reportData, ok bool) {
-	scope, ok := s.parseReportScope(w, q, downloadKind, split)
-	if !ok {
-		return reportData{}, false
-	}
-	items, err := s.svc.ListAllUpTo(r.Context(), scope.filter, scope.sortBy, scope.dir, scope.maxRows)
-	if err != nil {
-		if r.Context().Err() != nil {
-			return reportData{}, false
-		}
-		s.log.Error("list-report query failed", "err", err, "format", downloadKind)
-		writeError(w, http.StatusInternalServerError, "query failed")
-		return reportData{}, false
-	}
-	return reportData{region: regionFor(scope.filter), items: items, truncated: len(items) >= scope.maxRows}, true
-}
+// Row cap: points.ReportMaxRows down to a desa/kelurahan (the historical
+// single-report limit, with the "dibatasi hingga N baris" header note when
+// hit), points.SplitReportMaxRows per query above that — a kecamatan is
+// one query, a kabupaten/kota one query per kecamatan, and the cap is
+// above the largest kecamatan, so in practice it never bites there.
 
 // reportScope is a validated download request: what to fetch, in what
 // order, and how many rows at most.
@@ -668,32 +639,25 @@ type reportScope struct {
 	maxRows int
 }
 
-// parseReportScope is the validation half of prepareReport — see there for
-// the scope rules. ok is false when it has already written the error.
+// parseReportScope applies the scope rules above. ok is false when it has
+// already written the error.
 func (s *Server) parseReportScope(w http.ResponseWriter, q url.Values, downloadKind string, split bool) (scope reportScope, ok bool) {
 	filter, err := parseFilter(q)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return reportScope{}, false
 	}
-	maxRows := points.ReportMaxRows
-	if split {
-		if filter.KabKota == "" {
-			writeError(w, http.StatusBadRequest, downloadKind+" per-SubSLS download requires filtering at least down to Kabupaten/Kota")
-			return reportScope{}, false
-		}
-		if filter.SubSLS != "" {
-			writeError(w, http.StatusBadRequest, downloadKind+" per-SubSLS download needs a filter wider than one SubSLS")
-			return reportScope{}, false
-		}
-		if filter.Kecamatan == "" && !s.unlock.valid(q.Get(unlockParam)) {
-			writeError(w, http.StatusForbidden, downloadKind+" per-SubSLS download of a whole Kabupaten/Kota requires the additional password (unlock token missing, invalid or expired)")
-			return reportScope{}, false
-		}
-		maxRows = points.SplitReportMaxRows
-	} else if filter.KabKota == "" || filter.Kecamatan == "" || filter.Desa == "" {
-		writeError(w, http.StatusBadRequest, downloadKind+" download requires filtering at least down to Desa/Kelurahan")
+	if filter.KabKota == "" {
+		writeError(w, http.StatusBadRequest, downloadKind+" download requires filtering at least down to Kabupaten/Kota")
 		return reportScope{}, false
+	}
+	if filter.Kecamatan == "" && !s.unlock.valid(q.Get(unlockParam)) {
+		writeError(w, http.StatusForbidden, downloadKind+" download of a whole Kabupaten/Kota requires the additional password (unlock token missing, invalid or expired)")
+		return reportScope{}, false
+	}
+	maxRows := points.ReportMaxRows
+	if filter.Desa == "" {
+		maxRows = points.SplitReportMaxRows
 	}
 	return reportScope{
 		filter:  filter,
@@ -725,10 +689,25 @@ func regionFor(filter points.Filter) report.Region {
 	}
 }
 
-// handleListPDF renders the "Daftar Hasil Pendataan" PDF for one
-// fully-drilled-down SubSLS — see prepareReport for the shared scope
-// rules.
-func (s *Server) handleListPDF(w http.ResponseWriter, r *http.Request) {
+// singleFormat is the per-format part of a single-file download; the two
+// handlers differ only in content type, extension and generator.
+type singleFormat struct {
+	kind        string
+	ext         string
+	contentType string
+	generate    func(w io.Writer, region report.Region, total int, rows iter.Seq[points.Point], truncated bool) error
+}
+
+var (
+	singlePDF  = singleFormat{kind: "PDF", ext: "pdf", contentType: "application/pdf", generate: pdfreport.Generate}
+	singleXLSX = singleFormat{kind: "Excel", ext: "xlsx",
+		contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", generate: xlsxreport.Generate}
+)
+
+// handleListReport serves the "Daftar Hasil Pendataan" report in one
+// format — one file for the whole filter, or, with split=subsls, the ZIP
+// of per-SubSLS files (handleSplitReport).
+func (s *Server) handleListReport(w http.ResponseWriter, r *http.Request, f singleFormat, sf splitFormat) {
 	q := r.URL.Query()
 	split, err := parseSplit(q)
 	if err != nil {
@@ -736,54 +715,38 @@ func (s *Server) handleListPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if split {
-		s.handleSplitReport(w, r, q, splitPDF)
+		s.handleSplitReport(w, r, q, sf)
 		return
 	}
-	data, ok := s.prepareReport(w, r, q, "PDF", false)
+	plan, ok := s.planReport(w, r, q, f.kind, false)
 	if !ok {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="daftar-hasil-pendataan-%s.pdf"`, data.region.FullCode()))
+	s.extendWriteDeadline(w, plan)
+	w.Header().Set("Content-Type", f.contentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="daftar-hasil-pendataan-%s.%s"`, plan.region.FullCode(), f.ext))
 	// The report reflects live data and every filter combination shares
 	// this same URL shape, so never let a browser (or an intermediary
 	// proxy) serve a stale cached copy back for a re-download.
 	w.Header().Set("Cache-Control", "no-store")
-	if err := pdfreport.Generate(w, data.region, data.items, data.truncated); err != nil {
-		s.log.Error("pdf generation failed", "err", err)
+	rows := plan.rows(r.Context(), s, func(unit points.Filter, err error) {
+		s.log.Error("report: query failed mid-stream", "err", err, "format", f.kind, "kecamatan", unit.KabKota+unit.Kecamatan)
+	})
+	if err := f.generate(w, plan.region, plan.total, rows, plan.truncated); err != nil {
 		// Headers are already sent at this point, so we can't fall back to
 		// writeError's JSON body — the client just gets a truncated/broken
 		// download, which is at least visible rather than silently wrong.
+		s.log.Error("report generation failed", "err", err, "format", f.kind)
 	}
 }
 
-// handleListXLSX renders the same "Daftar Hasil Pendataan" report as
-// handleListPDF, as an Excel workbook instead — same scope rules, same
-// data, see prepareReport.
-func (s *Server) handleListXLSX(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	split, err := parseSplit(q)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if split {
-		s.handleSplitReport(w, r, q, splitXLSX)
-		return
-	}
-	data, ok := s.prepareReport(w, r, q, "Excel", false)
-	if !ok {
-		return
-	}
+func (s *Server) handleListPDF(w http.ResponseWriter, r *http.Request) {
+	s.handleListReport(w, r, singlePDF, splitPDF)
+}
 
-	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="daftar-hasil-pendataan-%s.xlsx"`, data.region.FullCode()))
-	w.Header().Set("Cache-Control", "no-store")
-	if err := xlsxreport.Generate(w, data.region, data.items, data.truncated); err != nil {
-		s.log.Error("xlsx generation failed", "err", err)
-		// Same caveat as handleListPDF above: headers are already sent.
-	}
+func (s *Server) handleListXLSX(w http.ResponseWriter, r *http.Request) {
+	s.handleListReport(w, r, singleXLSX, splitXLSX)
 }
 
 // handleSubSLSPolygon serves the SubSLS boundary as GeoJSON for the Peta

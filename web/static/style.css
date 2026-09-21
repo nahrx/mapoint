@@ -1893,6 +1893,13 @@ body {
   margin-top: 4px;
 }
 
+/* display: flex above would beat the hidden attribute's UA display: none,
+   so the row has to opt back out explicitly when hidden. */
+.download-dialog-password[hidden],
+.download-dialog-error[hidden] {
+  display: none;
+}
+
 .download-dialog-password label {
   font-size: 12px;
   font-weight: 600;

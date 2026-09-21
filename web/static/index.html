@@ -292,10 +292,9 @@
 
       <!-- Download options, shown after Unduh PDF / Unduh Excel is clicked.
            The one option today is "Pisahkan per SubSLS": one file per SubSLS
-           packed in a ZIP (split=subsls on the same endpoints). It is forced
-           on for a kecamatan- or kabupaten/kota-wide filter — the single
-           report stops at desa/kelurahan — and off when the filter is already
-           one SubSLS. Kabupaten/kota width additionally asks for the second
+           packed in a ZIP (split=subsls on the same endpoints) versus one file
+           for the whole scope — always the user's choice, defaulting on above
+           desa width. Kabupaten/kota width additionally asks for the second
            password (REPORT_KABKOTA_PASSWORD), exchanged for a short-lived
            token at /api/report-unlock before the download starts. -->
       <dialog id="download-dialog" class="download-dialog" aria-labelledby="download-dialog-title">

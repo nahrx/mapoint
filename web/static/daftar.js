@@ -79,6 +79,10 @@
 
   let currentPage = 1;
   let pageSize = 50;
+  // Row count of the applied filter, from the last /api/list response —
+  // shown in the download dialog so "one file for the whole scope" comes
+  // with the number that says how big that file will be.
+  let appliedTotal = 0;
   let sortColumn = "nama";
   let sortDir = "asc";
   let requestSeq = 0;
@@ -212,6 +216,7 @@
       ? resp.items.map((p, i) => rowHTML(p, startRow + i)).join("")
       : `<tr><td colspan="15" class="empty-row">Tidak ada data yang cocok dengan filter ini.</td></tr>`;
 
+    appliedTotal = resp.total;
     const totalPages = Math.max(1, Math.ceil(resp.total / resp.page_size));
     pageInfoEl.textContent = `Halaman ${resp.page.toLocaleString("id-ID")} dari ${totalPages.toLocaleString("id-ID")} (${resp.total.toLocaleString("id-ID")} data)`;
     prevBtn.disabled = resp.page <= 1;
@@ -548,19 +553,27 @@
 
   // The download dialog: Unduh PDF/Excel open it, the actual download
   // starts from its Unduh button. Its one option, "Pisahkan per SubSLS",
-  // is free at desa and SLS width, forced on for a kecamatan or a whole
-  // kabupaten/kota (the single report isn't offered that wide) and forced
-  // off for a single SubSLS (nothing to split — a one-file ZIP would only
-  // confuse). Kabupaten/kota width also shows the second-password row: the
-  // password is exchanged for a token at /api/report-unlock first, so a
-  // wrong one is reported inside the dialog and the password itself never
-  // appears in a download URL. The user's last free choice is remembered
-  // for the session, not persisted: a switch that silently stays on across
+  // is always the user's to flip: on gives one ZIP with a file per SubSLS,
+  // off one file for the whole scope, at any width — the note under it
+  // carries the row count so a whole-kecamatan or whole-kabupaten/kota
+  // file is a knowing choice. It defaults on above desa width (where one
+  // file is huge) and otherwise to the user's last choice, remembered for
+  // the session, not persisted: a switch that silently stays on across
   // days would hand out ZIPs to someone who expected a PDF.
+  //
+  // Kabupaten/kota width — and only that — also shows the second-password
+  // row, whichever way the switch is set: the password is exchanged for a
+  // token at /api/report-unlock first, so a wrong one is reported inside
+  // the dialog and the password itself never appears in a download URL.
   const SPLIT_NOTE_FREE = "Aktif: satu ZIP berisi satu file per SubSLS. Nonaktif: satu file untuk seluruh cakupan.";
-  const SPLIT_NOTE_KECAMATAN = "Cakupan satu kecamatan hanya bisa diunduh per SubSLS — hasilnya satu ZIP berisi satu file per SubSLS. Pilih desa/kelurahan untuk satu file utuh.";
-  const SPLIT_NOTE_KABKOTA = "Cakupan satu kabupaten/kota hanya bisa diunduh per SubSLS — ribuan file dalam satu ZIP, prosesnya bisa sekitar satu menit — dan memerlukan password tambahan.";
-  const SPLIT_NOTE_SINGLE = "Filter sudah satu SubSLS, tidak ada yang perlu dipisahkan.";
+  const SPLIT_NOTE_SINGLE = "Filter sudah satu SubSLS; aktif berarti ZIP berisi satu file itu saja.";
+  const SPLIT_NOTE_WIDE = "Aktif: satu ZIP berisi satu file per SubSLS. Nonaktif: satu file utuh untuk seluruh cakupan (%ROWS% baris).";
+  // Measured: a 112k-row kecamatan is a 47 MB PDF in ~9 s; Samarinda
+  // (552k rows) a 224 MB PDF in ~48 s. Below this the warning would just
+  // be noise.
+  const BIG_REPORT_ROWS = 50000;
+  const SPLIT_NOTE_BIG = " File utuhnya besar (puluhan sampai ratusan MB) dan prosesnya bisa sekitar satu menit.";
+  const SPLIT_NOTE_KABKOTA = " Cakupan satu kabupaten/kota memerlukan password tambahan.";
   const UNLOCK_ERRORS = {
     403: "Password salah.",
     503: "Unduhan satu kabupaten/kota tidak diaktifkan di server ini.",
@@ -600,13 +613,18 @@
   function openDownloadDialog(kind, apiPath) {
     pendingDownloadPath = apiPath;
     const kabkotaOnly = needsUnlock();
-    const kecamatanOnly = !appliedDesa;
+    const wide = !appliedDesa;
     const single = !!appliedSubsls;
-    splitToggle.disabled = kecamatanOnly || single;
-    splitToggle.checked = kecamatanOnly ? true : single ? false : splitPreferred;
+    splitToggle.disabled = false;
+    splitToggle.checked = wide ? true : single ? false : splitPreferred;
     downloadDialogTitle.textContent = `Unduh ${kind}`;
     downloadDialogScope.textContent = `Cakupan: ${appliedScopeText()}`;
-    downloadDialogNote.textContent = kabkotaOnly ? SPLIT_NOTE_KABKOTA : kecamatanOnly ? SPLIT_NOTE_KECAMATAN : single ? SPLIT_NOTE_SINGLE : SPLIT_NOTE_FREE;
+    let note = wide
+      ? SPLIT_NOTE_WIDE.replace("%ROWS%", appliedTotal.toLocaleString("id-ID"))
+      : single ? SPLIT_NOTE_SINGLE : SPLIT_NOTE_FREE;
+    if (wide && appliedTotal >= BIG_REPORT_ROWS) note += SPLIT_NOTE_BIG;
+    if (kabkotaOnly) note += SPLIT_NOTE_KABKOTA;
+    downloadDialogNote.textContent = note;
     downloadDialogPassword.hidden = !kabkotaOnly;
     downloadPasswordInput.value = "";
     setUnlockError("");
@@ -681,7 +699,9 @@
   }
 
   splitToggle.addEventListener("change", () => {
-    if (!splitToggle.disabled) splitPreferred = splitToggle.checked;
+    // Above desa width the default is on regardless, so only a choice made
+    // at desa/SLS/SubSLS width is worth remembering.
+    if (appliedDesa) splitPreferred = splitToggle.checked;
     downloadDialogConfirm.textContent = confirmLabel(downloadDialogConfirm.dataset.kind);
   });
   downloadDialogCancel.addEventListener("click", () => downloadDialog.close());

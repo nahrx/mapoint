@@ -1364,9 +1364,10 @@ func (s *Service) List(ctx context.Context, filter Filter, page, pageSize int, s
 	return ListPage{Total: total, Page: page, PageSize: pageSize, Items: items}, nil
 }
 
-// ReportMaxRows caps how many rows ListAll will ever return. Reports are
-// scoped to a desa/kelurahan or narrower (see prepareReport in
-// internal/api); measured against live data, a desa runs ~700 rows at the
+// ReportMaxRows caps how many rows ListAll will ever return. It applies to
+// reports scoped to a desa/kelurahan or narrower (see parseReportScope in
+// internal/api; wider ones use SplitReportMaxRows per query); measured
+// against live data, a desa runs ~700 rows at the
 // median, ~18k at the 99th percentile and ~27k at the largest, so this
 // clears every real desa with headroom while still bounding the damage if
 // a much larger wilayah ever reaches ListAll. A report that does hit the
@@ -1374,8 +1375,9 @@ func (s *Service) List(ctx context.Context, filter Filter, page, pageSize int, s
 // truncated flag threaded through to pdfreport/xlsxreport.
 const ReportMaxRows = 40000
 
-// SplitReportMaxRows is the cap for the per-SubSLS ZIP download, whose
-// scope may be a whole kecamatan (see handleSplitReport in internal/api).
+// SplitReportMaxRows is the per-query cap for a download wider than one
+// desa — one query for a kecamatan, one per kecamatan for a whole
+// kabupaten/kota (see reportPlan in internal/api), single file or ZIP.
 // Measured on live data the largest kecamatan holds 111,636 rows across
 // 592 SubSLS, so this clears every kecamatan in the province with room to
 // spare. The rows are held in memory once, grouped, and streamed out as
@@ -1400,6 +1402,17 @@ func (s *Service) ListAllUpTo(ctx context.Context, filter Filter, sortColumn str
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 	return s.listItems(ctx, filter, 1, maxRows, sortColumn, dir, true)
+}
+
+// Count is the number of rows matching filter — the report header's
+// "Jumlah Data" for a download whose rows are fetched in several queries
+// (see reportPlan in internal/api), where no single result set knows the
+// total.
+func (s *Service) Count(ctx context.Context, filter Filter) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+	n, err := s.listCount(ctx, filter)
+	return int(n), err
 }
 
 func (s *Service) listCount(ctx context.Context, filter Filter) (uint64, error) {
