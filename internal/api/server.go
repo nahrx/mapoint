@@ -491,6 +491,10 @@ func parseFilter(q url.Values) (points.Filter, error) {
 	if err != nil {
 		return points.Filter{}, err
 	}
+	prioritas, err := points.ParsePrioritas(q["prioritas"])
+	if err != nil {
+		return points.Filter{}, err
+	}
 	flagBaru, err := points.ParseFlag(q.Get("flagBaru"))
 	if err != nil {
 		return points.Filter{}, err
@@ -503,6 +507,10 @@ func parseFilter(q url.Values) (points.Filter, error) {
 	if err != nil {
 		return points.Filter{}, err
 	}
+	bansos, err := points.ParseFlag(q.Get("bansos"))
+	if err != nil {
+		return points.Filter{}, err
+	}
 	search, err := parseSearch(q)
 	if err != nil {
 		return points.Filter{}, err
@@ -512,9 +520,11 @@ func parseFilter(q url.Values) (points.Filter, error) {
 	filter.Status = status
 	filter.PenggunaanBangunan = penggunaanBangunan
 	filter.KeberadaanBKU = keberadaanBKU
+	filter.Prioritas = prioritas
 	filter.FlagBaru = flagBaru
 	filter.FlagRegsosek = flagRegsosek
 	filter.NonRespon = nonRespon
+	filter.Bansos = bansos
 	filter.Search = search
 	return filter, nil
 }
@@ -682,10 +692,12 @@ func regionFor(filter points.Filter) report.Region {
 		Status:             filter.Status,
 		PenggunaanBangunan: filter.PenggunaanBangunan,
 		KeberadaanBKU:      filter.KeberadaanBKU,
+		Prioritas:          filter.Prioritas,
 		Search:             filter.Search,
 		FlagBaru:           filter.FlagBaru,
 		FlagRegsosek:       filter.FlagRegsosek,
 		NonRespon:          filter.NonRespon,
+		Bansos:             filter.Bansos,
 	}
 }
 

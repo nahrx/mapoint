@@ -100,7 +100,7 @@ sudah diterapkan dan diukur di data itu:
    satu kali bangun himpunan. Dictionary tidak pernah lebih lambat, tapi
    untungnya baru terasa begitu ada filter wilayah.
 
-   **Konsekuensi operasional:** kedua dictionary itu sekarang dependensi
+   **Konsekuensi operasional:** keempat dictionary itu sekarang dependensi
    keras — kalau tidak ada, `/api/list` dan `/api/points` gagal total, bukan
    sekadar melambat. Karena itu `Service.CheckDictionaries` dijalankan saat
    startup dan menulis log `level=ERROR` yang menyebut nama dictionary,
@@ -1546,9 +1546,9 @@ Beberapa hal kecil yang sengaja dibuat begitu:
 
 ## Menjalankan
 
-**Sebelum pertama kali jalan:** buat dua dictionary ClickHouse yang dipakai
-kolom "Ditemukan di …" dan "Assignment ID Baru". Tanpa keduanya `/api/list`
-dan `/api/points` gagal total, bukan sekadar melambat. DDL beserta
+**Sebelum pertama kali jalan:** buat empat dictionary ClickHouse yang dipakai
+kolom "Ditemukan di …", "Assignment ID Baru", "Prioritas" dan "Bansos". Tanpa
+keempatnya `/api/list` dan `/api/points` gagal total, bukan sekadar melambat. DDL beserta
 penjelasannya ada di `sql/dictionaries.sql`:
 
 ```bash
@@ -1639,8 +1639,8 @@ Semua endpoint di bawah butuh sesi login kecuali yang ditandai — lihat
 bagian "Login" di atas.
 
 - `GET /` — peta (frontend)
-- `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=` — data titik/cluster untuk satu viewport. Filter atributnya sama persis dengan `/api/list` (multi-nilai, ulangi parameternya per nilai) — keduanya lewat `parseFilter` yang sama. Titik individual ikut membawa kedua flag "Ditemukan di …" dan `non_respon` untuk tooltip (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
-- `GET /api/points-bounds?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=` — extent geografis baris yang cocok dengan filter (persentil 1%/99% dari `latitude_ppl`/`longitude_ppl`), untuk auto-zoom ke hasil pencarian nama di menu Peta. Parameternya sama persis dengan `/api/points` minus kotak viewport-nya. Balasannya `min_lat`/`max_lat`/`min_lon`/`max_lon` + `total`; kalau tidak ada baris yang cocok, `total` 0 dan keempat batasnya `null` (bukan NaN — `encoding/json` menolak NaN, lihat `points.FiniteOrNil`), jadi pemanggil tidak boleh nge-zoom ke situ. Dipanggil frontend hanya saat pencarian nama aktif — lihat "Cari nama di menu Peta" di atas
+- `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&prioritas=&flagBaru=&flagRegsosek=&nonRespon=&bansos=&search=` — data titik/cluster untuk satu viewport. Filter atributnya sama persis dengan `/api/list` (multi-nilai, ulangi parameternya per nilai) — keduanya lewat `parseFilter` yang sama. Titik individual ikut membawa kedua flag "Ditemukan di …", `non_respon`, `prioritas` dan `bansos` untuk tooltip (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
+- `GET /api/points-bounds?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&prioritas=&flagBaru=&flagRegsosek=&nonRespon=&bansos=&search=` — extent geografis baris yang cocok dengan filter (persentil 1%/99% dari `latitude_ppl`/`longitude_ppl`), untuk auto-zoom ke hasil pencarian nama di menu Peta. Parameternya sama persis dengan `/api/points` minus kotak viewport-nya. Balasannya `min_lat`/`max_lat`/`min_lon`/`max_lon` + `total`; kalau tidak ada baris yang cocok, `total` 0 dan keempat batasnya `null` (bukan NaN — `encoding/json` menolak NaN, lihat `points.FiniteOrNil`), jadi pemanggil tidak boleh nge-zoom ke situ. Dipanggil frontend hanya saat pencarian nama aktif — lihat "Cari nama di menu Peta" di atas
 - `GET /api/tabulasi/variables` — enam variabel tabulasi (kunci, label, urutan kategori) dalam urutan tab; statis, sumber kebenaran untuk `?var=` di bawah
 - `GET /api/tabulasi?var=&kabkota=&kecamatan=&desa=&sls=&subsls=&page=&pageSize=` — satu halaman tabulasi silang SubSLS × kategori untuk variabel `var` (salah satu kunci dari endpoint di atas; lainnya ditolak 400). Filter sama dengan `/api/list` lewat `parseFilter`. `page`/`pageSize` menghitung **SubSLS**, bukan baris data; `pageSize` maks 200. Balasannya `columns` (urutan kategori, `""` terakhir kalau ada yang kosong), `rows[].counts` (kategori → jumlah) + `rows[].total`, `total_rows` (jumlah SubSLS di seluruh filter), `grand` + `grand_total` (total per kategori dan keseluruhan untuk seluruh filter)
 - `GET /api/tabulasi/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=` — workbook Excel berisi keenam tabulasi (satu sheet per variabel) untuk seluruh SubSLS yang cocok dengan filter, sampai `TabulasiMaxRows` (50.000) per sheet. Semua parameter opsional — tanpa filter = seluruh provinsi. Nama berkas `tabulasi-subsls-<kode wilayah|semua>.xlsx`
@@ -1651,16 +1651,16 @@ bagian "Login" di atas.
 - `GET /api/sls?kabkota=&kecamatan=&desa=` — daftar Kode SLS di dalam satu desa/kelurahan (ketiga parameter wajib); `name` diisi dari kolom `nmsls` di PostGIS kalau `MAP_*` dikonfigurasi, kosong kalau tidak
 - `GET /api/subsls?kabkota=&kecamatan=&desa=&sls=` — daftar Kode SubSLS di dalam satu SLS (keempat parameter wajib)
 - `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — batas SubSLS sebagai GeoJSON FeatureCollection, dari PostGIS. `kabkota`, `kecamatan` dan `desa` **wajib**; `sls` dan `subsls` opsional dan hanya mempersempit. Yang dikembalikan adalah semua SubSLS yang `idsubsls`-nya berawalan kode gabungan itu — satu desa bisa ratusan polygon (maksimal terukur 164), satu SubSLS tepat satu. Cakupan lebih luas dari desa ditolak 400. Tiap feature membawa `properties.idsubsls`. Tanpa PostGIS terkonfigurasi, endpoint ini menjawab 503 dan petanya tetap jalan tanpa overlay
-- `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `keberadaan_bku`, `status`, `penggunaan_bangunan`, `assignment_id`, `ada_assignment_baru`, `ada_regsosek`, `assignment_id_baru`, `non_respon` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`, `penggunaanBangunan`, `keberadaanBku`) semuanya opsional, **multi-nilai**, dan independen dari filter wilayah maupun satu sama lain — ulangi parameternya untuk tiap nilai (`?status=OPEN&status=DRAFT`), yang jadi satu `IN (...)`; nilainya divalidasi terhadap enum tetap di `internal/points/points.go` dan satu nilai tak dikenal menolak seluruh request dengan 400; pakai `__EMPTY__` untuk memfilter kolom yang kosong, boleh digabung dengan nilai biasa. `flagBaru`, `flagRegsosek` dan `nonRespon` hanya menerima `""` (semua), `"1"` (ada) atau `"0"` (tidak ada) — nilai lain ditolak 400
-- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&sortBy=&dir=&split=` — PDF "Daftar Hasil Pendataan". Minimal `kabkota` (lebih luas ditolak 400); `kecamatan`, `desa`, `sls` dan `subsls` opsional untuk mempersempit. Tanpa `kecamatan` (satu kabupaten/kota utuh) wajib ada `unlock=<token>` dari `/api/report-unlock`, kalau tidak 403 — baik untuk satu file maupun `split`. Batas baris `ReportMaxRows` sampai desa, `SplitReportMaxRows` per query di atasnya (satu kab/kota = satu query per kecamatan). Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`. `split=subsls` mengubah balasannya jadi **ZIP** (`application/zip`, `daftar-hasil-pendataan-<kode>-per-subsls.zip`) berisi satu PDF per SubSLS (pada filter satu SubSLS: ZIP berisi satu file); nilai `split` selain `subsls` → 400. Batas barisnya `SplitReportMaxRows` per kecamatan, bukan `ReportMaxRows`
-- `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&flagBaru=&flagRegsosek=&nonRespon=&search=&sortBy=&dir=&split=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf`, termasuk `split=subsls` → ZIP berisi satu .xlsx per SubSLS (lihat `prepareReport` di `internal/api/server.go` dan `handleSplitReport` di `internal/api/report_split.go`, dipakai bareng oleh kedua handler)
+- `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&prioritas=&flagBaru=&flagRegsosek=&nonRespon=&bansos=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `keberadaan_bku`, `status`, `penggunaan_bangunan`, `assignment_id`, `ada_assignment_baru`, `ada_regsosek`, `assignment_id_baru`, `non_respon`, `prioritas`, `bansos` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`, `penggunaanBangunan`, `keberadaanBku`, `prioritas`) semuanya opsional, **multi-nilai**, dan independen dari filter wilayah maupun satu sama lain — ulangi parameternya untuk tiap nilai (`?status=OPEN&status=DRAFT`), yang jadi satu `IN (...)`; nilainya divalidasi terhadap enum tetap di `internal/points/points.go` dan satu nilai tak dikenal menolak seluruh request dengan 400; pakai `__EMPTY__` untuk memfilter kolom yang kosong, boleh digabung dengan nilai biasa. `flagBaru`, `flagRegsosek`, `nonRespon` dan `bansos` hanya menerima `""` (semua), `"1"` (ada) atau `"0"` (tidak ada) — nilai lain ditolak 400
+- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&prioritas=&flagBaru=&flagRegsosek=&nonRespon=&bansos=&search=&sortBy=&dir=&split=` — PDF "Daftar Hasil Pendataan". Minimal `kabkota` (lebih luas ditolak 400); `kecamatan`, `desa`, `sls` dan `subsls` opsional untuk mempersempit. Tanpa `kecamatan` (satu kabupaten/kota utuh) wajib ada `unlock=<token>` dari `/api/report-unlock`, kalau tidak 403 — baik untuk satu file maupun `split`. Batas baris `ReportMaxRows` sampai desa, `SplitReportMaxRows` per query di atasnya (satu kab/kota = satu query per kecamatan). Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`. `split=subsls` mengubah balasannya jadi **ZIP** (`application/zip`, `daftar-hasil-pendataan-<kode>-per-subsls.zip`) berisi satu PDF per SubSLS (pada filter satu SubSLS: ZIP berisi satu file); nilai `split` selain `subsls` → 400. Batas barisnya `SplitReportMaxRows` per kecamatan, bukan `ReportMaxRows`
+- `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&prioritas=&flagBaru=&flagRegsosek=&nonRespon=&bansos=&search=&sortBy=&dir=&split=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf`, termasuk `split=subsls` → ZIP berisi satu .xlsx per SubSLS (lihat `prepareReport` di `internal/api/server.go` dan `handleSplitReport` di `internal/api/report_split.go`, dipakai bareng oleh kedua handler)
 - `GET /api/reg2022?kabkota=&kecamatan=&desa=&sls=&subsls=&matchStatus=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar Reg2022 (tabel `se2026_match_regsosek`). Filter wilayah sama dengan endpoint lain; `matchStatus` divalidasi terhadap 7 nilai tetap di `internal/regsosek/regsosek.go` (pakai `__EMPTY__` untuk kolom kosong); `search` mencari substring di `nama_prelist` dan `nama_kk` saja, lewat parameter binding — nomor KK/NIK tidak dipakai sebagai kunci cari. `sortBy` salah satu dari `nama` (default), `nama_kk`, `subsls`, `match_status`, `alamat_regsosek`, `nama_matched`, `assignment_id`
 - `GET /api/reg2022/filter-options` — daftar nilai `match_status` untuk dropdown filter menu Daftar Reg2022
 - `GET /api/reg2022/pdf?...` dan `GET /api/reg2022/xlsx?...` — laporan "Daftar Match Regsosek". Parameter filternya sama dengan `/api/reg2022`; `kabkota` dan `kecamatan` **wajib** (cakupan minimal satu kecamatan, lebih luas ditolak 400)
 - `GET /api/match-points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&...&matchStatus=&search=` — titik/cluster untuk viewport menu Peta Match Reg2022, memakai `latitude_regsosek`/`longitude_regsosek`
 - `GET /api/match-bounds?kabkota=&...&matchStatus=&search=` — extent geografis baris yang cocok dengan filter, untuk auto-zoom peta match (dihitung per request karena bergantung pada filter, bukan cuma wilayah)
 - `POST /api/report-unlock` — body JSON `{"password": "…"}`; menukar password kedua (`REPORT_KABKOTA_PASSWORD`) dengan token unduhan satu kabupaten/kota: `200 {"token": "…", "expires_in": 600}`, `403 {"error": "wrong password"}` setelah jeda 1 detik, `503` kalau password-nya tidak dikonfigurasi di server. Di balik login seperti route `/api` lainnya. Token dipakai sebagai `unlock=` pada `/api/list/pdf|xlsx?split=subsls&kabkota=…`
-- `GET /api/filter-options` — daftar nilai enum untuk dropdown filter Jenis Prelist, Keberadaan Keluarga, Status, Penggunaan Bangunan dan Keberadaan Usaha (statis, bukan query ke ClickHouse)
+- `GET /api/filter-options` — daftar nilai enum untuk dropdown filter Jenis Prelist, Keberadaan Keluarga, Status, Penggunaan Bangunan, Keberadaan Usaha dan Prioritas (statis, bukan query ke ClickHouse)
 - `GET /api/meta` — metadata dataset yang cuma ditampilkan, bukan di-query: saat ini hanya `data_updated_at` dari `DATA_UPDATED_AT` di `.env`, string kosong kalau tidak dikonfigurasi
 - `GET /healthz` — health check (ping ClickHouse); satu dari sedikit endpoint yang tidak butuh login
 - `GET /login` — halaman form login (publik)
@@ -1714,6 +1714,97 @@ PDF dibuat membungkus, juga ke **PDF** (24mm di set SubSLS, 22mm di set
 lebar, dibayar dari Catatan — lihat "Unduh PDF & Unduh Excel" di atas).
 Kalau filternya dipakai, PDF juga mencantumkannya di blok "Filter Tambahan"
 di header, jadi cakupan laporan tidak pernah ambigu.
+
+### Kolom "Prioritas" (`se2026_prioritas`)
+
+Tabel `se2026_prioritas` (`assignment_id`, `prioritas`) memberi prioritas
+pencacahan per titik. Isinya 277.383 baris, `assignment_id`-nya unik, dan
+nilainya cuma dua: **A** (164.351) dan **B** (113.032). Dibaca lewat
+dictionary `dict_prioritas` seperti dua kolom dictionary lainnya — bukan
+JOIN. Terukur pada satu halaman Daftar di desa terbesar: LEFT JOIN 30–55 ms
+melawan 19–23 ms tanpa kolomnya, dan memfilter dengan `IN (SELECT …)` 250 ms
+per query; dengan dictionary biayanya praktis nol.
+
+Titik yang tidak ada di tabel itu bernilai kosong — dan itu mayoritas:
+dari 2,2 juta baris `se2026_titik2`, hanya 277.384 yang punya prioritas.
+Kolomnya tampil "-" untuk sisanya, dan nilai kosong itu bisa difilter lewat
+opsi "(Kosong)" seperti filter atribut lain.
+
+**Yang perlu diketahui sebelum memakai filter ini di menu Peta:** dari
+277.384 baris berprioritas, **hanya 1.230 yang punya koordinat terpakai**
+(628 "A" dan 602 "B"); sisanya `latitude_ppl`/`longitude_ppl`-nya 0. Jadi
+memfilter Prioritas di **peta** memang hampir kosong — bukan bug, melainkan
+karena daftar prioritas itu sebagian besar baris prelist yang belum
+dikunjungi/belum punya titik. Di menu **Daftar** semuanya tetap tampil,
+karena daftar tidak memfilter berdasarkan validitas koordinat.
+
+Di layar ia jadi: kolom **Prioritas** di tabel Daftar (setelah Keberadaan
+Usaha, sebelum Bansos dan Status; bisa diurutkan, `sortBy=prioritas`), baris
+`Prioritas:` di tooltip titik menu Peta pada posisi yang sama, filter
+multi-pilih di **kedua** menu (parameter `prioritas`, divalidasi terhadap
+enum `prioritasValues`), serta kolom di unduhan **Excel dan PDF** — lihat
+"Kolom Prioritas & Bansos di PDF" di bawah untuk harga kolom PDF-nya.
+
+**Jebakan ClickHouse (versi 26.7.4.58).** Filter kolom dictionary **harus**
+memakai `IN (...)`, bukan `=`. Analyzer baru menulis ulang
+`dictGetString(d, a, tuple(k)) = 'A'` menjadi perbandingan **tuple kuncinya**
+dengan literal itu: hasilnya 0 baris tanpa error sama sekali (dan untuk
+nilai berbentuk UUID seperti `dict_match_tdk.aid_baru`, langsung
+`CANNOT_PARSE_INPUT_ASSERTION_FAILED`). `IN (...)` tidak kena rewrite dan
+mengembalikan baris yang benar — terbukti sama dengan `countIf` langsung
+(164.352/113.032/1.959.411). `attrClause` di `internal/points/points.go`
+karena itu selalu memakai `IN` walau nilainya cuma satu; ada komentar di
+sana supaya tidak "disederhanakan" jadi `=` di kemudian hari.
+
+### Flag "Bansos" (`se2026_bansos`)
+
+Tabel `se2026_bansos` cuma punya satu kolom, `assignment_id` — jadi yang
+dipakai memang cuma keanggotaan, persis seperti `se2026_match_regsosek`.
+Isinya 12.764 baris, semuanya unik, dan 12.754 di antaranya cocok dengan
+`se2026_titik2`. Dibaca lewat `dictHas('dict_bansos', …)`, bukan JOIN,
+dengan alasan yang sama seperti dictionary lain.
+
+Di layar ia jadi kolom **Bansos** di tabel Daftar (centang/strip, tepat
+setelah Prioritas, bisa diurutkan dengan `sortBy=bansos`), baris
+`Bansos: Ya/Tidak` di tooltip menu Peta, dropdown filter Semua/Ya/Tidak di
+**kedua** menu (parameter `bansos`, vocabulary `ParseFlag` yang sama dengan
+flag "Ditemukan di …"), kolom di unduhan **Excel dan PDF**, dan baris di
+blok "Filter Tambahan" PDF kalau filternya dipakai.
+
+Seperti Prioritas, sebagian besar barisnya tidak bisa dipetakan: dari
+12.754 baris penerima bansos hanya **3.500 yang punya koordinat terpakai**,
+jadi memfilter Bansos di menu Peta menampilkan jauh lebih sedikit titik
+daripada jumlah di menu Daftar. Itu sifat datanya, bukan filter yang salah.
+
+### Kolom Prioritas & Bansos di PDF — apa yang dikorbankan
+
+Keduanya diminta ikut ke unduhan PDF, dan tabel PDF sudah 275–276mm dari
+277mm yang tersedia di A4 landscape. Isinya sendiri cuma satu karakter
+("A"/"B", dan "V"/"-" untuk Bansos), tapi lebar kolom ditentukan oleh
+**label headernya**: "Prioritas" dan "Bansos" tidak mengandung spasi, jadi
+tidak bisa dibungkus ke dua baris, dan kolomnya harus selebar kata itu.
+Lebar minimumnya **diukur**, bukan ditebak — `SplitLines` butuh lebih
+banyak ruang daripada yang disiratkan `GetStringWidth` (11,4mm dan 10,2mm):
+hasil pengukuran 16mm untuk "Prioritas" dan 15mm untuk "Bansos", total
+31mm.
+
+31mm itu diambil dari kolom teks yang membungkus bebas — kolom itu
+kehilangan baris, bukan isi:
+
+| Kolom | Set SubSLS | Set lebar |
+|---|---|---|
+| Nama | 36 → 28mm | 32 → 25mm |
+| Alamat | 40 → 30mm | 31 → 24mm |
+| Catatan | 37 → 25mm | 30 → 22mm |
+| Keberadaan Keluarga | 30 → 29mm | 28 → 26mm |
+| ID SUBSLS | — | 26 → 24mm |
+| Status | — | 28 → 24mm |
+
+Totalnya tetap 276mm di kedua set.
+`TestHeaderLabelsWrapOnWordBoundaries` menjaga keduanya: setiap label harus
+membungkus hanya di spasi (percobaan pertama memakai 14mm/13mm dan langsung
+ketahuan jadi "Priorita/s" dan "Banso/s"), dan totalnya tidak boleh
+melebihi halaman.
 
 ### Kolom "Non Respon" (`no_banr`)
 

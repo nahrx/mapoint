@@ -13,6 +13,8 @@
   const statusMS = makeMultiSelect(document.getElementById("status-ms-list"));
   const penggunaanMS = makeMultiSelect(document.getElementById("penggunaan-ms-list"));
   const keberadaanBkuMS = makeMultiSelect(document.getElementById("keberadaanbku-ms-list"));
+  const prioritasMS = makeMultiSelect(document.getElementById("prioritas-ms-list"));
+  const bansosSelect = document.getElementById("bansos-select-list");
   const flagBaruSelect = document.getElementById("flagbaru-select-list");
   const flagRegsosekSelect = document.getElementById("flagregsosek-select-list");
   const nonResponSelect = document.getElementById("nonrespon-select-list");
@@ -67,6 +69,8 @@
   let appliedStatus = [];
   let appliedPenggunaan = [];
   let appliedKeberadaanBku = [];
+  let appliedPrioritas = [];
+  let appliedBansos = "";
   let appliedFlagBaru = "";
   let appliedFlagRegsosek = "";
   let appliedNonRespon = "";
@@ -115,6 +119,8 @@
         <td>${esc(p.penggunaan_bangunan)}</td>
         <td>${esc(p.keberadaan_keluarga)}</td>
         <td>${esc(p.keberadaan_bku)}</td>
+        <td>${esc(p.prioritas)}</td>
+        <td class="col-flag">${bansosCell(p.bansos)}</td>
         <td><span class="status-dot" style="background:${color}"></span>${esc(p.status)}</td>
         <td class="col-flag">${nonResponCell(p.non_respon)}</td>
         <td class="mono">${esc(p.assignment_id)}</td>
@@ -141,6 +147,14 @@
       : `<span class="check-no" title="Bukan non respon">&#8211;</span>`;
   }
 
+  // Same glyphs again: checked when the row's assignment_id is listed in
+  // se2026_bansos.
+  function bansosCell(yes) {
+    return yes
+      ? `<span class="check-yes" title="Penerima bansos">&#10003;</span>`
+      : `<span class="check-no" title="Bukan penerima bansos">&#8211;</span>`;
+  }
+
   function setLoading(v) {
     loadingEl.classList.toggle("hidden", !v);
   }
@@ -162,6 +176,8 @@
     for (const v of appliedStatus) params.append("status", v);
     for (const v of appliedPenggunaan) params.append("penggunaanBangunan", v);
     for (const v of appliedKeberadaanBku) params.append("keberadaanBku", v);
+    for (const v of appliedPrioritas) params.append("prioritas", v);
+    if (appliedBansos) params.set("bansos", appliedBansos);
     if (appliedFlagBaru) params.set("flagBaru", appliedFlagBaru);
     if (appliedFlagRegsosek) params.set("flagRegsosek", appliedFlagRegsosek);
     if (appliedNonRespon) params.set("nonRespon", appliedNonRespon);
@@ -214,7 +230,7 @@
     const startRow = (resp.page - 1) * resp.page_size + 1;
     tbody.innerHTML = resp.items.length
       ? resp.items.map((p, i) => rowHTML(p, startRow + i)).join("")
-      : `<tr><td colspan="15" class="empty-row">Tidak ada data yang cocok dengan filter ini.</td></tr>`;
+      : `<tr><td colspan="17" class="empty-row">Tidak ada data yang cocok dengan filter ini.</td></tr>`;
 
     appliedTotal = resp.total;
     const totalPages = Math.max(1, Math.ceil(resp.total / resp.page_size));
@@ -333,6 +349,7 @@
       statusMS.setOptions(opts.status || []);
       penggunaanMS.setOptions(opts.penggunaan_bangunan || []);
       keberadaanBkuMS.setOptions(opts.keberadaan_bku || []);
+      prioritasMS.setOptions(opts.prioritas || []);
     } catch (err) {
       console.error("failed to load filter options", err);
     }
@@ -410,6 +427,8 @@
     appliedStatus = statusMS.getValues();
     appliedPenggunaan = penggunaanMS.getValues();
     appliedKeberadaanBku = keberadaanBkuMS.getValues();
+    appliedPrioritas = prioritasMS.getValues();
+    appliedBansos = bansosSelect.value;
     appliedFlagBaru = flagBaruSelect.value;
     appliedFlagRegsosek = flagRegsosekSelect.value;
     appliedNonRespon = nonResponSelect.value;
@@ -439,6 +458,8 @@
       penggunaanBangunan: penggunaanMS.getValues(),
       keberadaanKeluarga: keberadaanKeluargaMS.getValues(),
       keberadaanBku: keberadaanBkuMS.getValues(),
+      prioritas: prioritasMS.getValues(),
+      bansos: bansosSelect.value,
       status: statusMS.getValues(),
       flagBaru: flagBaruSelect.value,
       flagRegsosek: flagRegsosekSelect.value,
@@ -475,6 +496,8 @@
     penggunaanMS.setValues(f.penggunaanBangunan);
     keberadaanKeluargaMS.setValues(f.keberadaanKeluarga);
     keberadaanBkuMS.setValues(f.keberadaanBku);
+    prioritasMS.setValues(f.prioritas);
+    bansosSelect.value = f.bansos || "";
     statusMS.setValues(f.status);
     flagBaruSelect.value = f.flagBaru || "";
     flagRegsosekSelect.value = f.flagRegsosek || "";

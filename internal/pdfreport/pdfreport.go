@@ -43,23 +43,38 @@ var (
 	// Keluarga (34 -> 30): Catatan is the one column that wraps freely
 	// without losing anything, and the longest Keberadaan Usaha value
 	// ("7. Data diperoleh dari Kantor Pusat (KP)") wraps to two lines at
-	// 24mm, which the row height already accounts for. Nomor Bangunan and
+	// 24mm, which the row height already accounts for.
+	//
+	// Prioritas and Bansos hold one character each ("A"/"B", "V"/"-"), but
+	// their width is set by the header word: neither label contains a
+	// space, so it cannot wrap, and the column has to be at least as wide
+	// as the word plus the cell padding (measured at Arial Bold 8:
+	// SplitLines needs 16mm for "Prioritas" and 15mm for "Bansos" — a bit
+	// more than GetStringWidth suggests, which is why the minimum is
+	// measured rather than guessed). The 31mm the two of them cost came
+	// out of the free-wrapping text columns — Nama 36 -> 28, Alamat
+	// 40 -> 30, Catatan 37 -> 25, Keberadaan Keluarga 30 -> 29 — which
+	// lose lines, not content.
+	//
+	// Nomor Bangunan and
 	// Regsosek are 18mm because that is the narrowest column in which
 	// SplitLines keeps "Bangunan" / "Regsosek" whole (see
 	// TestHeaderLabelsWrapOnWordBoundaries) — at 17mm the header would
 	// have read "Regsose / k".
 	subslsColumns = []column{
 		{"No", 8},
-		{"Nama", 36},
-		{"Alamat", 40},
+		{"Nama", 28},
+		{"Alamat", 30},
 		{"Nomor Bangunan", 18},
 		{"Jenis Prelist", 18},
-		{"Keberadaan Keluarga", 30},
+		{"Keberadaan Keluarga", 29},
 		{"Keberadaan Usaha", 24},
+		{"Prioritas", 16},
+		{"Bansos", 15},
 		{"Status", 30},
 		{"Ass. Baru", 17},
 		{"Regsosek", 18},
-		{"Catatan", 37},
+		{"Catatan", 25},
 	}
 
 	// wideColumns is used for anything broader than one SubSLS (a whole
@@ -68,20 +83,25 @@ var (
 	// tell you which SubSLS a given row belongs to. Total: 275mm. Same
 	// trade as above for Keberadaan Usaha: Catatan 52 -> 30, Keberadaan
 	// Keluarga 30 -> 28, Alamat 33 -> 31, with Nomor Bangunan and Regsosek
-	// widened to 18mm for the same whole-word reason.
+	// widened to 18mm for the same whole-word reason. Prioritas and Bansos
+	// cost 31mm here too, spread over more columns because this set has no
+	// spare millimetres: Nama 32 -> 25, Alamat 31 -> 24, Catatan 30 -> 22,
+	// ID SUBSLS 26 -> 24, Keberadaan Keluarga 28 -> 26, Status 28 -> 24.
 	wideColumns = []column{
 		{"No", 8},
-		{"Nama", 32},
-		{"Alamat", 31},
-		{"ID SUBSLS", 26},
+		{"Nama", 25},
+		{"Alamat", 24},
+		{"ID SUBSLS", 24},
 		{"Nomor Bangunan", 18},
 		{"Jenis Prelist", 17},
-		{"Keberadaan Keluarga", 28},
+		{"Keberadaan Keluarga", 26},
 		{"Keberadaan Usaha", 22},
-		{"Status", 28},
+		{"Prioritas", 16},
+		{"Bansos", 15},
+		{"Status", 24},
 		{"Ass. Baru", 17},
 		{"Regsosek", 18},
-		{"Catatan", 30},
+		{"Catatan", 22},
 	}
 )
 
@@ -119,6 +139,8 @@ func rowFor(region Region, no int, p points.Point) []string {
 			report.DashIfEmpty(p.JenisPrelist),
 			report.DashIfEmpty(p.KeberadaanKeluarga),
 			report.DashIfEmpty(p.KeberadaanBKU),
+			report.DashIfEmpty(p.Prioritas),
+			flagMark(p.Bansos),
 			report.DashIfEmpty(p.Status),
 			flagMark(p.AdaAssignmentBaru),
 			flagMark(p.AdaRegsosek),
@@ -134,6 +156,8 @@ func rowFor(region Region, no int, p points.Point) []string {
 		report.DashIfEmpty(p.JenisPrelist),
 		report.DashIfEmpty(p.KeberadaanKeluarga),
 		report.DashIfEmpty(p.KeberadaanBKU),
+		report.DashIfEmpty(p.Prioritas),
+		flagMark(p.Bansos),
 		report.DashIfEmpty(p.Status),
 		flagMark(p.AdaAssignmentBaru),
 		flagMark(p.AdaRegsosek),

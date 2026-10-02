@@ -23,8 +23,10 @@ const (
 	// matchTable and regsosekTable are the sources the two dictionaries are
 	// built from (see sql/dictionaries.sql). Queries never read them
 	// directly any more — they go through dictHas/dictGetString instead.
-	matchTable    = "se2026_match"
-	regsosekTable = "se2026_match_regsosek"
+	matchTable     = "se2026_match"
+	regsosekTable  = "se2026_match_regsosek"
+	prioritasTable = "se2026_prioritas"
+	bansosTable    = "se2026_bansos"
 
 	// IndividualLimit is the max rows returned as raw points for one
 	// request. Below this the viewport is "sparse" and every point is
@@ -172,6 +174,12 @@ var (
 	// (5 and 6 are absent from the data). Blank on 68.5% of rows, by far
 	// the most common value, but not listed here: like every other
 	// attribute filter it reaches the filter as EmptyValue.
+	// prioritas from se2026_prioritas, via dict_prioritas. Only these two
+	// values exist in the source (164.351 "A", 113.032 "B"); rows with no
+	// entry there are blank and reached through the "(Kosong)" option like
+	// every other attribute filter.
+	prioritasValues = []string{"A", "B"}
+
 	keberadaanBKUValues = []string{
 		"0. Tidak Ditemukan",
 		"1. Ditemukan",
@@ -207,6 +215,7 @@ type FilterOptions struct {
 	Status             []string `json:"status"`
 	PenggunaanBangunan []string `json:"penggunaan_bangunan"`
 	KeberadaanBKU      []string `json:"keberadaan_bku"`
+	Prioritas          []string `json:"prioritas"`
 }
 
 // GetFilterOptions returns the attribute filter dropdown choices.
@@ -217,6 +226,7 @@ func GetFilterOptions() FilterOptions {
 		Status:             statusValues,
 		PenggunaanBangunan: penggunaanBangunanValues,
 		KeberadaanBKU:      keberadaanBKUValues,
+		Prioritas:          prioritasValues,
 	}
 }
 
@@ -238,8 +248,10 @@ func GetFilterOptions() FilterOptions {
 // database, exactly like `table` above — DATABASE in .env stays the single
 // place that decides which database is used.
 const (
-	matchDict    = "dict_match_tdk"
-	regsosekDict = "dict_regsosek_key"
+	matchDict     = "dict_match_tdk"
+	regsosekDict  = "dict_regsosek_key"
+	prioritasDict = "dict_prioritas"
+	bansosDict    = "dict_bansos"
 )
 
 // dictHasExpr tests membership; dictGetBaruExpr reads the matched row's
@@ -258,6 +270,14 @@ func dictGetBaruExpr(col string) string {
 	return fmt.Sprintf("dictGetString('%s', 'aid_baru', tuple(%s))", matchDict, col)
 }
 
+// dictGetPrioritasExpr reads the enumeration priority for a row's
+// assignment_id — "A" or "B" in the data today, "" for the 1.96M of 2.19M
+// rows that have no entry in se2026_prioritas at all (the dictionary's
+// DEFAULT ”), which reads as an ordinary blank column everywhere.
+func dictGetPrioritasExpr(col string) string {
+	return fmt.Sprintf("dictGetString('%s', 'prioritas', tuple(%s))", prioritasDict, col)
+}
+
 // dictionarySources pairs each dictionary with the table it is built from,
 // so CheckDictionaries can say which one is missing and where it comes
 // from. A slice rather than a map so the order of any startup complaint is
@@ -265,6 +285,8 @@ func dictGetBaruExpr(col string) string {
 var dictionarySources = []struct{ dict, source string }{
 	{matchDict, matchTable},
 	{regsosekDict, regsosekTable},
+	{prioritasDict, prioritasTable},
+	{bansosDict, bansosTable},
 }
 
 // CheckDictionaries probes every dictionary the query layer depends on.
@@ -406,6 +428,12 @@ func ParsePenggunaanBangunan(raw []string) ([]string, error) {
 	return parseEnumFilter(raw, penggunaanBangunanValues)
 }
 
+// ParsePrioritas validates the Prioritas filter values against the closed
+// set in se2026_prioritas.
+func ParsePrioritas(raw []string) ([]string, error) {
+	return parseEnumFilter(raw, prioritasValues)
+}
+
 // ParseKeberadaanBKU validates the Keberadaan Usaha filter values
 // (keberadaan_BKU in the table).
 func ParseKeberadaanBKU(raw []string) ([]string, error) {
@@ -434,12 +462,19 @@ type Filter struct {
 	Status             []string
 	PenggunaanBangunan []string
 	KeberadaanBKU      []string
+	// Prioritas filters on the dictionary-resolved priority rather than a
+	// column of se2026_titik2 — see dictGetPrioritasExpr.
+	Prioritas []string
 
 	// NonRespon filters on whether no_banr is filled: FlagYes keeps only
 	// rows with a BANR reference (non-response cases), FlagNo only rows
 	// without one, "" leaves the filter off. Validated by ParseFlag, the
 	// same Ya/Tidak vocabulary as the two membership flags.
 	NonRespon string
+
+	// Bansos filters on membership of se2026_bansos — same Ya/Tidak
+	// vocabulary as the two flags below, validated by ParseFlag.
+	Bansos string
 
 	// FlagBaru and FlagRegsosek filter on the two membership flags:
 	// FlagYes keeps only rows found in that table, FlagNo only rows not
@@ -524,6 +559,9 @@ func (f Filter) clause() (string, []any) {
 	if len(f.KeberadaanBKU) > 0 {
 		parts = append(parts, attrClause("keberadaan_BKU", f.KeberadaanBKU))
 	}
+	if len(f.Prioritas) > 0 {
+		parts = append(parts, attrClause(dictGetPrioritasExpr("assignment_id"), f.Prioritas))
+	}
 	// Both are dictionary lookups now, so they no longer carry a per-query
 	// set build — the fragment is still only added when the filter is on,
 	// simply because an absent filter has nothing to say.
@@ -535,6 +573,9 @@ func (f Filter) clause() (string, []any) {
 	}
 	if f.NonRespon != "" {
 		parts = append(parts, nonResponClause(f.NonRespon))
+	}
+	if f.Bansos != "" {
+		parts = append(parts, flagClause(bansosDict, f.Bansos))
 	}
 	if f.Search != "" {
 		// positionCaseInsensitive is a plain substring search, not a LIKE
@@ -559,6 +600,13 @@ func (f Filter) clause() (string, []any) {
 // EmptyValue becomes a literal ” inside the same list rather than a
 // separate OR: "blank" is just another value the column can hold, so
 // "(Kosong)" combines with real picks for free.
+// IN is used even for a single value, and must stay that way for the
+// dictionary-backed columns (see dictGetPrioritasExpr). On ClickHouse
+// 26.7.4.58 the analyzer rewrites "dictGetString(d, a, tuple(k)) = 'X'"
+// into a comparison of the KEY TUPLE against the literal: the Prioritas
+// filter silently matched 0 rows that way, and the same shape over
+// dict_match_tdk's UUID values throws CANNOT_PARSE_INPUT_ASSERTION_FAILED
+// outright. IN (...) is not rewritten and returns the right rows.
 func attrClause(col string, vals []string) string {
 	quoted := make([]string, len(vals))
 	for i, v := range vals {
@@ -625,6 +673,12 @@ type Point struct {
 	// as a checkmark column in the Daftar table and a tooltip line on the
 	// map; the BANR reference itself is not surfaced.
 	NonRespon bool `json:"non_respon"`
+	// Prioritas is "A"/"B" from se2026_prioritas, or "" when that row has
+	// no entry there — see dictGetPrioritasExpr.
+	Prioritas string `json:"prioritas"`
+	// Bansos is true when the row's assignment_id is listed in
+	// se2026_bansos — a membership flag like AdaRegsosek, not a value.
+	Bansos bool `json:"bansos"`
 	// AssignmentIDBaru is se2026_match.assignment_id_baru for this row, or
 	// "" when there is none. Only populated by the Daftar list path —
 	// /api/points doesn't select it, so it is omitted from the map payload
@@ -794,11 +848,12 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 		jumlah_usaha, nomor_bangunan, keberadaan_keluarga, keberadaan_BKU,
 		assignment_status_alias,
 		latitude_ppl, longitude_ppl,
-		%s, %s, %s
+		%s, %s, %s, %s, %s
 	FROM %s
 	WHERE %s AND %s AND %s
 	LIMIT %d`,
 		dictHasExpr(matchDict, "assignment_id"), dictHasExpr(regsosekDict, "assignment_id"), nonResponExpr,
+		dictGetPrioritasExpr("assignment_id"), dictHasExpr(bansosDict, "assignment_id"),
 		table, validCoords, bboxClause(b), where, IndividualLimit)
 
 	rows, err := s.conn.Query(ctx, q, args...)
@@ -812,19 +867,20 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 		var p Point
 		// ClickHouse types an IN expression as UInt8, which the driver
 		// won't scan straight into a bool — hence the two temporaries.
-		var adaBaru, adaRegsosek, nonRespon uint8
+		var adaBaru, adaRegsosek, nonRespon, bansos uint8
 		if err := rows.Scan(
 			&p.AssignmentID, &p.Nama, &p.Alamat, &p.SubSLS, &p.JenisPrelist,
 			&p.PenggunaanBangunan,
 			&p.KeberadaanUsaha, &p.NomorBangunan, &p.KeberadaanKeluarga,
 			&p.KeberadaanBKU, &p.Status,
-			&p.Lat, &p.Lon, &adaBaru, &adaRegsosek, &nonRespon,
+			&p.Lat, &p.Lon, &adaBaru, &adaRegsosek, &nonRespon, &p.Prioritas, &bansos,
 		); err != nil {
 			return nil, err
 		}
 		p.AdaAssignmentBaru = adaBaru == 1
 		p.AdaRegsosek = adaRegsosek == 1
 		p.NonRespon = nonRespon == 1
+		p.Bansos = bansos == 1
 		pts = append(pts, p)
 	}
 	return pts, rows.Err()
@@ -1307,6 +1363,8 @@ var listSortColumns = map[string]string{
 	"ada_regsosek":        dictHasExpr(regsosekDict, "assignment_id"),
 	"assignment_id_baru":  dictGetBaruExpr("assignment_id"),
 	"non_respon":          nonResponExpr,
+	"prioritas":           dictGetPrioritasExpr("assignment_id"),
+	"bansos":              dictHasExpr(bansosDict, "assignment_id"),
 }
 
 // DefaultSortColumn is used by ParseSortColumn when sortBy is empty or not
@@ -1447,11 +1505,13 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 	// 19ms without these columns at all, and read_rows stays at the left
 	// side's own 57,344 — the dictionaries are already in memory, so
 	// neither source table is touched.
-	cols += fmt.Sprintf(", %s, %s, %s, %s",
+	cols += fmt.Sprintf(", %s, %s, %s, %s, %s, %s",
 		dictHasExpr(matchDict, "assignment_id"),
 		dictHasExpr(regsosekDict, "assignment_id"),
 		dictGetBaruExpr("assignment_id"),
-		nonResponExpr)
+		nonResponExpr,
+		dictGetPrioritasExpr("assignment_id"),
+		dictHasExpr(bansosDict, "assignment_id"))
 	where, args := filter.clause()
 	q := fmt.Sprintf(`SELECT
 		%s
@@ -1481,14 +1541,15 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 		}
 		// UInt8 in ClickHouse, bool in Point — same as queryPoints.
 		// dictHas returns UInt8, so a miss scans as 0.
-		var adaBaru, adaRegsosek, nonRespon uint8
-		dest = append(dest, &adaBaru, &adaRegsosek, &p.AssignmentIDBaru, &nonRespon)
+		var adaBaru, adaRegsosek, nonRespon, bansos uint8
+		dest = append(dest, &adaBaru, &adaRegsosek, &p.AssignmentIDBaru, &nonRespon, &p.Prioritas, &bansos)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
 		p.AdaAssignmentBaru = adaBaru == 1
 		p.AdaRegsosek = adaRegsosek == 1
 		p.NonRespon = nonRespon == 1
+		p.Bansos = bansos == 1
 		items = append(items, p)
 	}
 	return items, rows.Err()

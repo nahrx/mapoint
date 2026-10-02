@@ -1,7 +1,8 @@
 -- Dictionary yang dipakai kolom "Ditemukan di Assignment Baru", "Ditemukan
--- di Regsosek", dan "Assignment ID Baru" di menu Daftar & Peta.
+-- di Regsosek", "Assignment ID Baru", "Prioritas", dan "Bansos" di menu
+-- Daftar & Peta.
 --
--- Aplikasi MEMBUTUHKAN kedua dictionary ini: tanpa mereka setiap query
+-- Aplikasi MEMBUTUHKAN keempat dictionary ini: tanpa mereka setiap query
 -- /api/list dan /api/points gagal. Jalankan file ini terhadap database yang
 -- sama dengan DATABASE di .env, mis:
 --
@@ -67,11 +68,49 @@ $$))
 LAYOUT(COMPLEX_KEY_HASHED())
 LIFETIME(MIN 300 MAX 600);
 
--- Cek setelah dibuat: status kedua baris harus LOADED.
+-- Prioritas pencacahan per assignment_id ("A"/"B" di data saat ini).
+-- assignment_id di tabel sumber unik (277.383 baris, 277.383 kunci), jadi
+-- tidak perlu GROUP BY seperti dua dictionary di atas; kalau suatu saat
+-- jadi tidak unik, dictionary-nya memakai baris yang terakhir dimuat.
+-- Tidak semua titik punya prioritas: 277.384 dari 2,19 juta baris
+-- se2026_titik2 yang cocok, sisanya dictGetString mengembalikan "" (default
+-- di bawah), yang di layar jadi "-" seperti kolom kosong lainnya.
+CREATE OR REPLACE DICTIONARY dict_prioritas
+(
+    assignment_id String,
+    prioritas String DEFAULT ''
+)
+PRIMARY KEY assignment_id
+SOURCE(CLICKHOUSE(QUERY '
+    SELECT assignment_id, prioritas
+    FROM dtsen.se2026_prioritas
+'))
+LAYOUT(COMPLEX_KEY_HASHED())
+LIFETIME(MIN 300 MAX 600);
+
+-- Keanggotaan penerima bansos. Seperti dict_regsosek_key, yang dipakai cuma
+-- "ada atau tidak" — tabel sumbernya memang cuma satu kolom assignment_id
+-- (12.764 baris, semuanya unik, 12.754 di antaranya cocok dengan
+-- se2026_titik2).
+CREATE OR REPLACE DICTIONARY dict_bansos
+(
+    assignment_id String,
+    ada UInt8
+)
+PRIMARY KEY assignment_id
+SOURCE(CLICKHOUSE(QUERY '
+    SELECT assignment_id, toUInt8(1) AS ada
+    FROM dtsen.se2026_bansos
+    GROUP BY assignment_id
+'))
+LAYOUT(COMPLEX_KEY_HASHED())
+LIFETIME(MIN 300 MAX 600);
+
+-- Cek setelah dibuat: status keempat baris harus LOADED.
 --   SELECT name, status, element_count, formatReadableSize(bytes_allocated),
 --          last_exception
 --   FROM system.dictionaries
---   WHERE name IN ('dict_regsosek_key', 'dict_match_tdk');
+--   WHERE name IN ('dict_regsosek_key', 'dict_match_tdk', 'dict_prioritas', 'dict_bansos');
 --
 -- Ukuran saat ditulis: 166.505 kunci / 24 MiB dan 88.636 kunci / 34 MiB,
 -- masing-masing dimuat dalam <0,5 detik.

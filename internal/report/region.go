@@ -36,6 +36,7 @@ type Region struct {
 	Status             []string
 	PenggunaanBangunan []string
 	KeberadaanBKU      []string
+	Prioritas          []string
 	Search             string
 
 	// FlagBaru and FlagRegsosek are the raw points.FlagYes/FlagNo values of
@@ -45,6 +46,8 @@ type Region struct {
 	FlagRegsosek string
 	// NonRespon is the Non Respon filter's raw value, same vocabulary.
 	NonRespon string
+	// Bansos is the Bansos membership filter's raw value, same vocabulary.
+	Bansos string
 }
 
 // FlagLabel renders one of the two membership filter values for a report
@@ -126,6 +129,9 @@ func (r Region) ExtraFilters() [][2]string {
 	if len(r.KeberadaanBKU) > 0 {
 		extra = append(extra, [2]string{"Keberadaan Usaha", AttrLabels(r.KeberadaanBKU)})
 	}
+	if len(r.Prioritas) > 0 {
+		extra = append(extra, [2]string{"Prioritas", AttrLabels(r.Prioritas)})
+	}
 	if r.Search != "" {
 		extra = append(extra, [2]string{"Cari Nama", r.Search})
 	}
@@ -137,6 +143,9 @@ func (r Region) ExtraFilters() [][2]string {
 	}
 	if lbl := FlagLabel(r.NonRespon); lbl != "" {
 		extra = append(extra, [2]string{"Non Respon", lbl})
+	}
+	if lbl := FlagLabel(r.Bansos); lbl != "" {
+		extra = append(extra, [2]string{"Bansos", lbl})
 	}
 	return extra
 }

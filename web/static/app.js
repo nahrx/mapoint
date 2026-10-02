@@ -303,6 +303,8 @@
   let appliedStatus = [];
   let appliedPenggunaan = [];
   let appliedKeberadaanBku = [];
+  let appliedPrioritas = [];
+  let appliedBansos = "";
   let appliedNonRespon = "";
 
   // --- status labels -------------------------------------------------
@@ -336,6 +338,8 @@
   const statusMS = makeMultiSelect(document.getElementById("status-ms-peta"));
   const penggunaanMS = makeMultiSelect(document.getElementById("penggunaan-ms-peta"));
   const keberadaanBkuMS = makeMultiSelect(document.getElementById("keberadaanbku-ms-peta"));
+  const prioritasMS = makeMultiSelect(document.getElementById("prioritas-ms-peta"));
+  const bansosSelect = document.getElementById("bansos-select");
 
   function tooltipHTML(p) {
     return `
@@ -349,6 +353,8 @@
         <div><b>Nomor Bangunan:</b> ${esc(p.nomor_bangunan)}</div>
         <div><b>Keberadaan Keluarga:</b> ${esc(p.keberadaan_keluarga)}</div>
         <div><b>Keberadaan Usaha:</b> ${esc(p.keberadaan_bku)}</div>
+        <div><b>Prioritas:</b> ${esc(p.prioritas)}</div>
+        <div><b>Bansos:</b> ${p.bansos ? "Ya" : "Tidak"}</div>
         <div><b>Status:</b> ${esc(p.status)}</div>
         <div><b>Ditemukan di Assignment Baru:</b> ${flagText(p.ada_assignment_baru)}</div>
         <div><b>Ditemukan di Regsosek:</b> ${flagText(p.ada_regsosek)}</div>
@@ -456,6 +462,8 @@
     for (const v of appliedStatus) params.append("status", v);
     for (const v of appliedPenggunaan) params.append("penggunaanBangunan", v);
     for (const v of appliedKeberadaanBku) params.append("keberadaanBku", v);
+    for (const v of appliedPrioritas) params.append("prioritas", v);
+    if (appliedBansos) params.set("bansos", appliedBansos);
     return params;
   }
 
@@ -571,6 +579,8 @@
     attrLine(lines, "Status", appliedStatus);
     attrLine(lines, "Penggunaan Bangunan", appliedPenggunaan);
     attrLine(lines, "Keberadaan Usaha", appliedKeberadaanBku);
+    attrLine(lines, "Prioritas", appliedPrioritas);
+    if (appliedBansos) lines.push(`Bansos: ${appliedBansos === "1" ? "hanya penerima bansos" : "hanya yang bukan penerima bansos"}`);
     if (appliedSearch) lines.push(`Cari nama: "${appliedSearch}"`);
     if (appliedNonRespon) lines.push(`Non respon: ${appliedNonRespon === "1" ? "hanya yang non respon" : "hanya yang bukan non respon"}`);
     return lines;
@@ -744,6 +754,8 @@
     appliedStatus = statusMS.getValues();
     appliedPenggunaan = penggunaanMS.getValues();
     appliedKeberadaanBku = keberadaanBkuMS.getValues();
+    appliedPrioritas = prioritasMS.getValues();
+    appliedBansos = bansosSelect.value;
     appliedNonRespon = nonResponSelect.value;
     appliedSearch = searchInput.value.trim();
 
@@ -1133,6 +1145,8 @@
       penggunaanBangunan: penggunaanMS.getValues(),
       keberadaanKeluarga: keberadaanKeluargaMS.getValues(),
       keberadaanBku: keberadaanBkuMS.getValues(),
+      prioritas: prioritasMS.getValues(),
+      bansos: bansosSelect.value,
       status: statusMS.getValues(),
       nonRespon: nonResponSelect.value,
     };
@@ -1167,6 +1181,8 @@
     penggunaanMS.setValues(f.penggunaanBangunan);
     keberadaanKeluargaMS.setValues(f.keberadaanKeluarga);
     keberadaanBkuMS.setValues(f.keberadaanBku);
+    prioritasMS.setValues(f.prioritas);
+    bansosSelect.value = f.bansos || "";
     statusMS.setValues(f.status);
     nonResponSelect.value = f.nonRespon || "";
 
@@ -1260,6 +1276,7 @@
       statusMS.setOptions(opts.status || []);
       penggunaanMS.setOptions(opts.penggunaan_bangunan || []);
       keberadaanBkuMS.setOptions(opts.keberadaan_bku || []);
+      prioritasMS.setOptions(opts.prioritas || []);
     } catch (err) {
       console.error("failed to load filter options", err);
     }

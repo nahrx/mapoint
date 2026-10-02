@@ -99,6 +99,19 @@
                  data-placeholder="Semua Keberadaan Usaha" data-labelledby="keberadaanbku-label-peta"></div>
           </div>
           <div class="filter-row">
+            <span class="filter-label" id="prioritas-label-peta">Prioritas:</span>
+            <div class="multiselect" id="prioritas-ms-peta"
+                 data-placeholder="Semua Prioritas" data-labelledby="prioritas-label-peta"></div>
+          </div>
+          <div class="filter-row">
+            <label for="bansos-select">Bansos:</label>
+            <select id="bansos-select">
+              <option value="">Semua</option>
+              <option value="1">Ya</option>
+              <option value="0">Tidak</option>
+            </select>
+          </div>
+          <div class="filter-row">
             <span class="filter-label" id="status-label-peta">Status:</span>
             <div class="multiselect" id="status-ms-peta"
                  data-placeholder="Semua Status" data-labelledby="status-label-peta"></div>
@@ -235,6 +248,19 @@
                  data-placeholder="Semua Keberadaan Usaha" data-labelledby="keberadaanbku-label-list"></div>
           </div>
           <div class="filter-row">
+            <span class="filter-label" id="prioritas-label-list">Prioritas:</span>
+            <div class="multiselect" id="prioritas-ms-list"
+                 data-placeholder="Semua Prioritas" data-labelledby="prioritas-label-list"></div>
+          </div>
+          <div class="filter-row">
+            <label for="bansos-select-list">Bansos:</label>
+            <select id="bansos-select-list">
+              <option value="">Semua</option>
+              <option value="1">Ya</option>
+              <option value="0">Tidak</option>
+            </select>
+          </div>
+          <div class="filter-row">
             <span class="filter-label" id="status-label-list">Status:</span>
             <div class="multiselect" id="status-ms-list"
                  data-placeholder="Semua Status" data-labelledby="status-label-list"></div>
@@ -349,6 +375,8 @@
               <th class="sortable" data-sort="penggunaan_bangunan">Penggunaan Bangunan<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="keberadaan_keluarga">Keberadaan Keluarga<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="keberadaan_bku">Keberadaan Usaha<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="prioritas">Prioritas<span class="sort-arrow"></span></th>
+              <th class="sortable col-flag" data-sort="bansos">Bansos<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="status">Status<span class="sort-arrow"></span></th>
               <th class="sortable col-flag" data-sort="non_respon">Non Respon<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="assignment_id">Assignment ID<span class="sort-arrow"></span></th>
