@@ -33,8 +33,11 @@ import (
 type reportPlan struct {
 	scope  reportScope
 	region report.Region
-	units  []points.Filter // one filter per query, in output order
-	first  []points.Point  // rows of units[0], fetched up front
+	// names fills the wilayah names in region, and in the narrowed region
+	// of every file of a per-SubSLS ZIP. nil when PostGIS isn't configured.
+	names *wilayahNameIndex
+	units []points.Filter // one filter per query, in output order
+	first []points.Point  // rows of units[0], fetched up front
 	// total is the row count for the report header. Exact for a single
 	// unit (len(first)); a count query for a kabupaten/kota, made before
 	// any row is rendered.
@@ -55,6 +58,10 @@ func (s *Server) planReport(w http.ResponseWriter, r *http.Request, q url.Values
 	}
 	p := &reportPlan{scope: scope, region: regionFor(scope.filter), units: []points.Filter{scope.filter}}
 	ctx := r.Context()
+	// Names for the header's "Keterangan Wilayah" block; kept on the plan
+	// because the per-SubSLS ZIP needs them again for every file it writes.
+	p.names = s.wilayahNameIndexFor(ctx)
+	p.names.apply(&p.region)
 
 	if scope.filter.Kecamatan == "" {
 		kecs, err := s.svc.KecamatanList(ctx, scope.filter.KabKota)

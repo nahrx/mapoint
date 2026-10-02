@@ -28,6 +28,15 @@ type Region struct {
 	SLS         string
 	SubSLS      string
 
+	// KecamatanName, DesaName and SLSName come from the PostGIS polygon
+	// layer (see wilayahNameIndex in internal/api) and are "" when that
+	// layer isn't configured, or has no row for this code. WilayahRows
+	// then prints the bare code, which is what every report showed before
+	// names were available — a missing name never hides the code.
+	KecamatanName string
+	DesaName      string
+	SLSName       string
+
 	// JenisPrelist, KeberadaanKeluarga and Status are multi-select: each
 	// holds every value the user picked, or is empty when that filter is
 	// off. Rendered as one comma-separated line by AttrLabels.
@@ -91,14 +100,24 @@ func (r Region) WilayahRows(total int) [][2]string {
 		codeLabel = "Kode Wilayah (ID SUBSLS)"
 	}
 	return [][2]string{
-		{"Kabupaten/Kota", fmt.Sprintf("%s (%s)", r.KabKotaName, r.KabKotaCode)},
-		{"Kecamatan", r.Kecamatan},
-		{"Desa/Kelurahan", r.Desa},
-		{"SLS", allIfEmpty(r.SLS)},
+		{"Kabupaten/Kota", named(r.KabKotaName, r.KabKotaCode)},
+		{"Kecamatan", named(r.KecamatanName, r.Kecamatan)},
+		{"Desa/Kelurahan", named(r.DesaName, r.Desa)},
+		{"SLS", allIfEmpty(named(r.SLSName, r.SLS))},
 		{"SubSLS", allIfEmpty(r.SubSLS)},
 		{codeLabel, r.FullCode()},
 		{"Jumlah Data", strconv.Itoa(total)},
 	}
+}
+
+// named renders "NAMA (kode)" — the shape Kabupaten/Kota always had — and
+// falls back to the bare code when the name is unknown. An empty code
+// stays empty so allIfEmpty can still turn it into "(Semua)".
+func named(name, code string) string {
+	if code == "" || name == "" {
+		return code
+	}
+	return fmt.Sprintf("%s (%s)", name, code)
 }
 
 func allIfEmpty(s string) string {

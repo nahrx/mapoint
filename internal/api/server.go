@@ -877,6 +877,86 @@ func (s *Server) fillTabulasiNames(ctx context.Context, rows []points.TabulasiRo
 	applyWilayahNames(rows, s.wilayahNameMap(ctx))
 }
 
+// wilayahNameIndex answers "what is this code called" for the three levels
+// a report header names. The polygon layer is keyed by 14-digit idsls, so
+// the kecamatan and desa names are indexed by their own prefixes once when
+// the table loads — a report (and, for the per-SubSLS ZIP, every one of
+// its thousands of files) then costs a map lookup instead of a scan over
+// 14k entries.
+//
+// Checked against the live layer: 17,039 rows / 14,332 SLS / 1,055 desa /
+// 105 kecamatan, no blank name at any level, and no desa prefix carrying
+// two different desa names — so first-one-wins below is not a coin toss.
+type wilayahNameIndex struct {
+	bySLS       map[string]mapdb.WilayahNames // 14-digit idsls
+	byDesa      map[string]mapdb.WilayahNames // 10-digit prefix
+	byKecamatan map[string]string             // 7-digit prefix
+}
+
+func newWilayahNameIndex(names map[string]mapdb.WilayahNames) *wilayahNameIndex {
+	idx := &wilayahNameIndex{
+		bySLS:       names,
+		byDesa:      make(map[string]mapdb.WilayahNames, 1200),
+		byKecamatan: make(map[string]string, 128),
+	}
+	for code, n := range names {
+		if len(code) < 10 {
+			continue
+		}
+		if _, ok := idx.byDesa[code[:10]]; !ok {
+			idx.byDesa[code[:10]] = n
+		}
+		if _, ok := idx.byKecamatan[code[:7]]; !ok {
+			idx.byKecamatan[code[:7]] = n.Kecamatan
+		}
+	}
+	return idx
+}
+
+// apply fills in whichever of the three names the region's codes reach. A
+// nil index (PostGIS not configured) leaves every name empty, and
+// WilayahRows then prints bare codes.
+func (idx *wilayahNameIndex) apply(r *report.Region) {
+	if idx == nil || r.KabKotaCode == "" {
+		return
+	}
+	if r.Kecamatan != "" {
+		r.KecamatanName = idx.byKecamatan[r.KabKotaCode+r.Kecamatan]
+	}
+	if r.Desa != "" {
+		if n, ok := idx.byDesa[r.KabKotaCode+r.Kecamatan+r.Desa]; ok {
+			r.DesaName = n.Desa
+			if r.KecamatanName == "" {
+				r.KecamatanName = n.Kecamatan
+			}
+		}
+	}
+	if r.SLS != "" {
+		if n, ok := idx.bySLS[r.KabKotaCode+r.Kecamatan+r.Desa+r.SLS]; ok {
+			r.SLSName = n.SLS
+		}
+	}
+}
+
+// wilayahNameIndexFor returns the index for the current name table, built
+// once per load rather than per request. nil when PostGIS isn't configured.
+func (s *Server) wilayahNameIndexFor(ctx context.Context) *wilayahNameIndex {
+	names := s.wilayahNameMap(ctx)
+	if names == nil {
+		return nil
+	}
+	c := &s.wilayahNames
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// wilayahNameMap may have replaced the table between the two locks;
+	// rebuild only when the index doesn't belong to the current one.
+	if c.index == nil || c.indexOf == nil || len(c.indexOf) != len(names) {
+		c.index = newWilayahNameIndex(names)
+		c.indexOf = names
+	}
+	return c.index
+}
+
 // wilayahNameCache holds the whole PostGIS name table (14k SLS, about a
 // megabyte) so that a Tabulasi page costs no PostGIS round trip at all.
 // Loaded on first use, refreshed after wilayahNamesTTL; if a refresh
@@ -886,6 +966,11 @@ type wilayahNameCache struct {
 	mu       sync.Mutex
 	names    map[string]mapdb.WilayahNames
 	loadedAt time.Time
+
+	// index is the prefix index over names, and indexOf the table it was
+	// built from — see wilayahNameIndexFor.
+	index   *wilayahNameIndex
+	indexOf map[string]mapdb.WilayahNames
 }
 
 // wilayahNamesTTL is how long a loaded name table is trusted. The layer
@@ -1204,6 +1289,7 @@ func (s *Server) prepareRegsosekReport(w http.ResponseWriter, r *http.Request, k
 		Status: sliceIfSet(filter.MatchStatus),
 		Search: filter.Search,
 	}
+	s.wilayahNameIndexFor(r.Context()).apply(&region)
 	return region, rows, len(rows) >= regsosek.ReportMaxRows, true
 }
 

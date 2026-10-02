@@ -94,13 +94,17 @@ func groupBySubSLS(items []points.Point) []subslsGroup {
 // report has (see report.Region.PinnedToSubSLS). The kecamatan/desa/SLS/
 // SubSLS parts come from the code itself (4+3+3+4+2 digits) because the
 // request may only have named a kecamatan, or just the kabupaten/kota.
-func regionForSubSLS(base report.Region, code string) report.Region {
+func regionForSubSLS(base report.Region, code string, names *wilayahNameIndex) report.Region {
 	r := base
 	if len(code) == 16 {
 		r.Kecamatan = code[4:7]
 		r.Desa = code[7:10]
 		r.SLS = code[10:14]
 		r.SubSLS = code[14:16]
+		// The narrowed region reaches levels the request never named, so
+		// its names have to be looked up again rather than inherited.
+		r.KecamatanName, r.DesaName, r.SLSName = "", "", ""
+		names.apply(&r)
 	}
 	return r
 }
@@ -159,7 +163,7 @@ func (s *Server) handleSplitReport(w http.ResponseWriter, r *http.Request, q url
 				s.log.Error("split report: zip entry failed", "err", err, "format", f.kind, "subsls", g.code)
 				return
 			}
-			if err := f.generate(fw, regionForSubSLS(plan.region, g.code), len(g.items), slices.Values(g.items), false); err != nil {
+			if err := f.generate(fw, regionForSubSLS(plan.region, g.code, plan.names), len(g.items), slices.Values(g.items), false); err != nil {
 				// Same caveat as the single-file handler: headers are
 				// already sent, so the client gets a short archive rather
 				// than an error body. Logged with the SubSLS so it can be

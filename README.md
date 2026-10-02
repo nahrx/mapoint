@@ -866,9 +866,9 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
   mempersempit isi laporan kalau diisi, dan urutan barisnya ikut sort kolom
   yang sedang aktif di tabel (di mode pisah: urutan di dalam tiap file;
   file-nya sendiri urut kode SubSLS). Keduanya laporan yang sama persis secara isi
-  ("Daftar Hasil Pendataan": keterangan wilayah — nama kab/kota + kode tiap
-  level + kode wilayah gabungan; level yang tidak difilter ditulis
-  "(Semua)" —, bagian "Filter Tambahan" kalau ada filter atribut atau cari
+  ("Daftar Hasil Pendataan": keterangan wilayah — **nama + kode** untuk tiap
+  level (lihat "Nama wilayah di header laporan" di bawah) plus kode wilayah
+  gabungan; level yang tidak difilter ditulis "(Semua)" —, bagian "Filter Tambahan" kalau ada filter atribut atau cari
   nama yang aktif, lalu semua baris yang cocok, bukan cuma satu halaman
   tabel — lihat `ListAll` di `internal/points/points.go`), cuma beda
   format:
@@ -1714,6 +1714,53 @@ PDF dibuat membungkus, juga ke **PDF** (24mm di set SubSLS, 22mm di set
 lebar, dibayar dari Catatan — lihat "Unduh PDF & Unduh Excel" di atas).
 Kalau filternya dipakai, PDF juga mencantumkannya di blok "Filter Tambahan"
 di header, jadi cakupan laporan tidak pernah ambigu.
+
+### Nama wilayah di header laporan
+
+Blok "Keterangan Wilayah" di PDF dan Excel menulis tiap level sebagai
+**NAMA (kode)**, bukan kode saja:
+
+```
+Kabupaten/Kota   Mahakam Ulu (6411)
+Kecamatan        LAHAM (010)
+Desa/Kelurahan   NYARIBUNGAN (001)
+SLS              RT 01 (0001)
+SubSLS           (Semua)
+Kode Wilayah     64110100010001
+```
+
+Nama kab/kota sudah lama ada (statis di `points.KabKotaName`); nama
+kecamatan, desa/kelurahan dan SLS datang dari **layer PostGIS**
+(`peta_sls_6400`: `nmkec`, `nmdesa`, `nmsls`) — sumber yang sama dengan
+kolom nama di menu Tabulasi dan label polygon di peta, jadi tidak ada
+daftar nama kedua yang bisa berbeda.
+
+Layer itu di-key per `idsls` 14 digit, sementara header laporan bisa
+berhenti di kecamatan atau desa. Karena itu `wilayahNameIndex`
+(`internal/api/server.go`) membangun indeks prefiks sekali setiap kali
+tabel nama dimuat: 14 digit → nama SLS, 10 digit → nama desa, 7 digit →
+nama kecamatan. Satu laporan jadi cuma butuh lookup map, bukan scan atas
+14 ribu entri — yang penting untuk ZIP per-SubSLS, karena di sana tiap
+file (ribuan untuk satu kab/kota) punya cakupannya sendiri dan menamai
+kecamatan/desa/SLS-nya masing-masing. Terukur: ZIP satu kabupaten (304
+file) tetap 1,8 detik, sama seperti sebelum nama ditambahkan.
+
+Tabel namanya dipakai bersama cache menu Tabulasi (`wilayahNameCache`,
+TTL 30 menit, sekali muat 80 ms untuk seluruh provinsi). Diperiksa pada
+layer yang terpasang: 17.039 baris / 14.332 SLS / 1.055 desa / 105
+kecamatan, tidak ada nama kosong di level mana pun, dan tidak ada prefiks
+desa yang membawa dua nama berbeda.
+
+**Kalau PostGIS tidak dikonfigurasi** (`MAP_HOST` kosong), ketiga nama itu
+kosong dan header kembali menulis kode telanjang — persis seperti sebelum
+fitur ini ada. Sudah diuji dengan menjalankan binary yang sama tanpa
+`MAP_*`: laporannya tetap jadi, cuma barisnya berbunyi `Kecamatan 010`.
+Nama yang hilang tidak pernah menyembunyikan kodenya, karena `named()` di
+`internal/report/region.go` jatuh balik ke kode.
+
+Berlaku untuk **keempat** unduhan yang memakai `report.Region`: PDF dan
+Excel menu Daftar (termasuk tiap file di dalam ZIP per-SubSLS) dan PDF dan
+Excel menu Daftar Match Regsosek.
 
 ### Kolom "Prioritas" (`se2026_prioritas`)
 
