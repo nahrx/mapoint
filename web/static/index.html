@@ -576,6 +576,19 @@
 
       <p class="list-note">Jumlah data per SubSLS menurut kategori variabel. Pilih variabel lewat tab, persempit wilayah lewat filter.</p>
 
+      <!-- Which created_at batch to tabulate. Only this menu offers the
+           choice; Peta and Daftar are always pinned to the newest day. It
+           sits above the tabs, not in the filter card, because it selects
+           the dataset rather than narrowing it — and it takes effect on
+           change, like the tabs below it, since the "Terapkan Filter"
+           button lives in a different section. -->
+      <div class="tabulasi-daybar">
+        <label for="day-select-tab">Data per tanggal:</label>
+        <select id="day-select-tab">
+          <option value="">Memuat…</option>
+        </select>
+      </div>
+
       <!-- One tab per variable, built by tabulasi.js from
            GET /api/tabulasi/variables — the same list the server validates
            ?var= against, so the two can't drift apart. -->

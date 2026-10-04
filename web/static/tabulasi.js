@@ -14,6 +14,7 @@
   const desaSelect = document.getElementById("desa-select-tab");
   const slsSelect = document.getElementById("sls-select-tab");
   const subslsSelect = document.getElementById("subsls-select-tab");
+  const daySelect = document.getElementById("day-select-tab");
   const applyFilterBtn = document.getElementById("apply-filter-btn-tab");
   const filtersEl = document.getElementById("tabulasi-filters");
   const filterToggleBtn = document.getElementById("tabulasi-filter-toggle");
@@ -45,6 +46,11 @@
   let appliedDesa = "";
   let appliedSls = "";
   let appliedSubsls = "";
+  // "" until the day list has loaded; from then on always an explicit
+  // date, so the table and the workbook can never disagree about which
+  // batch they describe (the server's default could move under them if a
+  // new batch landed between the two requests).
+  let appliedDay = "";
 
   let currentPage = 1;
   let pageSize = parseInt(pageSizeSelect.value, 10) || 50;
@@ -95,6 +101,57 @@
     loadPage();
   }
 
+  // The days a batch was loaded on, newest first, with the newest selected
+  // — the same day the Peta and Daftar menus show, so the menus agree
+  // until the user deliberately picks an older one. A failure here leaves
+  // the picker showing "(terbaru)" and the server applying its own
+  // default, which is the behaviour this menu had before the picker.
+  async function loadDays() {
+    let data;
+    try {
+      data = await fetchWithRetry("/api/tabulasi/days", undefined);
+    } catch (err) {
+      console.error("failed to load tabulasi days", err);
+      daySelect.innerHTML = '<option value="">(terbaru)</option>';
+      return;
+    }
+    const days = data.days || [];
+    daySelect.innerHTML = "";
+    if (!days.length) {
+      daySelect.innerHTML = '<option value="">(terbaru)</option>';
+      return;
+    }
+    for (const d of days) {
+      const opt = document.createElement("option");
+      opt.value = d.day;
+      opt.textContent = `${formatDay(d.day)} (${d.total.toLocaleString("id-ID")} data)`;
+      daySelect.appendChild(opt);
+    }
+    const latest = data.latest || days[0].day;
+    daySelect.value = latest;
+    appliedDay = daySelect.value;
+  }
+
+  // "2026-10-03" -> "3 Oktober 2026". The raw date stays the option's
+  // value, so what travels to the server is never the formatted text.
+  const MONTHS = ["Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+  function formatDay(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    if (!m) return iso;
+    return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
+  }
+
+  // Above the tab strip rather than inside the filter card, so it applies
+  // immediately: the "Terapkan Filter" button sits in another section, and
+  // a control that silently does nothing until a button elsewhere is
+  // pressed is worse than one that just works.
+  daySelect.addEventListener("change", () => {
+    appliedDay = daySelect.value;
+    currentPage = 1;
+    loadPage();
+  });
+
   async function loadVariables() {
     variables = await fetchWithRetry("/api/tabulasi/variables", undefined);
     if (!currentVar && variables.length) currentVar = variables[0].key;
@@ -110,6 +167,7 @@
     if (appliedDesa) params.set("desa", appliedDesa);
     if (appliedSls) params.set("sls", appliedSls);
     if (appliedSubsls) params.set("subsls", appliedSubsls);
+    if (appliedDay) params.set("day", appliedDay);
     params.set("page", String(currentPage));
     params.set("pageSize", String(pageSize));
     params.set("sortBy", sortKey);
@@ -321,6 +379,7 @@
     if (appliedDesa) params.set("desa", appliedDesa);
     if (appliedSls) params.set("sls", appliedSls);
     if (appliedSubsls) params.set("subsls", appliedSubsls);
+    if (appliedDay) params.set("day", appliedDay);
     const a = document.createElement("a");
     a.href = `/api/tabulasi/xlsx?${params}`;
     a.rel = "noopener";
@@ -366,6 +425,9 @@
     if (booted) return;
     booted = true;
     loadKabKotaOptions();
+    // Before the first loadPage, so page one already describes the day the
+    // picker is showing rather than briefly showing the server default.
+    await loadDays();
     try {
       await loadVariables();
     } catch (err) {

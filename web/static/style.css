@@ -911,6 +911,42 @@ body {
    Tabulasi menu: variable tabs + the cross-tabulation table
    ===================================================================== */
 
+/* The day picker above the tab strip: one line, label and control side by
+   side, so it reads as a property of the whole table rather than a filter
+   row that lost its card. */
+.tabulasi-daybar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.tabulasi-daybar label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.tabulasi-daybar select {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  max-width: 260px;
+}
+
+@media (max-width: 600px) {
+  .tabulasi-daybar select {
+    flex: 1;
+    min-height: var(--tap);
+    max-width: none;
+  }
+}
+
 /* Underline tabs, sitting on the card's top edge. Buttons rather than
    links: switching variables is state, not navigation — the URL stays
    /tabulasi and Back leaves the menu, which is what a tab strip inside a

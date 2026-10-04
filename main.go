@@ -117,6 +117,19 @@ func run(log *slog.Logger) error {
 	for i, u := range cfg.AuthUsers {
 		accounts[i] = api.Account{Username: u.Username, Password: u.Password}
 	}
+	// Which batch the menus show. Done before the first request is served
+	// so no one ever sees the whole table stacked up.
+	dayCtx, dayCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	day, err := svc.RefreshLatestDay(dayCtx)
+	dayCancel()
+	if err != nil {
+		// Not fatal: without a day the queries simply don't pin one, which
+		// is exactly how the dashboard behaved before created_at existed.
+		log.Error("latest data day unknown, showing every batch", "err", err)
+	} else {
+		logLatestDay(log, day)
+	}
+
 	log.Info("dashboard accounts loaded", "count", len(accounts))
 
 	srv := api.NewServer(svc, regsvc, conn, bounds, kabkotaList, mapPool, accounts, cfg.DataUpdatedAt, cfg.ReportKabKotaPassword, log)
@@ -150,6 +163,21 @@ func run(log *slog.Logger) error {
 	return httpServer.Shutdown(shutdownCtx)
 }
 
+// logLatestDay reports which batch the menus are pinned to, and says so
+// loudly when rows are left out of it: rows with no created_at belong to
+// no day and are invisible to every menu, which would otherwise look like
+// data quietly going missing.
+func logLatestDay(log *slog.Logger, d points.LatestDayInfo) {
+	if d.Day == "" {
+		log.Warn("no usable created_at found, showing every batch", "rows", d.TotalRows)
+		return
+	}
+	log.Info("data day selected", "day", d.Day, "rows", d.DayRows, "table_rows", d.TotalRows)
+	if d.NullRows > 0 {
+		log.Warn("rows with no created_at are not shown in any menu", "rows", d.NullRows, "day", d.Day)
+	}
+}
+
 // refreshBoundsPeriodically keeps the cached dataset extent/total and the
 // kabupaten/kota filter list up to date as fieldwork adds more rows (and
 // potentially new regions), without requiring a server restart. A failed
@@ -165,6 +193,17 @@ func refreshBoundsPeriodically(ctx context.Context, svc *points.Service, srv *ap
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Before the bounds, so a new batch is picked up by the very
+			// same cycle that recomputes the extent over it.
+			prevDay := svc.LatestDay()
+			if day, err := svc.RefreshLatestDay(ctx); err != nil {
+				log.Warn("latest data day refresh failed, keeping previous value", "err", err)
+			} else if day.Day != prevDay {
+				// Only on a change: a line every ten minutes saying the same
+				// date would bury the one tick that matters.
+				logLatestDay(log, day)
+			}
+
 			if b, err := svc.DatasetBounds(ctx); err != nil {
 				log.Warn("bounds refresh failed, keeping previous value", "err", err)
 			} else {

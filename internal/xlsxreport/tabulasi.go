@@ -21,6 +21,10 @@ type TabulasiScope struct {
 	Desa        string
 	SLS         string
 	SubSLS      string
+	// Day is the created_at day tabulated, as "2006-01-02". Written into
+	// the header because a tabulation of an older batch looks exactly like
+	// one of the newest until something says which it is.
+	Day string
 }
 
 // rows renders the scope as label/value pairs, "(Semua)" where a level is
@@ -37,13 +41,17 @@ func (sc TabulasiScope) rows() [][2]string {
 	if sc.KabKotaCode != "" {
 		kabkota = fmt.Sprintf("%s (%s)", sc.KabKotaName, sc.KabKotaCode)
 	}
-	return [][2]string{
+	rows := [][2]string{
 		{"Kabupaten/Kota", kabkota},
 		{"Kecamatan", all(sc.Kecamatan)},
 		{"Desa/Kelurahan", all(sc.Desa)},
 		{"SLS", all(sc.SLS)},
 		{"SubSLS", all(sc.SubSLS)},
 	}
+	if sc.Day != "" {
+		rows = append(rows, [2]string{"Data per tanggal", sc.Day})
+	}
+	return rows
 }
 
 // GenerateTabulasi writes one workbook with one sheet per table — the
@@ -166,16 +174,15 @@ func writeTabulasiSheet(f *excelize.File, sheet string, st styles, totalStyle in
 	// --- panes --------------------------------------------------------------
 	// The stream writer wants SetPanes before the very first SetRow — the
 	// info block included — so the header row has to be known up front
-	// rather than discovered by laying the block out. The layout below is
-	// fixed (title, gap, section, five scope rows, two counts, optional
-	// truncation note, gap, footnote, gap), and the running row counter is
-	// checked against this number when the block is done, so a future edit
-	// to the block can't quietly freeze the wrong row.
+	// rather than discovered by laying the block out. It is derived from
+	// the very list the block then writes (scope.rows() grew a "Data per
+	// tanggal" row when the Tabulasi menu got its day picker, and a
+	// hardcoded 14 silently became wrong), and the running row counter is
+	// still checked against it when the block is done.
 	//
-	// Header row stays put, and so do the identifying columns (through ID
-	// SUBSLS) on the left, so a row never loses its name while scrolling
-	// across the categories.
-	headerRow := 14
+	// Fixed part: title, gap, section, the scope rows, two counts, optional
+	// truncation note, gap, footnote, gap.
+	headerRow := 9 + len(scope.rows())
 	if t.Truncated {
 		headerRow += 2
 	}

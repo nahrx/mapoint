@@ -159,7 +159,7 @@ func (s *Service) TabulasiAll(ctx context.Context, filter Filter, v TabulasiVari
 // tabulasiTotals returns the per-category counts over the whole filter,
 // their sum, and how many distinct SubSLS the filter covers.
 func (s *Service) tabulasiTotals(ctx context.Context, filter Filter, v TabulasiVariable) (grand map[string]uint64, grandTotal, totalRows uint64, err error) {
-	where, args := filter.clause()
+	where, args := s.whereFor(filter)
 	grand = map[string]uint64{}
 
 	q := fmt.Sprintf(`SELECT %s AS val, count() AS n FROM %s WHERE %s GROUP BY val`, v.Column, table, where)
@@ -220,7 +220,7 @@ func tabulasiColumns(v TabulasiVariable, grand map[string]uint64) []string {
 // tabulasiRows returns up to limit SubSLS, each with its per-category
 // counts, ordered by code.
 func (s *Service) tabulasiRows(ctx context.Context, filter Filter, v TabulasiVariable, limit int) ([]TabulasiRow, error) {
-	where, args := filter.clause()
+	where, args := s.whereFor(filter)
 	q := fmt.Sprintf(`SELECT subsls, groupArray(val) AS vals, groupArray(n) AS ns, sum(n) AS total
 		FROM (
 			SELECT level_6_full_code AS subsls, %s AS val, count() AS n

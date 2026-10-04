@@ -24,6 +24,64 @@ Total & extent dataset (untuk auto-fit peta saat awal buka) dihitung sekali
 saat startup dan di-refresh otomatis setiap 10 menit di background, supaya
 angka tetap akurat seiring data bertambah tanpa perlu restart server.
 
+Semua angka itu — dan semua yang dibaca menu Peta, Daftar dan Tabulasi —
+dibatasi ke **satu hari `created_at` terbaru**; lihat bagian berikutnya.
+
+### Hanya data `created_at` hari terbaru
+
+`se2026_titik2` tidak ditimpa saat data dimuat ulang: tiap pemuatan
+**menambahkan satu salinan penuh dataset** dengan `created_at` batch itu
+(satu timestamp untuk seluruh batch — di tabel saat ini 2.271.262 baris
+semuanya bertanda `2026-10-03 00:00:00`). Kalau dibiarkan, dua kali muat
+berarti tiap titik terhitung dua kali di seluruh menu. Karena itu setiap
+query ke tabel ini dipatok ke hari terbaru:
+
+```sql
+... AND toDate(created_at) = toDate('2026-10-03')
+```
+
+Harinya **di-cache**, bukan jadi subquery di tiap statement:
+`max(toDate(created_at))` adalah scan kolom (14 ms terukur) dan jawabannya
+cuma berubah saat ada pemuatan baru. Diambil sekali saat startup — sebelum
+request pertama dilayani — lalu di-refresh di timer 10 menit yang sama
+dengan extent dataset, jadi batch baru terpakai tanpa restart. Log-nya
+muncul saat startup dan setiap kali harinya berganti:
+
+```
+level=INFO msg="data day selected" day=2026-10-03 rows=2271262 table_rows=2271262
+```
+
+Yang ikut dipatok: `/api/points`, `/api/points-bounds`, `/api/list` dan
+kedua unduhannya, `/api/bounds` (angka "Total data" di panel Peta), kelima
+dropdown wilayah beserta hitungan barisnya, dan `/api/tabulasi`. Tabulasi
+sengaja ikut walau yang diminta cuma Peta dan Daftar: ketiganya membaca
+tabel yang sama, dan tabulasi yang menghitung semua batch akan berbeda
+dengan Daftar di sebelahnya. Bedanya, menu Tabulasi boleh **memilih**
+harinya lewat `day=` (default tetap hari terbaru) — lihat "Pemilih hari"
+di bagian menu Tabulasi; Peta dan Daftar tidak, dan `parseFilter` memang
+tidak membaca parameter itu. Menu Reg2022 tidak terpengaruh —
+`se2026_match_regsosek` tidak punya kolom `created_at`.
+
+Di kode: `Service.whereFor` (= `Filter.clause()` + patokan hari) di
+`internal/points/points.go` dipakai oleh **semua** query ber-filter, dan
+query yang merakit WHERE-nya sendiri (bounds + kelima daftar wilayah)
+memanggil `s.dayClause()`. Dibuktikan lewat `system.query_log`: setelah
+menembak kesebelas endpoint menu, 11 dari 11 query yang menyentuh
+`se2026_titik2` mengandung `toDate(created_at)`, nol tanpa.
+
+Dua perilaku pinggir yang disengaja:
+
+- **Kalau harinya tidak diketahui** (probe gagal, atau `created_at` kosong
+  semua), patokan hari diganti `1` alias tidak memfilter apa-apa — bukan
+  memfilter semuanya habis. Dashboard yang menampilkan semua batch jauh
+  lebih baik daripada dashboard kosong yang terlihat rusak.
+  `TestDayClauseFallsBackToNoFilter` menjaga ini.
+- **Baris dengan `created_at` NULL** tidak masuk hari mana pun, jadi tidak
+  terlihat di menu mana pun (`NULL = …` tidak pernah benar). Itu memang
+  semantik yang diinginkan, tapi bisa terlihat seperti data hilang — jadi
+  jumlahnya dihitung saat probe dan ditulis sebagai `level=WARN` kalau
+  ada. Di tabel saat ini tidak ada satu pun.
+
 ### Catatan performa (hasil pengukuran, bukan perkiraan)
 
 Tabelnya `ORDER BY (level_6_full_code, assignment_id)` tanpa partisi dan
@@ -1101,6 +1159,59 @@ kolom SQL hanya lewat pemetaan tetap di `tabulasiVariables`
 yang tidak dikenal ditolak 400, bukan jatuh ke default: default diam-diam
 berarti mentabulasi kolom yang salah tanpa memberi tahu.
 
+**Pemilih hari ("Data per tanggal").** Menu ini satu-satunya yang boleh
+menabulasi batch selain yang terbaru. Dropdown-nya duduk **di atas deretan tab**, bukan di kartu filter: yang
+dipilih adalah dataset mana yang dilihat, bukan penyempitan wilayah —
+sejajar dengan tab yang memilih variabel. Diisi dari
+`GET /api/tabulasi/days` — tiap hari `created_at` yang ada di tabel,
+terbaru di atas, lengkap dengan jumlah barisnya ("3 Oktober 2026 (2.271.262
+data)") — dan **default-nya hari terkini**, hari yang sama yang dipatok
+menu Peta dan Daftar, jadi ketiganya sepakat sampai seseorang sengaja
+memilih batch lama.
+
+Karena letaknya di luar kartu filter, pilihannya **langsung berlaku saat
+diubah**, seperti mengganti tab — bukan menunggu "Terapkan Filter" yang
+tombolnya ada di bagian lain. Kontrol yang diam-diam tidak melakukan apa
+pun sampai tombol di tempat lain ditekan lebih membingungkan daripada
+kontrol yang langsung bekerja. Hari yang terpilih tetap terbawa saat
+berpindah tab dan saat mengunduh Excel.
+
+Tanggalnya dikirim sebagai `day=YYYY-MM-DD` ke `/api/tabulasi` dan
+`/api/tabulasi/xlsx`, lalu dipatok lewat `Filter.Day` →
+`Service.dayClauseFor` (`internal/points/points.go`). Beberapa keputusan
+yang disengaja:
+
+- **`parseFilter` sengaja TIDAK membaca `day`.** Parameternya dibaca
+  hanya di kedua handler Tabulasi, jadi tidak ada URL yang bisa melepas
+  patokan hari terbaru di menu Peta atau Daftar. Terbukti:
+  `/api/list?day=2026-10-02` tetap mengembalikan 2.271.262 baris hari
+  terbaru.
+- **Formatnya divalidasi, bukan dipercaya.** `ParseDay` menolak apa pun
+  selain `YYYY-MM-DD` yang benar-benar tanggal (regex + `time.Parse`),
+  karena harinya diinterpolasi ke teks SQL seperti kode wilayah. Diuji:
+  `abc`, `2026-10-3`, `2026-13-99`, `' OR 1=1`, dan bentuk ter-encode-nya
+  semuanya 400; hanya tanggal valid yang lolos.
+- **Hari valid yang tidak punya data bukan error**, cuma tabulasi kosong —
+  sama seperti filter wilayah yang tidak cocok dengan baris mana pun.
+- **Frontend selalu mengirim tanggal eksplisit** begitu daftar harinya
+  termuat, tidak mengandalkan default server. Kalau tidak, tabel dan
+  unduhan bisa menggambarkan batch berbeda kalau ada pemuatan baru di
+  antara dua request.
+
+Unduhan Excel-nya ikut: workbook menambah baris **"Data per tanggal"** di
+blok keterangan, dan tanggalnya masuk ke nama file
+(`tabulasi-subsls-6411-2026-10-03.xlsx`) — dua unduhan wilayah yang sama
+pada hari berbeda isinya berbeda, dan browser yang diam-diam menambah
+"(1)" di nama file justru menyembunyikan itu.
+
+> Catatan untuk yang mengedit `GenerateTabulasi`: baris header sheet
+> dihitung **sebelum** baris pertama ditulis (stream writer menuntut
+> `SetPanes` duluan), dan dulu angkanya ditanam sebagai `14`. Menambah
+> baris "Data per tanggal" membuat angka itu salah dan seluruh workbook
+> keluar 0 byte — ketahuan oleh pemeriksaan konsistensi yang sudah ada,
+> tapi baru saat diunduh. Sekarang dihitung dari `scope.rows()` itu
+> sendiri, dan `TestGenerateTabulasiHeaderRowMatchesScope` menjaganya.
+
 Empat kolom nama mendahului ID SUBSLS: **Kabupaten/Kota, Kecamatan,
 Desa/Kelurahan, Nama SLS**. Kabupaten/kota dari tabel statis di `points`;
 tiga lainnya dari layer PostGIS (`nmkec`/`nmdesa`/`nmsls` di
@@ -1641,9 +1752,10 @@ bagian "Login" di atas.
 - `GET /` — peta (frontend)
 - `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&prioritas=&flagBaru=&flagRegsosek=&nonRespon=&bansos=&search=` — data titik/cluster untuk satu viewport. Filter atributnya sama persis dengan `/api/list` (multi-nilai, ulangi parameternya per nilai) — keduanya lewat `parseFilter` yang sama. Titik individual ikut membawa kedua flag "Ditemukan di …", `non_respon`, `prioritas` dan `bansos` untuk tooltip (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
 - `GET /api/points-bounds?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&prioritas=&flagBaru=&flagRegsosek=&nonRespon=&bansos=&search=` — extent geografis baris yang cocok dengan filter (persentil 1%/99% dari `latitude_ppl`/`longitude_ppl`), untuk auto-zoom ke hasil pencarian nama di menu Peta. Parameternya sama persis dengan `/api/points` minus kotak viewport-nya. Balasannya `min_lat`/`max_lat`/`min_lon`/`max_lon` + `total`; kalau tidak ada baris yang cocok, `total` 0 dan keempat batasnya `null` (bukan NaN — `encoding/json` menolak NaN, lihat `points.FiniteOrNil`), jadi pemanggil tidak boleh nge-zoom ke situ. Dipanggil frontend hanya saat pencarian nama aktif — lihat "Cari nama di menu Peta" di atas
+- `GET /api/tabulasi/days` — hari `created_at` yang ada di tabel (`day`, `total`), terbaru dulu, plus `latest` sebagai default pemilih hari menu Tabulasi. Satu scan kolom ber-GROUP BY (17ms), tidak di-cache: daftarnya berubah persis saat ada batch baru, dan terlambat satu refresh berarti menyembunyikan batch itu dari satu-satunya menu yang bisa memilihnya
 - `GET /api/tabulasi/variables` — enam variabel tabulasi (kunci, label, urutan kategori) dalam urutan tab; statis, sumber kebenaran untuk `?var=` di bawah
-- `GET /api/tabulasi?var=&kabkota=&kecamatan=&desa=&sls=&subsls=&page=&pageSize=` — satu halaman tabulasi silang SubSLS × kategori untuk variabel `var` (salah satu kunci dari endpoint di atas; lainnya ditolak 400). Filter sama dengan `/api/list` lewat `parseFilter`. `page`/`pageSize` menghitung **SubSLS**, bukan baris data; `pageSize` maks 200. Balasannya `columns` (urutan kategori, `""` terakhir kalau ada yang kosong), `rows[].counts` (kategori → jumlah) + `rows[].total`, `total_rows` (jumlah SubSLS di seluruh filter), `grand` + `grand_total` (total per kategori dan keseluruhan untuk seluruh filter)
-- `GET /api/tabulasi/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=` — workbook Excel berisi keenam tabulasi (satu sheet per variabel) untuk seluruh SubSLS yang cocok dengan filter, sampai `TabulasiMaxRows` (50.000) per sheet. Semua parameter opsional — tanpa filter = seluruh provinsi. Nama berkas `tabulasi-subsls-<kode wilayah|semua>.xlsx`
+- `GET /api/tabulasi?var=&kabkota=&kecamatan=&desa=&sls=&subsls=&day=&page=&pageSize=` — satu halaman tabulasi silang SubSLS × kategori untuk variabel `var` (salah satu kunci dari endpoint di atas; lainnya ditolak 400). Filter sama dengan `/api/list` lewat `parseFilter`. `page`/`pageSize` menghitung **SubSLS**, bukan baris data; `pageSize` maks 200. Balasannya `columns` (urutan kategori, `""` terakhir kalau ada yang kosong), `rows[].counts` (kategori → jumlah) + `rows[].total`, `total_rows` (jumlah SubSLS di seluruh filter), `grand` + `grand_total` (total per kategori dan keseluruhan untuk seluruh filter)
+- `GET /api/tabulasi/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&day=` — workbook Excel berisi keenam tabulasi (satu sheet per variabel) untuk seluruh SubSLS yang cocok dengan filter, sampai `TabulasiMaxRows` (50.000) per sheet. Semua parameter opsional — tanpa filter = seluruh provinsi. Nama berkas `tabulasi-subsls-<kode wilayah|semua>.xlsx`
 - `GET /api/bounds` — extent geografis + total baris valid di seluruh dataset
 - `GET /api/kabkota` — daftar kabupaten/kota yang ada di data, dengan jumlah baris & bounding box masing-masing. Sama seperti keempat endpoint wilayah lainnya: daftarnya memuat SEMUA wilayah di tabel, dan `min_lat`/`max_lat`/`min_lon`/`max_lon` dihilangkan dari JSON untuk wilayah yang tidak punya titik berkoordinat
 - `GET /api/kecamatan?kabkota=` — daftar kecamatan di dalam satu kabupaten/kota (parameter wajib); `name` diisi dari PostGIS kalau `MAP_*` dikonfigurasi, kosong kalau tidak

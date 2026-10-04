@@ -105,6 +105,7 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /api/match-points", s.handleMatchPoints)
 	mux.HandleFunc("GET /api/match-bounds", s.handleMatchBounds)
 	mux.HandleFunc("GET /api/subsls-polygon", s.handleSubSLSPolygon)
+	mux.HandleFunc("GET /api/tabulasi/days", s.handleTabulasiDays)
 	mux.HandleFunc("GET /api/tabulasi/variables", s.handleTabulasiVariables)
 	mux.HandleFunc("GET /api/tabulasi", s.handleTabulasi)
 	mux.HandleFunc("GET /api/tabulasi/xlsx", s.handleTabulasiXLSX)
@@ -765,6 +766,29 @@ func (s *Server) handleListXLSX(w http.ResponseWriter, r *http.Request) {
 // map to draw once a filter is pinned all the way down to one SubSLS —
 // same all-five-levels-required rule as the PDF download, since a
 // boundary polygon is only meaningful for one specific SubSLS.
+// handleTabulasiDays lists the created_at days the Tabulasi menu can
+// tabulate, newest first, and says which one is the default (the latest,
+// the same one the Peta and Daftar menus are pinned to).
+func (s *Server) handleTabulasiDays(w http.ResponseWriter, r *http.Request) {
+	days, err := s.svc.DaysList(r.Context())
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		s.log.Error("days list failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	latest := s.svc.LatestDay()
+	if latest == "" && len(days) > 0 {
+		// The startup probe hasn't succeeded, but the list just told us
+		// what the newest day is — better than handing the frontend no
+		// default at all.
+		latest = days[0].Day
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"days": days, "latest": latest})
+}
+
 // handleTabulasiVariables lists the five cross-tabulation variables in tab
 // order, so the frontend builds its tabs from the same list the server
 // validates against instead of a copy that could drift.
@@ -795,6 +819,12 @@ func (s *Server) handleTabulasi(w http.ResponseWriter, r *http.Request) {
 	}
 	sortOrder, err := parseTabulasiSort(q)
 	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Only this menu lets the day be chosen; parseFilter deliberately
+	// doesn't read it, so no URL can unpin the Peta or Daftar menus.
+	if filter.Day, err = points.ParseDay(q.Get("day")); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1034,6 +1064,10 @@ func (s *Server) handleTabulasiXLSX(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if filter.Day, err = points.ParseDay(r.URL.Query().Get("day")); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	// The six variables are independent aggregations over the same rows,
 	// so they run concurrently rather than back to back. Measured on the
@@ -1076,6 +1110,10 @@ func (s *Server) handleTabulasiXLSX(w http.ResponseWriter, r *http.Request) {
 		applyWilayahNames(tables[i].Rows, names)
 	}
 
+	day := filter.Day
+	if day == "" {
+		day = s.svc.LatestDay()
+	}
 	scope := xlsxreport.TabulasiScope{
 		KabKotaCode: filter.KabKota,
 		KabKotaName: points.KabKotaName(filter.KabKota),
@@ -1083,10 +1121,17 @@ func (s *Server) handleTabulasiXLSX(w http.ResponseWriter, r *http.Request) {
 		Desa:        filter.Desa,
 		SLS:         filter.SLS,
 		SubSLS:      filter.SubSLS,
+		Day:         day,
 	}
 	suffix := filter.FullCode()
 	if suffix == "" {
 		suffix = "semua"
+	}
+	// The day belongs in the filename too: two downloads of the same
+	// wilayah on different days are different numbers, and a browser that
+	// silently appends "(1)" to a repeated name hides exactly that.
+	if day != "" {
+		suffix += "-" + day
 	}
 
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

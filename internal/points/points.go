@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -466,6 +467,12 @@ type Filter struct {
 	// column of se2026_titik2 — see dictGetPrioritasExpr.
 	Prioritas []string
 
+	// Day overrides the created_at day a query is pinned to, as
+	// "2006-01-02". Empty means "the latest day", which is what the Peta
+	// and Daftar menus always use; only the Tabulasi menu sets it, so one
+	// batch can be compared against an earlier one. Validated by ParseDay.
+	Day string
+
 	// NonRespon filters on whether no_banr is filled: FlagYes keeps only
 	// rows with a BANR reference (non-response cases), FlagNo only rows
 	// without one, "" leaves the filter off. Validated by ParseFlag, the
@@ -728,10 +735,195 @@ type BoundsJSON struct {
 // Service executes the queries against ClickHouse.
 type Service struct {
 	conn driver.Conn
+
+	// latestDay is the newest calendar day in created_at, as "2006-01-02",
+	// or nil before the first successful probe — see RefreshLatestDay.
+	latestDay atomic.Pointer[string]
 }
 
 func NewService(conn driver.Conn) *Service {
 	return &Service{conn: conn}
+}
+
+// Every row of se2026_titik2 carries the created_at of the batch it was
+// loaded in (one timestamp for the whole batch — checked on the live
+// table: 2,271,262 rows all at 2026-10-03 00:00:00). A reload adds a new
+// batch rather than replacing the old one, so the table accumulates one
+// full copy of the dataset per load, and the menus must show exactly the
+// newest day or they would count every row several times over.
+//
+// The day is resolved once and cached rather than being a subquery on
+// every statement: max(toDate(created_at)) is a column scan (14ms), and
+// the answer only changes when someone loads a new batch. It is refreshed
+// on the same 10-minute timer that refreshes the dataset bounds, so a
+// fresh load shows up without a restart — see refreshBoundsPeriodically
+// in main.go.
+
+// LatestDayInfo is what RefreshLatestDay found.
+type LatestDayInfo struct {
+	// Day is "2006-01-02", or "" when the table has no usable created_at
+	// at all.
+	Day string
+	// NullRows is how many rows have no created_at. Those rows are not in
+	// any day and therefore invisible to the menus, which is worth a line
+	// in the log rather than a silent shortfall.
+	NullRows uint64
+	// DayRows is how many rows fall on Day, against TotalRows overall.
+	DayRows, TotalRows uint64
+}
+
+// RefreshLatestDay re-reads the newest created_at day and makes every
+// subsequent query use it.
+func (s *Service) RefreshLatestDay(ctx context.Context) (LatestDayInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	var (
+		day      time.Time
+		nullRows uint64
+		total    uint64
+	)
+	q := fmt.Sprintf(
+		"SELECT ifNull(max(toDate(created_at)), toDate(0)), countIf(created_at IS NULL), count() FROM %s",
+		table)
+	if err := s.conn.QueryRow(ctx, q).Scan(&day, &nullRows, &total); err != nil {
+		return LatestDayInfo{}, fmt.Errorf("points: latest created_at day: %w", err)
+	}
+
+	info := LatestDayInfo{NullRows: nullRows, TotalRows: total}
+	// toDate(0) is 1970-01-01, what ifNull above substitutes when every
+	// created_at is NULL (max over no values). Treat that as "no usable
+	// day" rather than filtering the whole dataset away.
+	if !day.IsZero() && day.Year() > 1970 {
+		info.Day = day.Format("2006-01-02")
+	}
+	if info.Day == "" {
+		s.latestDay.Store(nil)
+		return info, nil
+	}
+
+	var dayRows uint64
+	countQ := fmt.Sprintf("SELECT count() FROM %s WHERE %s", table, dayWhere(info.Day))
+	if err := s.conn.QueryRow(ctx, countQ).Scan(&dayRows); err != nil {
+		return LatestDayInfo{}, fmt.Errorf("points: latest day row count: %w", err)
+	}
+	info.DayRows = dayRows
+
+	d := info.Day
+	s.latestDay.Store(&d)
+	return info, nil
+}
+
+// LatestDay is the day the menus are currently pinned to, or "" when it
+// isn't known.
+func (s *Service) LatestDay() string {
+	if d := s.latestDay.Load(); d != nil {
+		return *d
+	}
+	return ""
+}
+
+// dayWhere is the WHERE fragment pinning a query to one day. The day is
+// always a value this package formatted from a time.Time read out of the
+// database, never anything a caller supplied, so interpolating it is
+// safe. A NULL created_at does not equal any day and is therefore
+// excluded — RefreshLatestDay logs a warning when such rows exist.
+func dayWhere(day string) string {
+	return fmt.Sprintf("toDate(created_at) = toDate('%s')", day)
+}
+
+// dayClause is dayWhere for the cached day, or "1" when no day is known
+// (the probe hasn't run or found nothing). Falling back to "no filter"
+// rather than "match nothing" is deliberate: an empty dashboard is a far
+// worse failure than one showing every batch.
+func (s *Service) dayClause() string {
+	if d := s.LatestDay(); d != "" {
+		return dayWhere(d)
+	}
+	return "1"
+}
+
+// dayClauseFor is dayClause with a caller's explicit day taking
+// precedence. A day the caller picked is pinned even when it is not the
+// latest one — that is the whole point of the Tabulasi menu's day picker
+// — and even when no latest day is known.
+func (s *Service) dayClauseFor(day string) string {
+	if day != "" {
+		return dayWhere(day)
+	}
+	return s.dayClause()
+}
+
+// dayPattern is the only shape a day may have before it reaches the SQL
+// text. Days are interpolated like the wilayah codes are (a bind arg
+// would stop ClickHouse folding it into a constant), so the format is
+// checked rather than trusted.
+var dayPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// ParseDay validates a day from a query string. "" means "the latest day"
+// and is always allowed. A well-formed day that no batch used is not an
+// error — it simply tabulates to nothing, the same as a filter that
+// matches no rows.
+func ParseDay(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	if !dayPattern.MatchString(raw) {
+		return "", fmt.Errorf("invalid day %q: expected YYYY-MM-DD", raw)
+	}
+	if _, err := time.Parse("2006-01-02", raw); err != nil {
+		return "", fmt.Errorf("invalid day %q: %w", raw, err)
+	}
+	return raw, nil
+}
+
+// DayInfo is one created_at day present in the table.
+type DayInfo struct {
+	Day   string `json:"day"`
+	Total uint64 `json:"total"`
+}
+
+// DaysList returns every created_at day in the table, newest first, with
+// how many rows each holds — the choices behind the Tabulasi menu's day
+// picker. One grouped scan of the created_at column (17ms measured over
+// 2.2M rows), run per page load rather than cached: the list changes
+// exactly when a batch is loaded, and being a refresh behind would hide
+// the new batch from the only menu that can select it.
+func (s *Service) DaysList(ctx context.Context) ([]DayInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	q := fmt.Sprintf(
+		"SELECT toDate(created_at) AS day, count() FROM %s WHERE created_at IS NOT NULL GROUP BY day ORDER BY day DESC",
+		table)
+	rows, err := s.conn.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("points: days list: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]DayInfo, 0, 8)
+	for rows.Next() {
+		var day time.Time
+		var total uint64
+		if err := rows.Scan(&day, &total); err != nil {
+			return nil, fmt.Errorf("points: days list scan: %w", err)
+		}
+		out = append(out, DayInfo{Day: day.Format("2006-01-02"), Total: total})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("points: days list rows: %w", err)
+	}
+	return out, nil
+}
+
+// whereFor is filter.clause() with the latest-day pin ANDed in. Every
+// query that reads se2026_titik2 through a Filter goes through here, so
+// the Daftar table, the map, both downloads and the Tabulasi menu all
+// describe the same batch.
+func (s *Service) whereFor(f Filter) (string, []any) {
+	where, args := f.clause()
+	return where + " AND " + s.dayClauseFor(f.Day), args
 }
 
 const validCoords = "latitude_ppl != 0 AND longitude_ppl != 0 AND isFinite(latitude_ppl) AND isFinite(longitude_ppl)"
@@ -827,7 +1019,7 @@ func (s *Service) Query(ctx context.Context, b BBox, zoom int, filter Filter) (R
 }
 
 func (s *Service) count(ctx context.Context, b BBox, filter Filter) (uint64, error) {
-	where, args := filter.clause()
+	where, args := s.whereFor(filter)
 	q := fmt.Sprintf(
 		"SELECT count() FROM %s WHERE %s AND %s AND %s",
 		table, validCoords, bboxClause(b), where,
@@ -841,7 +1033,7 @@ func (s *Service) count(ctx context.Context, b BBox, filter Filter) (uint64, err
 }
 
 func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Point, error) {
-	where, args := filter.clause()
+	where, args := s.whereFor(filter)
 	q := fmt.Sprintf(`SELECT
 		assignment_id, nama_assignment, alamat, level_6_full_code, jenis_prelist_root,
 		kode_penggunaan_bangunan_label,
@@ -905,7 +1097,7 @@ func (s *Service) queryClusters(ctx context.Context, b BBox, zoom int, filter Fi
 	cell := CellSizeForZoom(zoom)
 	cellStr := fFloat(cell)
 
-	where, args := filter.clause()
+	where, args := s.whereFor(filter)
 	q := fmt.Sprintf(`SELECT
 		floor(latitude_ppl / %s) * %s + %s / 2 AS glat,
 		floor(longitude_ppl / %s) * %s + %s / 2 AS glon,
@@ -951,7 +1143,7 @@ func (s *Service) FilteredBounds(ctx context.Context, filter Filter) (Bounds, er
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	where, args := filter.clause()
+	where, args := s.whereFor(filter)
 	q := fmt.Sprintf(`SELECT
 		quantile(0.01)(latitude_ppl), quantile(0.99)(latitude_ppl),
 		quantile(0.01)(longitude_ppl), quantile(0.99)(longitude_ppl),
@@ -974,7 +1166,7 @@ func (s *Service) DatasetBounds(ctx context.Context) (Bounds, error) {
 		min(latitude_ppl), max(latitude_ppl),
 		min(longitude_ppl), max(longitude_ppl),
 		count()
-	FROM %s WHERE %s`, table, validCoords)
+	FROM %s WHERE %s AND %s`, table, validCoords, s.dayClause())
 
 	row := s.conn.QueryRow(ctx, q)
 	var b Bounds
@@ -1022,9 +1214,9 @@ func (s *Service) KabKotaList(ctx context.Context) ([]KabKotaInfo, error) {
 		count(),
 		%s
 	FROM %s
-	WHERE length(level_6_full_code) >= 4
+	WHERE length(level_6_full_code) >= 4 AND %s
 	GROUP BY kabkota
-	ORDER BY kabkota ASC`, bboxIf, table)
+	ORDER BY kabkota ASC`, bboxIf, table, s.dayClause())
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -1089,8 +1281,9 @@ func (s *Service) KecamatanList(ctx context.Context, kabkota string) ([]Kecamata
 		%s
 	FROM %s
 	WHERE length(level_6_full_code) >= 7 AND substring(level_6_full_code, 1, 4) = '%s'
+		AND %s
 	GROUP BY kec
-	ORDER BY kec ASC`, bboxIf, table, kabkota)
+	ORDER BY kec ASC`, bboxIf, table, kabkota, s.dayClause())
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -1152,8 +1345,9 @@ func (s *Service) DesaList(ctx context.Context, kabkota, kecamatan string) ([]De
 	WHERE length(level_6_full_code) >= 10
 		AND substring(level_6_full_code, 1, 4) = '%s'
 		AND substring(level_6_full_code, 5, 3) = '%s'
+		AND %s
 	GROUP BY desa
-	ORDER BY desa ASC`, bboxIf, table, kabkota, kecamatan)
+	ORDER BY desa ASC`, bboxIf, table, kabkota, kecamatan, s.dayClause())
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -1219,8 +1413,9 @@ func (s *Service) SLSList(ctx context.Context, kabkota, kecamatan, desa string) 
 		AND substring(level_6_full_code, 1, 4) = '%s'
 		AND substring(level_6_full_code, 5, 3) = '%s'
 		AND substring(level_6_full_code, 8, 3) = '%s'
+		AND %s
 	GROUP BY sls
-	ORDER BY sls ASC`, bboxIf, table, kabkota, kecamatan, desa)
+	ORDER BY sls ASC`, bboxIf, table, kabkota, kecamatan, desa, s.dayClause())
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -1281,8 +1476,9 @@ func (s *Service) SubSLSList(ctx context.Context, kabkota, kecamatan, desa, sls 
 		AND substring(level_6_full_code, 5, 3) = '%s'
 		AND substring(level_6_full_code, 8, 3) = '%s'
 		AND substring(level_6_full_code, 11, 4) = '%s'
+		AND %s
 	GROUP BY subsls
-	ORDER BY subsls ASC`, bboxIf, table, kabkota, kecamatan, desa, sls)
+	ORDER BY subsls ASC`, bboxIf, table, kabkota, kecamatan, desa, sls, s.dayClause())
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
@@ -1474,7 +1670,7 @@ func (s *Service) Count(ctx context.Context, filter Filter) (int, error) {
 }
 
 func (s *Service) listCount(ctx context.Context, filter Filter) (uint64, error) {
-	where, args := filter.clause()
+	where, args := s.whereFor(filter)
 	q := fmt.Sprintf("SELECT count() FROM %s WHERE %s", table, where)
 	row := s.conn.QueryRow(ctx, q, args...)
 	var n uint64
@@ -1512,7 +1708,7 @@ func (s *Service) listItems(ctx context.Context, filter Filter, page, pageSize i
 		nonResponExpr,
 		dictGetPrioritasExpr("assignment_id"),
 		dictHasExpr(bansosDict, "assignment_id"))
-	where, args := filter.clause()
+	where, args := s.whereFor(filter)
 	q := fmt.Sprintf(`SELECT
 		%s
 	FROM %s
