@@ -38,7 +38,7 @@
   const downloadDialogPassword = document.getElementById("download-dialog-password");
   const downloadPasswordInput = document.getElementById("download-password-input");
   const downloadDialogError = document.getElementById("download-dialog-error");
-  const splitToggle = document.getElementById("split-subsls-toggle");
+  const splitRadios = [...document.querySelectorAll('#split-choice input[name="split-level"]')];
   const applyFilterBtn = document.getElementById("apply-filter-btn-list");
   const filtersEl = document.getElementById("daftar-filters");
   const filterToggleBtn = document.getElementById("daftar-filter-toggle");
@@ -555,15 +555,16 @@
   // temporary link and click it" approach (works for any
   // Content-Disposition: attachment endpoint, and keeps this an explicit,
   // self-contained action rather than ever touching location.href).
-  // split adds split=subsls: one file per SubSLS in a ZIP instead of one
-  // report — same endpoint, see report_split.go on the server. unlock is
-  // the token /api/report-unlock handed out for the second password, only
-  // needed (and only asked for) at kabupaten/kota width.
+  // split is "" (one file), "sls" or "subsls" — the last two ask for a ZIP
+  // with one file per wilayah at that level, same endpoint, see
+  // report_split.go on the server. unlock is the token /api/report-unlock
+  // handed out for the second password, only needed (and only asked for)
+  // at kabupaten/kota width.
   function downloadReport(apiPath, split, unlock) {
     const params = buildFilterParams();
     params.set("sortBy", sortColumn);
     params.set("dir", sortDir);
-    if (split) params.set("split", "subsls");
+    if (split) params.set("split", split);
     if (unlock) params.set("unlock", unlock);
     const url = `${apiPath}?${params}`;
     const a = document.createElement("a");
@@ -575,22 +576,27 @@
   }
 
   // The download dialog: Unduh PDF/Excel open it, the actual download
-  // starts from its Unduh button. Its one option, "Pisahkan per SubSLS",
-  // is always the user's to flip: on gives one ZIP with a file per SubSLS,
-  // off one file for the whole scope, at any width — the note under it
-  // carries the row count so a whole-kecamatan or whole-kabupaten/kota
-  // file is a knowing choice. It defaults on above desa width (where one
-  // file is huge) and otherwise to the user's last choice, remembered for
-  // the session, not persisted: a switch that silently stays on across
-  // days would hand out ZIPs to someone who expected a PDF.
+  // starts from its Unduh button. Its one question is the shape of the
+  // download — one whole file, a ZIP with a file per SLS, or a ZIP with a
+  // file per SubSLS — and all three are always available, at any width.
+  // The note under them carries the row count, so choosing one whole file
+  // for a kecamatan or a kabupaten/kota is a knowing choice. Above desa
+  // width it starts on "per SubSLS" (one file is huge there); otherwise on
+  // the user's last choice, remembered for the session but not persisted,
+  // since a setting that silently survives for days would hand out ZIPs to
+  // someone expecting a PDF.
   //
   // Kabupaten/kota width — and only that — also shows the second-password
-  // row, whichever way the switch is set: the password is exchanged for a
-  // token at /api/report-unlock first, so a wrong one is reported inside
-  // the dialog and the password itself never appears in a download URL.
-  const SPLIT_NOTE_FREE = "Aktif: satu ZIP berisi satu file per SubSLS. Nonaktif: satu file untuk seluruh cakupan.";
-  const SPLIT_NOTE_SINGLE = "Filter sudah satu SubSLS; aktif berarti ZIP berisi satu file itu saja.";
-  const SPLIT_NOTE_WIDE = "Aktif: satu ZIP berisi satu file per SubSLS. Nonaktif: satu file utuh untuk seluruh cakupan (%ROWS% baris).";
+  // row, whichever shape is picked: the password is exchanged for a token
+  // at /api/report-unlock first, so a wrong one is reported inside the
+  // dialog and the password itself never appears in a download URL.
+  const SPLIT_NOTE = {
+    "": "Satu file berisi seluruh cakupan.",
+    sls: "Satu ZIP berisi satu file per SLS — satu SLS tetap utuh dalam satu dokumen, lengkap dengan kolom ID SUBSLS.",
+    subsls: "Satu ZIP berisi satu file per SubSLS — file terkecil dan terbanyak.",
+  };
+  const SPLIT_NOTE_WIDE_SINGLE = " Untuk cakupan ini berarti satu file berisi %ROWS% baris.";
+  const SPLIT_NOTE_SINGLE_SUBSLS = " Filter sudah satu SubSLS, jadi ZIP-nya berisi satu file itu saja.";
   // Measured: a 112k-row kecamatan is a 47 MB PDF in ~9 s; Samarinda
   // (552k rows) a 224 MB PDF in ~48 s. Below this the warning would just
   // be noise.
@@ -602,7 +608,9 @@
     503: "Unduhan satu kabupaten/kota tidak diaktifkan di server ini.",
   };
   let pendingDownloadPath = "";
-  let splitPreferred = false;
+  // "" | "sls" | "subsls" — the shape chosen last at desa width or
+  // narrower, where the default isn't forced.
+  let splitPreferred = "";
   let unlockPending = false;
 
   // "Kutai Timur › Kec. Sangatta Utara › Desa/Kel. Sangatta Utara", from
@@ -625,8 +633,32 @@
     return parts.join(" \u203a ");
   }
 
+  // The level currently picked in the dialog.
+  function splitLevel() {
+    const r = splitRadios.find((x) => x.checked);
+    return r ? r.value : "";
+  }
+
+  function setSplitLevel(level) {
+    for (const r of splitRadios) r.checked = r.value === level;
+  }
+
   function confirmLabel(kind) {
-    return splitToggle.checked ? "Unduh ZIP" : `Unduh ${kind}`;
+    return splitLevel() ? "Unduh ZIP" : `Unduh ${kind}`;
+  }
+
+  // Rebuilt whenever the choice changes, so the note always describes the
+  // shape that is actually selected.
+  function updateDialogNote() {
+    const level = splitLevel();
+    let note = SPLIT_NOTE[level];
+    if (!level && !appliedDesa) {
+      note += SPLIT_NOTE_WIDE_SINGLE.replace("%ROWS%", appliedTotal.toLocaleString("id-ID"));
+      if (appliedTotal >= BIG_REPORT_ROWS) note += SPLIT_NOTE_BIG;
+    }
+    if (level === "subsls" && appliedSubsls) note += SPLIT_NOTE_SINGLE_SUBSLS;
+    if (needsUnlock()) note += SPLIT_NOTE_KABKOTA;
+    downloadDialogNote.textContent = note;
   }
 
   function needsUnlock() {
@@ -637,17 +669,10 @@
     pendingDownloadPath = apiPath;
     const kabkotaOnly = needsUnlock();
     const wide = !appliedDesa;
-    const single = !!appliedSubsls;
-    splitToggle.disabled = false;
-    splitToggle.checked = wide ? true : single ? false : splitPreferred;
+    setSplitLevel(wide ? "subsls" : splitPreferred);
     downloadDialogTitle.textContent = `Unduh ${kind}`;
     downloadDialogScope.textContent = `Cakupan: ${appliedScopeText()}`;
-    let note = wide
-      ? SPLIT_NOTE_WIDE.replace("%ROWS%", appliedTotal.toLocaleString("id-ID"))
-      : single ? SPLIT_NOTE_SINGLE : SPLIT_NOTE_FREE;
-    if (wide && appliedTotal >= BIG_REPORT_ROWS) note += SPLIT_NOTE_BIG;
-    if (kabkotaOnly) note += SPLIT_NOTE_KABKOTA;
-    downloadDialogNote.textContent = note;
+    updateDialogNote();
     downloadDialogPassword.hidden = !kabkotaOnly;
     downloadPasswordInput.value = "";
     setUnlockError("");
@@ -659,7 +684,7 @@
       // No <dialog> support: go straight to the download with the only
       // valid choice for this width. Kabupaten/kota width can't be served
       // this way (no place to ask for the password), so it stays a no-op.
-      if (!kabkotaOnly) downloadReport(apiPath, splitToggle.checked);
+      if (!kabkotaOnly) downloadReport(apiPath, splitLevel());
       return;
     }
     downloadDialog.showModal();
@@ -718,15 +743,18 @@
       }
     }
     downloadDialog.close();
-    downloadReport(pendingDownloadPath, splitToggle.checked, unlock);
+    downloadReport(pendingDownloadPath, splitLevel(), unlock);
   }
 
-  splitToggle.addEventListener("change", () => {
-    // Above desa width the default is on regardless, so only a choice made
-    // at desa/SLS/SubSLS width is worth remembering.
-    if (appliedDesa) splitPreferred = splitToggle.checked;
-    downloadDialogConfirm.textContent = confirmLabel(downloadDialogConfirm.dataset.kind);
-  });
+  for (const r of splitRadios) {
+    r.addEventListener("change", () => {
+      // Above desa width the default is forced regardless, so only a
+      // choice made at desa width or narrower is worth remembering.
+      if (appliedDesa) splitPreferred = splitLevel();
+      downloadDialogConfirm.textContent = confirmLabel(downloadDialogConfirm.dataset.kind);
+      updateDialogNote();
+    });
+  }
   downloadDialogCancel.addEventListener("click", () => downloadDialog.close());
   downloadDialogConfirm.addEventListener("click", confirmDownload);
   downloadPasswordInput.addEventListener("keydown", (e) => {

@@ -18,36 +18,73 @@ import (
 	"se2026-titik-maps/internal/xlsxreport"
 )
 
-// The "Pisahkan per SubSLS" download mode of the Daftar menu: instead of
-// one PDF/Excel for the whole filter, one file per SubSLS, delivered as a
+// The split download modes of the Daftar menu: instead of one PDF/Excel
+// for the whole filter, one file per SLS or per SubSLS, delivered as a
 // single ZIP so a click yields a single download whatever the count
 // (browsers block a page that fires hundreds of downloads at once, and
-// the largest kecamatan has 592 SubSLS).
+// the largest kecamatan has 593 SubSLS in 412 SLS).
 //
-// It is switched on with split=subsls on the same two endpoints, so every
-// other parameter — filters, sort, the scope rules in parseReportScope —
-// keeps its meaning; only the response shape changes. Each file is one
-// SubSLS, so the size of any single document is the same whatever the
-// width; what grows is the number of files, and that is what the ZIP is
-// for.
+// It is switched on with split=sls or split=subsls on the same two
+// endpoints, so every other parameter — filters, sort, the scope rules in
+// parseReportScope — keeps its meaning; only the response shape changes.
+// Each file covers one wilayah at the chosen level, so the size of any
+// single document barely depends on how wide the filter is; what grows is
+// the number of files, and that is what the ZIP is for.
+//
+// Which level to pick is a real choice, not a detail: 1,586 of 15,303 SLS
+// are split into several SubSLS (one into 35), so per-SubSLS yields more,
+// smaller files and per-SLS keeps an SLS together in one document — at
+// the median 108 rows per SLS against 714 at the 99th percentile.
 
-// splitParam is the query parameter that selects split mode, and
-// splitSubSLS its only accepted value. Anything else is a 400 rather than
-// silently ignored, so a typo doesn't quietly hand back the single report.
+// splitParam is the query parameter that selects split mode. Anything
+// outside the values below is a 400 rather than silently ignored, so a
+// typo doesn't quietly hand back the single report.
+const splitParam = "split"
+
+// splitLevel is the wilayah level each file of a split download covers.
+type splitLevel string
+
 const (
-	splitParam  = "split"
-	splitSubSLS = "subsls"
+	splitOff    splitLevel = ""
+	splitSLS    splitLevel = "sls"
+	splitSubSLS splitLevel = "subsls"
 )
 
-// parseSplit reads the split parameter: off, per-SubSLS, or an error.
-func parseSplit(q url.Values) (bool, error) {
-	switch v := q.Get(splitParam); v {
-	case "":
-		return false, nil
-	case splitSubSLS:
-		return true, nil
+// on reports whether this is a split download at all.
+func (l splitLevel) on() bool { return l != splitOff }
+
+// codeLen is how many digits of level_6_full_code identify one file's
+// wilayah: 4+3+3+4 for an SLS, plus 2 more for a SubSLS.
+func (l splitLevel) codeLen() int {
+	if l == splitSLS {
+		return 14
+	}
+	return 16
+}
+
+// label is the level's name for messages, slug its filename form.
+func (l splitLevel) label() string {
+	if l == splitSLS {
+		return "SLS"
+	}
+	return "SubSLS"
+}
+
+func (l splitLevel) slug() string {
+	if l == splitSLS {
+		return "per-sls"
+	}
+	return "per-subsls"
+}
+
+// parseSplit reads the split parameter: off, per-SLS, per-SubSLS, or an
+// error.
+func parseSplit(q url.Values) (splitLevel, error) {
+	switch v := splitLevel(q.Get(splitParam)); v {
+	case splitOff, splitSLS, splitSubSLS:
+		return v, nil
 	default:
-		return false, fmt.Errorf("unknown %s value %q (only %q is supported)", splitParam, v, splitSubSLS)
+		return splitOff, fmt.Errorf("unknown %s value %q (only %q and %q are supported)", splitParam, string(v), splitSLS, splitSubSLS)
 	}
 }
 
@@ -64,60 +101,72 @@ var (
 	splitXLSX = splitFormat{kind: "Excel", ext: "xlsx", generate: xlsxreport.Generate}
 )
 
-// subslsGroup is the rows of one SubSLS, in the caller's sort order.
-type subslsGroup struct {
-	code  string // level_6_full_code, 16 digits
+// codeGroup is the rows of one wilayah at the split level, in the
+// caller's sort order.
+type codeGroup struct {
+	code  string // the first codeLen digits of level_6_full_code
 	items []points.Point
 }
 
-// groupBySubSLS partitions items by their SubSLS code, groups in ascending
-// code order and rows within a group in their incoming order — so the sort
-// the user picked still applies inside each file. Every row's code is 16
-// digits in the live table (checked: all 2,195,282), but a shorter one is
-// kept as its own group rather than dropped, so a data slip shows up as an
-// odd file instead of missing rows.
-func groupBySubSLS(items []points.Point) []subslsGroup {
+// groupByCode partitions items by the first codeLen digits of their
+// SubSLS code, groups in ascending code order and rows within a group in
+// their incoming order — so the sort the user picked still applies inside
+// each file. Every row's code is 16 digits in the live table (checked:
+// all 2.2M), but a shorter one is kept as its own group rather than
+// dropped, so a data slip shows up as an odd file instead of missing rows.
+func groupByCode(items []points.Point, codeLen int) []codeGroup {
 	byCode := make(map[string][]points.Point)
 	for _, p := range items {
-		byCode[p.SubSLS] = append(byCode[p.SubSLS], p)
+		code := p.SubSLS
+		if len(code) > codeLen {
+			code = code[:codeLen]
+		}
+		byCode[code] = append(byCode[code], p)
 	}
-	groups := make([]subslsGroup, 0, len(byCode))
+	groups := make([]codeGroup, 0, len(byCode))
 	for code, rows := range byCode {
-		groups = append(groups, subslsGroup{code: code, items: rows})
+		groups = append(groups, codeGroup{code: code, items: rows})
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].code < groups[j].code })
 	return groups
 }
 
-// regionForSubSLS narrows the request's region to one SubSLS, so each file
-// gets the pinned-to-SubSLS header and column set the ordinary single-SubSLS
-// report has (see report.Region.PinnedToSubSLS). The kecamatan/desa/SLS/
-// SubSLS parts come from the code itself (4+3+3+4+2 digits) because the
-// request may only have named a kecamatan, or just the kabupaten/kota.
-func regionForSubSLS(base report.Region, code string, names *wilayahNameIndex) report.Region {
+// regionForCode narrows the request's region to one file's wilayah, so
+// each file carries its own "Keterangan Wilayah" header. A 16-digit code
+// pins a SubSLS, which also drops the per-row ID SUBSLS column (see
+// report.Region.PinnedToSubSLS); a 14-digit one stops at the SLS, which
+// keeps that column because an SLS can hold several SubSLS — 1,586 of them
+// do. The parts come from the code itself because the request may only
+// have named a kecamatan, or just the kabupaten/kota.
+func regionForCode(base report.Region, code string, names *wilayahNameIndex) report.Region {
 	r := base
-	if len(code) == 16 {
-		r.Kecamatan = code[4:7]
-		r.Desa = code[7:10]
-		r.SLS = code[10:14]
-		r.SubSLS = code[14:16]
-		// The narrowed region reaches levels the request never named, so
-		// its names have to be looked up again rather than inherited.
-		r.KecamatanName, r.DesaName, r.SLSName = "", "", ""
-		names.apply(&r)
+	if len(code) < 14 {
+		return r
 	}
+	r.Kecamatan = code[4:7]
+	r.Desa = code[7:10]
+	r.SLS = code[10:14]
+	r.SubSLS = ""
+	if len(code) >= 16 {
+		r.SubSLS = code[14:16]
+	}
+	// The narrowed region reaches levels the request never named, so its
+	// names have to be looked up again rather than inherited.
+	r.KecamatanName, r.DesaName, r.SLSName = "", "", ""
+	names.apply(&r)
 	return r
 }
 
-// handleSplitReport serves the ZIP of per-SubSLS reports for one format.
-// Rows come from a reportPlan (one query down to kecamatan width, one per
-// kecamatan for a whole kabupaten/kota — see report_plan.go), are grouped
-// by SubSLS one unit at a time, and each group is rendered straight into
-// the ZIP stream: the client sees bytes as soon as the first file is done,
-// nothing is buffered twice, and memory stays at one kecamatan. Entries are
-// stored, not deflated: PDF and XLSX are already compressed, and deflating
-// them again costs CPU for a few percent.
-func (s *Server) handleSplitReport(w http.ResponseWriter, r *http.Request, q url.Values, f splitFormat) {
+// handleSplitReport serves the ZIP of per-SLS or per-SubSLS reports for
+// one format. Rows come from a reportPlan (one query down to kecamatan
+// width, one per kecamatan for a whole kabupaten/kota — see
+// report_plan.go), are grouped at the chosen level one unit at a time, and
+// each group is rendered straight into the ZIP stream: the client sees
+// bytes as soon as the first file is done, nothing is buffered twice, and
+// memory stays at one kecamatan. Entries are stored, not deflated: PDF and
+// XLSX are already compressed, and deflating them again costs CPU for a
+// few percent.
+func (s *Server) handleSplitReport(w http.ResponseWriter, r *http.Request, q url.Values, f splitFormat, level splitLevel) {
 	plan, ok := s.planReport(w, r, q, f.kind, true)
 	if !ok {
 		return
@@ -125,7 +174,7 @@ func (s *Server) handleSplitReport(w http.ResponseWriter, r *http.Request, q url
 
 	s.extendWriteDeadline(w, plan)
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="daftar-hasil-pendataan-%s-per-subsls.zip"`, plan.region.FullCode()))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="daftar-hasil-pendataan-%s-%s.zip"`, plan.region.FullCode(), level.slug()))
 	w.Header().Set("Cache-Control", "no-store")
 
 	zw := zip.NewWriter(w)
@@ -150,7 +199,7 @@ func (s *Server) handleSplitReport(w http.ResponseWriter, r *http.Request, q url
 		if len(items) >= plan.scope.maxRows {
 			truncated = append(truncated, unit.KabKota+unit.Kecamatan)
 		}
-		for _, g := range groupBySubSLS(items) {
+		for _, g := range groupByCode(items, level.codeLen()) {
 			if ctx.Err() != nil {
 				return
 			}
@@ -160,15 +209,15 @@ func (s *Server) handleSplitReport(w http.ResponseWriter, r *http.Request, q url
 				Modified: now,
 			})
 			if err != nil {
-				s.log.Error("split report: zip entry failed", "err", err, "format", f.kind, "subsls", g.code)
+				s.log.Error("split report: zip entry failed", "err", err, "format", f.kind, "code", g.code)
 				return
 			}
-			if err := f.generate(fw, regionForSubSLS(plan.region, g.code, plan.names), len(g.items), slices.Values(g.items), false); err != nil {
+			if err := f.generate(fw, regionForCode(plan.region, g.code, plan.names), len(g.items), slices.Values(g.items), false); err != nil {
 				// Same caveat as the single-file handler: headers are
 				// already sent, so the client gets a short archive rather
-				// than an error body. Logged with the SubSLS so it can be
+				// than an error body. Logged with the code so it can be
 				// reproduced alone.
-				s.log.Error("split report: generation failed", "err", err, "format", f.kind, "subsls", g.code)
+				s.log.Error("split report: generation failed", "err", err, "format", f.kind, "code", g.code)
 				return
 			}
 		}
@@ -180,7 +229,7 @@ func (s *Server) handleSplitReport(w http.ResponseWriter, r *http.Request, q url
 		// the user will look — instead of in a header nobody reads on a
 		// download.
 		if fw, err := zw.CreateHeader(&zip.FileHeader{Name: "CATATAN.txt", Method: zip.Deflate, Modified: now}); err == nil {
-			fmt.Fprintf(fw, "Daftar untuk wilayah %s dibatasi hingga %d baris pertama; SubSLS dengan kode terbesar di wilayah itu mungkin tidak lengkap atau tidak ikut. Persempit filternya (misalnya per desa/kelurahan) lalu unduh lagi.\r\n", strings.Join(truncated, ", "), points.SplitReportMaxRows)
+			fmt.Fprintf(fw, "Daftar untuk wilayah %s dibatasi hingga %d baris pertama; %s dengan kode terbesar di wilayah itu mungkin tidak lengkap atau tidak ikut. Persempit filternya (misalnya per desa/kelurahan) lalu unduh lagi.\r\n", strings.Join(truncated, ", "), points.SplitReportMaxRows, level.label())
 		}
 	}
 	if err := zw.Close(); err != nil {

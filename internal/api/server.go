@@ -727,8 +727,8 @@ func (s *Server) handleListReport(w http.ResponseWriter, r *http.Request, f sing
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if split {
-		s.handleSplitReport(w, r, q, sf)
+	if split.on() {
+		s.handleSplitReport(w, r, q, sf, split)
 		return
 	}
 	plan, ok := s.planReport(w, r, q, f.kind, false)
