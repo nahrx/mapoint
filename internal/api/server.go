@@ -56,6 +56,11 @@ type Server struct {
 	// without at least one.
 	auth *auth
 
+	// dayDerivedRefresh is held while refreshDayDerivedCaches runs — see
+	// there. A field rather than a package var so two Servers in one
+	// process (a test, say) do not share one flag.
+	dayDerivedRefresh atomic.Bool
+
 	// unlock gates the kabupaten/kota-wide per-SubSLS download behind the
 	// second password (REPORT_KABKOTA_PASSWORD) — see report_unlock.go.
 	// Disabled (every check fails) when that password is empty.
@@ -129,7 +134,84 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	// inside logging so the logged status/duration still describe the real
 	// response, and outside the mux so static assets (leaflet.js,
 	// style.css) get compressed too, not just the API.
-	return withLogging(s.log, withGzip(s.requireAuth(mux)))
+	return withLogging(s.log, withGzip(s.requireAuth(s.withFreshDay(mux))))
+}
+
+// withFreshDay keeps the menus on the newest batch without anyone having
+// to restart the server or wait out the background timer: every data
+// request first lets points.Service re-check the newest created_at day,
+// which it only really does once every latestDayTTL (30s) — inside that
+// window the call returns immediately. So a batch inserted at 10:00 is
+// what the Daftar, Peta and Tabulasi menus show by 10:00:30 at the
+// latest, whoever loads them.
+//
+// Placed inside requireAuth so it never runs for anonymous traffic, and
+// skipped for the routes that don't read se2026_titik2 at all (login,
+// logout, the unlock exchange, health) — there is no point paying even an
+// occasional 17ms there.
+func (s *Server) withFreshDay(next http.Handler) http.Handler {
+	skip := map[string]bool{
+		"/api/login":         true,
+		"/api/logout":        true,
+		"/api/report-unlock": true,
+		"/healthz":           true,
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") && !skip[r.URL.Path] {
+			s.refreshDayIfStale(r.Context())
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// refreshDayIfStale runs the staleness check and, when the day really
+// moved, brings the two caches that are derived from it back in step. A
+// failure is logged and ignored: the previous day keeps working, which is
+// far better than failing the request behind it.
+func (s *Server) refreshDayIfStale(ctx context.Context) {
+	changed, info, err := s.svc.EnsureLatestDay(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.log.Warn("latest day check failed, keeping previous value", "err", err)
+		}
+		return
+	}
+	if !changed {
+		return
+	}
+	s.log.Info("new data day picked up", "day", info.Day, "rows", info.DayRows, "table_rows", info.TotalRows)
+	if info.NullRows > 0 {
+		s.log.Warn("rows with no created_at are not shown in any menu", "rows", info.NullRows, "day", info.Day)
+	}
+	// The dataset extent and the kabupaten/kota list are counted over the
+	// pinned day, so they are stale the moment it moves. Refreshed in the
+	// background with a context of their own: the request that happened to
+	// notice must not wait for two more queries, and must not cancel them
+	// when it finishes either.
+	go s.refreshDayDerivedCaches()
+}
+
+// refreshDayDerivedCaches recomputes the two caches counted over the
+// pinned day. dayDerivedRefresh guards against a burst of requests all
+// noticing the same new day and each kicking off its own pair of queries.
+func (s *Server) refreshDayDerivedCaches() {
+	if !s.dayDerivedRefresh.CompareAndSwap(false, true) {
+		return
+	}
+	defer s.dayDerivedRefresh.Store(false)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if b, err := s.svc.DatasetBounds(ctx); err != nil {
+		s.log.Warn("bounds refresh after day change failed", "err", err)
+	} else {
+		s.SetBounds(b)
+	}
+	if list, err := s.svc.KabKotaList(ctx); err != nil {
+		s.log.Warn("kabkota refresh after day change failed", "err", err)
+	} else {
+		s.SetKabKota(list)
+	}
 }
 
 func (s *Server) serveIndex(staticFS http.FileSystem) http.HandlerFunc {
@@ -779,11 +861,11 @@ func (s *Server) handleTabulasiDays(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
+	// days is ordered newest first and was just read from the table, so it
+	// is a fresher answer than the cached day — and the one the picker
+	// should default to.
 	latest := s.svc.LatestDay()
-	if latest == "" && len(days) > 0 {
-		// The startup probe hasn't succeeded, but the list just told us
-		// what the newest day is — better than handing the frontend no
-		// default at all.
+	if len(days) > 0 {
 		latest = days[0].Day
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"days": days, "latest": latest})

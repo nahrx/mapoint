@@ -101,35 +101,53 @@
     loadPage();
   }
 
-  // The days a batch was loaded on, newest first, with the newest selected
-  // — the same day the Peta and Daftar menus show, so the menus agree
-  // until the user deliberately picks an older one. A failure here leaves
-  // the picker showing "(terbaru)" and the server applying its own
-  // default, which is the behaviour this menu had before the picker.
+  // Whether the user has deliberately moved off the newest day. While
+  // this is false the picker follows the newest batch on its own, which is
+  // what makes a freshly inserted batch show up here without anyone
+  // touching the control; once it is true the chosen day is left alone,
+  // because silently jumping someone off the batch they were studying
+  // would be worse than being a reload behind.
+  let dayPinnedByUser = false;
+
+  // The days a batch was loaded on, newest first. Re-read every time the
+  // menu is shown and on every Terapkan Filter, not just once at boot: a
+  // tab left open all day would otherwise never learn about a new batch.
+  // A failure leaves whatever the picker already had and lets the server
+  // apply its own default, which is the behaviour this menu had before the
+  // picker existed.
   async function loadDays() {
     let data;
     try {
       data = await fetchWithRetry("/api/tabulasi/days", undefined);
     } catch (err) {
       console.error("failed to load tabulasi days", err);
-      daySelect.innerHTML = '<option value="">(terbaru)</option>';
-      return;
+      if (!daySelect.options.length) daySelect.innerHTML = '<option value="">(terbaru)</option>';
+      return false;
     }
     const days = data.days || [];
-    daySelect.innerHTML = "";
     if (!days.length) {
       daySelect.innerHTML = '<option value="">(terbaru)</option>';
-      return;
+      appliedDay = "";
+      return false;
     }
+
+    const previous = daySelect.value;
+    daySelect.innerHTML = "";
     for (const d of days) {
       const opt = document.createElement("option");
       opt.value = d.day;
       opt.textContent = `${formatDay(d.day)} (${d.total.toLocaleString("id-ID")} data)`;
       daySelect.appendChild(opt);
     }
+
     const latest = data.latest || days[0].day;
-    daySelect.value = latest;
+    // Keep an explicitly chosen day if it still exists; otherwise follow
+    // the newest one.
+    const keep = dayPinnedByUser && days.some((d) => d.day === previous);
+    daySelect.value = keep ? previous : latest;
+    const moved = daySelect.value !== previous;
     appliedDay = daySelect.value;
+    return moved && previous !== "";
   }
 
   // "2026-10-03" -> "3 Oktober 2026". The raw date stays the option's
@@ -148,6 +166,9 @@
   // pressed is worse than one that just works.
   daySelect.addEventListener("change", () => {
     appliedDay = daySelect.value;
+    // From here on the picker stays where the user put it, even if a newer
+    // batch arrives — see dayPinnedByUser.
+    dayPinnedByUser = true;
     currentPage = 1;
     loadPage();
   });
@@ -389,13 +410,16 @@
   }
   downloadXlsxBtn.addEventListener("click", downloadXlsx);
 
-  function applyFilters() {
+  async function applyFilters() {
     appliedKabkota = kabkotaSelect.value;
     appliedKecamatan = kecamatanSelect.value;
     appliedDesa = desaSelect.value;
     appliedSls = slsSelect.value;
     appliedSubsls = subslsSelect.value;
     currentPage = 1;
+    // Cheap (one grouped scan) and the natural moment to notice a batch
+    // loaded since the page was opened.
+    await loadDays();
     loadPage();
   }
   applyFilterBtn.addEventListener("click", applyFilters);
@@ -422,7 +446,12 @@
   // Peta view's.
   let booted = false;
   document.addEventListener("view:tabulasi-shown", async () => {
-    if (booted) return;
+    if (booted) {
+      // Already running: just look for a batch that landed while the menu
+      // was off screen, and reload only if the picker actually moved.
+      if (await loadDays()) loadPage();
+      return;
+    }
     booted = true;
     loadKabKotaOptions();
     // Before the first loadPage, so page one already describes the day the

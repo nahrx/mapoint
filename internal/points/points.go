@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -739,6 +740,11 @@ type Service struct {
 	// latestDay is the newest calendar day in created_at, as "2006-01-02",
 	// or nil before the first successful probe — see RefreshLatestDay.
 	latestDay atomic.Pointer[string]
+
+	// dayProbe serialises the staleness check in EnsureLatestDay, so a
+	// burst of requests on an expired cache runs one query, not one each.
+	dayProbe   sync.Mutex
+	dayChecked time.Time
 }
 
 func NewService(conn driver.Conn) *Service {
@@ -753,11 +759,17 @@ func NewService(conn driver.Conn) *Service {
 // newest day or they would count every row several times over.
 //
 // The day is resolved once and cached rather than being a subquery on
-// every statement: max(toDate(created_at)) is a column scan (14ms), and
-// the answer only changes when someone loads a new batch. It is refreshed
-// on the same 10-minute timer that refreshes the dataset bounds, so a
-// fresh load shows up without a restart — see refreshBoundsPeriodically
-// in main.go.
+// every statement: the probe is a column scan (17ms for the bare max,
+// 32ms for the version that also counts), and the answer only changes
+// when someone loads a new batch.
+//
+// Staleness is bounded two ways. EnsureLatestDay re-checks on demand when
+// the cached answer is older than latestDayTTL, which is what makes a
+// freshly inserted batch appear by itself — every /api request runs it
+// (see withFreshDay in internal/api), so the first one after the TTL
+// expires pays one cheap query and everyone behind it sees the new day.
+// The 10-minute timer in main.go stays as the backstop that also keeps
+// the dataset bounds and the kabupaten/kota list current.
 
 // LatestDayInfo is what RefreshLatestDay found.
 type LatestDayInfo struct {
@@ -770,6 +782,56 @@ type LatestDayInfo struct {
 	NullRows uint64
 	// DayRows is how many rows fall on Day, against TotalRows overall.
 	DayRows, TotalRows uint64
+}
+
+// latestDayTTL is how long the cached day is trusted before a request
+// re-checks it. Thirty seconds is invisible to someone who has just
+// finished loading a batch (the load itself takes minutes), and at the
+// busiest the check costs one 17ms query twice a minute no matter how
+// many requests arrive.
+const latestDayTTL = 30 * time.Second
+
+// EnsureLatestDay re-checks the newest created_at day when the cached
+// answer has gone stale, and reports whether it moved. Cheap by design:
+// nothing happens at all inside the TTL, and outside it the check is a
+// bare max() — the fuller RefreshLatestDay only runs when the day really
+// did change, which is also the only time its row counts are worth
+// logging.
+//
+// Errors are returned but are never fatal to a request: the previous day
+// stays in use, which is strictly better than failing the page.
+func (s *Service) EnsureLatestDay(ctx context.Context) (changed bool, info LatestDayInfo, err error) {
+	s.dayProbe.Lock()
+	defer s.dayProbe.Unlock()
+	if !s.dayChecked.IsZero() && time.Since(s.dayChecked) < latestDayTTL {
+		return false, LatestDayInfo{Day: s.LatestDay()}, nil
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, queryTimeout)
+	var newest time.Time
+	q := fmt.Sprintf("SELECT ifNull(max(toDate(created_at)), toDate(0)) FROM %s", table)
+	err = s.conn.QueryRow(probeCtx, q).Scan(&newest)
+	cancel()
+	if err != nil {
+		return false, LatestDayInfo{}, fmt.Errorf("points: latest day probe: %w", err)
+	}
+
+	day := ""
+	if !newest.IsZero() && newest.Year() > 1970 {
+		day = newest.Format("2006-01-02")
+	}
+	s.dayChecked = time.Now()
+	if day == s.LatestDay() {
+		return false, LatestDayInfo{Day: day}, nil
+	}
+
+	// The day moved: now do the full read, so the log line that announces
+	// the new batch carries its row counts.
+	info, err = s.RefreshLatestDay(ctx)
+	if err != nil {
+		return false, LatestDayInfo{}, err
+	}
+	return true, info, nil
 }
 
 // RefreshLatestDay re-reads the newest created_at day and makes every

@@ -41,15 +41,38 @@ query ke tabel ini dipatok ke hari terbaru:
 ```
 
 Harinya **di-cache**, bukan jadi subquery di tiap statement:
-`max(toDate(created_at))` adalah scan kolom (14 ms terukur) dan jawabannya
-cuma berubah saat ada pemuatan baru. Diambil sekali saat startup — sebelum
-request pertama dilayani — lalu di-refresh di timer 10 menit yang sama
-dengan extent dataset, jadi batch baru terpakai tanpa restart. Log-nya
-muncul saat startup dan setiap kali harinya berganti:
+`max(toDate(created_at))` adalah scan kolom (17 ms terukur; 32 ms untuk
+versi yang sekalian menghitung baris) dan jawabannya cuma berubah saat ada
+pemuatan baru.
+
+**Batch baru terpakai sendiri, tanpa restart dan tanpa menunggu lama.**
+Setiap request `/api/…` lewat `withFreshDay` (`internal/api/server.go`),
+yang memanggil `Service.EnsureLatestDay`. Fungsi itu **tidak melakukan apa
+pun** selama hari yang di-cache belum lewat `latestDayTTL` (30 detik); di
+luar itu ia menjalankan satu `max()` murah, dan baru kalau harinya benar-
+benar berubah ia membaca ulang lengkap (untuk angka di log) dan menyegarkan
+dua cache yang dihitung atas hari itu — extent dataset dan daftar
+kabupaten/kota — di goroutine terpisah supaya request yang kebetulan
+menemukannya tidak ikut menunggu. Jadi batch yang di-insert pukul 10.00
+sudah jadi isi menu Daftar, Peta dan Tabulasi paling lambat pukul 10.00.30,
+siapa pun yang membukanya.
+
+Terbukti lewat `system.query_log`: 20 request beruntun → **1** probe;
+lewat 30 detik lalu 5 request lagi → **1** probe lagi. Timer 10 menit di
+`main.go` tetap ada sebagai jaring pengaman (dan tetap yang menyegarkan
+extent + daftar kabupaten/kota secara berkala). Log-nya muncul saat startup
+dan setiap kali harinya berganti:
 
 ```
-level=INFO msg="data day selected" day=2026-10-03 rows=2271262 table_rows=2271262
+level=INFO msg="data day selected" day=2026-10-06 rows=2272149 table_rows=8973328
+level=INFO msg="new data day picked up" day=2026-10-06 rows=2272149 table_rows=8973328
 ```
+
+Baris pertama dari startup, yang kedua dari `withFreshDay` saat batch baru
+terdeteksi di tengah jalan. `table_rows` sengaja ikut: selisihnya dengan
+`rows` adalah jumlah baris batch lama yang sengaja tidak ditampilkan (saat
+ini 8.973.328 baris di tabel untuk 2.272.149 baris yang tampil — empat
+batch).
 
 Yang ikut dipatok: `/api/points`, `/api/points-bounds`, `/api/list` dan
 kedua unduhannya, `/api/bounds` (angka "Total data" di panel Peta), kelima
@@ -68,6 +91,14 @@ query yang merakit WHERE-nya sendiri (bounds + kelima daftar wilayah)
 memanggil `s.dayClause()`. Dibuktikan lewat `system.query_log`: setelah
 menembak kesebelas endpoint menu, 11 dari 11 query yang menyentuh
 `se2026_titik2` mengandung `toDate(created_at)`, nol tanpa.
+
+**Urutan di `main.go` penting.** Probe hari harus jalan **sebelum**
+`DatasetBounds` dan `KabKotaList`, karena keduanya dihitung atas hari yang
+dipatok. Awalnya tidak begitu, dan selama tabel masih berisi satu batch
+tidak ada yang kelihatan; begitu batch kedua masuk, panel Peta menulis
+"Total data: 5.642.182 titik" (seharusnya 1.427.552) dan tiap angka di
+dropdown kabupaten/kota terhitung empat batch (Kutai Timur 820.954, bukan
+207.785). Sekarang urutannya dibalik dan ketiganya cocok dengan ClickHouse.
 
 Dua perilaku pinggir yang disengaja:
 
@@ -1209,12 +1240,24 @@ data)") — dan **default-nya hari terkini**, hari yang sama yang dipatok
 menu Peta dan Daftar, jadi ketiganya sepakat sampai seseorang sengaja
 memilih batch lama.
 
-Karena letaknya di luar kartu filter, pilihannya **langsung berlaku saat
+  Karena letaknya di luar kartu filter, pilihannya **langsung berlaku saat
 diubah**, seperti mengganti tab — bukan menunggu "Terapkan Filter" yang
 tombolnya ada di bagian lain. Kontrol yang diam-diam tidak melakukan apa
 pun sampai tombol di tempat lain ditekan lebih membingungkan daripada
 kontrol yang langsung bekerja. Hari yang terpilih tetap terbawa saat
 berpindah tab dan saat mengunduh Excel.
+
+**Daftar harinya dibaca ulang** setiap kali menu ini ditampilkan dan
+setiap kali "Terapkan Filter" ditekan, bukan sekali saat boot: tab yang
+dibiarkan terbuka seharian kalau tidak begitu tidak akan pernah tahu ada
+batch baru. Selama pengguna belum pernah menggeser pemilihnya sendiri,
+pemilihnya **ikut pindah ke batch terbaru** begitu batch itu muncul
+(`dayPinnedByUser` di `tabulasi.js`). Begitu ia memilih hari tertentu,
+pilihan itu dibiarkan — melompat-lompatkan orang dari batch yang sedang
+ditelitinya lebih buruk daripada telat satu reload. Diuji dengan empat
+batch nyata di tabel (16 Sep, 1, 3 dan 6 Okt): halaman baru terbuka di
+6 Oktober, memilih 1 Oktober bertahan saat menu dibuka ulang, saat
+Terapkan Filter, dan di URL unduhan Excel.
 
 Tanggalnya dikirim sebagai `day=YYYY-MM-DD` ke `/api/tabulasi` dan
 `/api/tabulasi/xlsx`, lalu dipatok lewat `Filter.Day` →
