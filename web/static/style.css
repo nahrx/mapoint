@@ -1879,6 +1879,13 @@ body {
   cursor: pointer;
 }
 
+/* Same trap as the password row: display: flex above would beat the
+   hidden attribute's UA display: none, so the label has to opt back out
+   explicitly when daftar.js hides it. */
+.split-choice label[hidden] {
+  display: none;
+}
+
 .split-choice input {
   accent-color: var(--navy-600);
   width: 16px;

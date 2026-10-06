@@ -592,6 +592,7 @@
   // dialog and the password itself never appears in a download URL.
   const SPLIT_NOTE = {
     "": "Satu file berisi seluruh cakupan.",
+    desa: "Satu ZIP berisi satu file per desa/kelurahan — file paling sedikit dan paling tebal (satu desa ±766 baris di median, 29.439 di yang terbesar).",
     sls: "Satu ZIP berisi satu file per SLS — satu SLS tetap utuh dalam satu dokumen, lengkap dengan kolom ID SUBSLS.",
     subsls: "Satu ZIP berisi satu file per SubSLS — file terkecil dan terbanyak.",
   };
@@ -643,6 +644,22 @@
     for (const r of splitRadios) r.checked = r.value === level;
   }
 
+  // "Pisahkan per Desa/Kelurahan" is only offered while the filter is
+  // wider than one desa — at desa width or narrower every row is in the
+  // same desa, so it would just be "Satu file utuh" wrapped in a ZIP.
+  // Hidden rather than disabled: a permanently greyed-out option reads as
+  // something broken.
+  function updateSplitChoices() {
+    const perDesaUseful = !appliedDesa;
+    for (const r of splitRadios) {
+      const label = r.closest("label");
+      if (!label || label.dataset.splitLevel !== "desa") continue;
+      label.hidden = !perDesaUseful;
+      // A hidden radio must never stay the selected one.
+      if (!perDesaUseful && r.checked) setSplitLevel("");
+    }
+  }
+
   function confirmLabel(kind) {
     return splitLevel() ? "Unduh ZIP" : `Unduh ${kind}`;
   }
@@ -670,6 +687,7 @@
     const kabkotaOnly = needsUnlock();
     const wide = !appliedDesa;
     setSplitLevel(wide ? "subsls" : splitPreferred);
+    updateSplitChoices();
     downloadDialogTitle.textContent = `Unduh ${kind}`;
     downloadDialogScope.textContent = `Cakupan: ${appliedScopeText()}`;
     updateDialogNote();

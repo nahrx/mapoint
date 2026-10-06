@@ -856,44 +856,65 @@ isi tabel `se2026_titik2` sebagai daftar biasa — bukan tampilan peta:
   | Pilihan | Hasil | `split=` |
   |---|---|---|
   | **Satu file utuh** | satu PDF/Excel untuk seluruh cakupan | *(kosong)* |
-  | **Pisahkan per SLS** | satu ZIP berisi satu file per SLS (`daftar-hasil-pendataan-<14 digit>.pdf`/`.xlsx`) | `sls` |
+  | **Pisahkan per Desa/Kelurahan** | satu ZIP berisi satu file per desa (`daftar-hasil-pendataan-<10 digit>.pdf`/`.xlsx`) | `desa` |
+  | **Pisahkan per SLS** | satu ZIP berisi satu file per SLS (`<14 digit>`) | `sls` |
   | **Pisahkan per SubSLS** | satu ZIP berisi satu file per SubSLS (`<16 digit>`) | `subsls` |
 
-  Tiga radio, bukan sakelar plus sub-pilihan: pilihannya memang satu dari
-  tiga, dan sub-kontrol yang baru hidup saat sakelarnya menyala
+  Radio, bukan sakelar plus sub-pilihan: pilihannya memang satu dari
+  beberapa, dan sub-kontrol yang baru hidup saat sakelarnya menyala
   menyembunyikan separuh pilihan sampai seseorang menemukannya.
 
-  **Per SLS vs per SubSLS** bukan detail: 1.586 dari 15.303 SLS terbagi
-  jadi beberapa SubSLS (satu di antaranya jadi 35), sisanya satu-lawan-satu.
-  Per SubSLS memberi file terkecil dan terbanyak; per SLS menjaga satu SLS
-  tetap utuh dalam satu dokumen. Yang per-SLS otomatis memakai set kolom
-  "lebar" — **dengan kolom ID SUBSLS per baris** — karena satu file bisa
-  memuat beberapa SubSLS; yang per-SubSLS memakai set kolom satu-SubSLS
-  yang menaruh kodenya sekali di header (lihat `report.Region.PinnedToSubSLS`).
-  Dua-duanya diperiksa pada desa 6404052008 (6 SLS / 10 SubSLS): ZIP per
-  SLS berisi 6 file dan file SLS 0003 memuat keempat SubSLS-nya (89 baris),
-  ZIP per SubSLS berisi 10 file.
+  **Levelnya bukan detail.** Terukur pada batch yang terpasang: satu desa
+  berisi 766 baris di median dan 29.439 di yang terbesar; satu SLS 108 dan
+  2.604; dan 1.586 dari 15.303 SLS terbagi jadi beberapa SubSLS (satu di
+  antaranya jadi 35), sisanya satu-lawan-satu. Jadi per-Desa memberi file
+  paling sedikit dan paling tebal (satu kecamatan berisi 8 desa di median,
+  26 di yang terbanyak), per-SubSLS paling banyak dan paling tipis, dan
+  per-SLS di antaranya.
 
-  Ketiganya **selalu tersedia**, di lebar mana pun — tidak ada yang
-  di-disable. Default-nya "per SubSLS" di atas desa/kelurahan (satu file
-  utuh di situ besar) dan di bawahnya mengikuti pilihan terakhir pengguna
-  (diingat selama sesi, tidak disimpan). Catatan di bawah pilihan berubah
+  Hanya level **SubSLS** yang memakai set kolom satu-SubSLS — kode wilayah
+  ditulis sekali di header, tanpa kolom ID SUBSLS per baris di PDF (lihat
+  `report.Region.PinnedToSubSLS`). Per-Desa dan per-SLS memakai set kolom
+  "lebar" **dengan kolom ID SUBSLS**, karena satu filenya memang bisa
+  memuat banyak SubSLS. Diperiksa: file desa 6471030001 berisi 16.574
+  baris dari 102 SubSLS (sama persis dengan ClickHouse), file SLS
+  64040520080003 memuat keempat SubSLS-nya.
+
+  **"Pisahkan per Desa/Kelurahan" hanya muncul kalau filternya lebih luas
+  dari satu desa** — yaitu saat berhenti di kecamatan atau kabupaten/kota.
+  Di lebar desa atau lebih sempit semua baris ada di desa yang sama, jadi
+  pilihan itu cuma akan jadi "Satu file utuh" yang dibungkus ZIP.
+  Disembunyikan, bukan di-disable: opsi yang permanen kelabu terbaca
+  seperti sesuatu yang rusak. Kalau pilihan itu sedang aktif lalu filternya
+  dipersempit ke desa, pilihannya otomatis kembali ke "Satu file utuh" —
+  radio tersembunyi tidak boleh tetap jadi yang terpilih. (Jebakan CSS yang
+  sama dengan baris password: `.split-choice label` punya `display: flex`,
+  jadi ada aturan `label[hidden] { display: none }` eksplisit; tanpa itu
+  atribut `hidden` kalah dan labelnya tetap tampil.)
+
+  Pilihan lainnya **selalu tersedia** di lebar mana pun. Default-nya "per
+  SubSLS" di atas desa/kelurahan (satu file utuh di situ besar) dan di
+  bawahnya mengikuti pilihan terakhir pengguna (diingat selama sesi, tidak
+  disimpan). Catatan di bawah pilihan berubah
   mengikuti yang dipilih; untuk "satu file utuh" di atas desa ia menyebut
   jumlah barisnya, dan di atas 50.000 baris menambahkan peringatan
   ukuran/waktu, supaya pilihan itu disadari:
 
-  | Filter sampai | Satu file utuh | Pisahkan per SLS | Pisahkan per SubSLS | Password kedua |
-  |---|---|---|---|---|
-  | Kabupaten/Kota | ya (Samarinda 552.636 baris: PDF 84 ribu halaman / 224 MB / 48 detik, Excel 84 MB / 23 detik) | ya (Samarinda 2.048 SLS) | ya (2.988 SubSLS: PDF 36 detik / 184 MB, Excel 63 detik / 94 MB) | **ya** — hanya di lebar ini |
-  | Kecamatan | ya (terbesar 112 ribu baris: PDF 47 MB / 9 detik, Excel 17 MB / 4,5 detik) | ya (terbesar 412 SLS: Excel 5,5 detik / 21 MB) | ya (593 SubSLS: Excel 5,8 detik / 22 MB, PDF 7,4 detik / 38 MB) | tidak |
-  | Desa/Kelurahan atau SLS | ya | ya | ya (desa 165 SubSLS ±2–3 detik) | tidak |
-  | SubSLS | ya | ya — ZIP berisi satu file itu saja | ya — sama | tidak |
+  | Filter sampai | Satu file utuh | Per Desa/Kelurahan | Per SLS | Per SubSLS | Password kedua |
+  |---|---|---|---|---|---|
+  | Kabupaten/Kota | ya (Samarinda 552.636 baris: PDF 84 ribu halaman / 224 MB / 48 detik, Excel 84 MB / 23 detik) | ya (terbanyak 244 desa) | ya (Samarinda 2.048 SLS) | ya (2.988 SubSLS: PDF 36 detik / 184 MB, Excel 63 detik / 94 MB) | **ya** — hanya di lebar ini |
+  | Kecamatan | ya (terbesar 112 ribu baris: PDF 47 MB / 9 detik, Excel 17 MB / 4,5 detik) | ya (6 desa: Excel 5,0 detik / 18 MB) | ya (412 SLS: Excel 5,5 detik / 21 MB) | ya (593 SubSLS: Excel 5,8 detik / 22 MB, PDF 7,4 detik / 38 MB) | tidak |
+  | Desa/Kelurahan atau SLS | ya | — tidak ditawarkan | ya | ya (desa 165 SubSLS ±2–3 detik) | tidak |
+  | SubSLS | ya | — tidak ditawarkan | ya — ZIP berisi satu file itu saja | ya — sama | tidak |
 
   Aturan cakupan dan password ditegakkan di server oleh `parseReportScope`
-  di `internal/api/server.go`; levelnya dipilih lewat `split=sls` atau
-  `split=subsls` di endpoint yang sama (nilai lain → 400), lihat
-  `splitLevel` di `internal/api/report_split.go` — bukan cuma oleh dialog
-  di frontend. Hasil mode pisah ZIP karena browser memblokir
+  di `internal/api/server.go`; levelnya dipilih lewat `split=desa`,
+  `split=sls` atau `split=subsls` di endpoint yang sama (nilai lain → 400),
+  lihat `splitLevel` di `internal/api/report_split.go` — bukan cuma oleh
+  dialog di frontend. Server tidak menolak `split=desa` pada filter yang
+  sudah satu desa; ia hanya menghasilkan ZIP berisi satu file, sama seperti
+  `split=subsls` pada filter satu SubSLS. Yang menyembunyikannya di lebar
+  itu cuma dialognya. Hasil mode pisah ZIP karena browser memblokir
   halaman yang memicu ratusan unduhan sekaligus; entri ZIP-nya disimpan
   tanpa kompresi ulang (PDF dan XLSX sudah terkompresi) dan dialirkan per
   file, jadi unduhan mulai begitu file pertama jadi.
@@ -1783,7 +1804,7 @@ bagian "Login" di atas.
 - `GET /api/subsls?kabkota=&kecamatan=&desa=&sls=` — daftar Kode SubSLS di dalam satu SLS (keempat parameter wajib)
 - `GET /api/subsls-polygon?kabkota=&kecamatan=&desa=&sls=&subsls=` — batas SubSLS sebagai GeoJSON FeatureCollection, dari PostGIS. `kabkota`, `kecamatan` dan `desa` **wajib**; `sls` dan `subsls` opsional dan hanya mempersempit. Yang dikembalikan adalah semua SubSLS yang `idsubsls`-nya berawalan kode gabungan itu — satu desa bisa ratusan polygon (maksimal terukur 164), satu SubSLS tepat satu. Cakupan lebih luas dari desa ditolak 400. Tiap feature membawa `properties.idsubsls`. Tanpa PostGIS terkonfigurasi, endpoint ini menjawab 503 dan petanya tetap jalan tanpa overlay
 - `GET /api/list?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&prioritas=&flagBaru=&flagRegsosek=&nonRespon=&bansos=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar. `sortBy` salah satu dari `nama` (default), `alamat`, `subsls`, `jenis_prelist`, `nomor_bangunan`, `keberadaan_keluarga`, `keberadaan_bku`, `status`, `penggunaan_bangunan`, `assignment_id`, `ada_assignment_baru`, `ada_regsosek`, `assignment_id_baru`, `non_respon`, `prioritas`, `bansos` (nilai lain jatuh balik ke `nama`); `dir` `asc` (default) atau `desc`; `pageSize` maks 200. `search` mencari substring nama (tidak case-sensitive), dikirim lewat parameter binding, bukan interpolasi string. Filter atribut (`jenisPrelist`, `keberadaanKeluarga`, `status`, `penggunaanBangunan`, `keberadaanBku`, `prioritas`) semuanya opsional, **multi-nilai**, dan independen dari filter wilayah maupun satu sama lain — ulangi parameternya untuk tiap nilai (`?status=OPEN&status=DRAFT`), yang jadi satu `IN (...)`; nilainya divalidasi terhadap enum tetap di `internal/points/points.go` dan satu nilai tak dikenal menolak seluruh request dengan 400; pakai `__EMPTY__` untuk memfilter kolom yang kosong, boleh digabung dengan nilai biasa. `flagBaru`, `flagRegsosek`, `nonRespon` dan `bansos` hanya menerima `""` (semua), `"1"` (ada) atau `"0"` (tidak ada) — nilai lain ditolak 400
-- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&prioritas=&flagBaru=&flagRegsosek=&nonRespon=&bansos=&search=&sortBy=&dir=&split=` — PDF "Daftar Hasil Pendataan". Minimal `kabkota` (lebih luas ditolak 400); `kecamatan`, `desa`, `sls` dan `subsls` opsional untuk mempersempit. Tanpa `kecamatan` (satu kabupaten/kota utuh) wajib ada `unlock=<token>` dari `/api/report-unlock`, kalau tidak 403 — baik untuk satu file maupun `split`. Batas baris `ReportMaxRows` sampai desa, `SplitReportMaxRows` per query di atasnya (satu kab/kota = satu query per kecamatan). Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`. `split=sls` atau `split=subsls` mengubah balasannya jadi **ZIP** (`application/zip`, `daftar-hasil-pendataan-<kode>-per-sls.zip` / `-per-subsls.zip`) berisi satu PDF per SLS atau per SubSLS (pada filter satu SubSLS: ZIP berisi satu file); nilai `split` lain → 400. Batas barisnya `SplitReportMaxRows` per kecamatan, bukan `ReportMaxRows`
+- `GET /api/list/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&prioritas=&flagBaru=&flagRegsosek=&nonRespon=&bansos=&search=&sortBy=&dir=&split=` — PDF "Daftar Hasil Pendataan". Minimal `kabkota` (lebih luas ditolak 400); `kecamatan`, `desa`, `sls` dan `subsls` opsional untuk mempersempit. Tanpa `kecamatan` (satu kabupaten/kota utuh) wajib ada `unlock=<token>` dari `/api/report-unlock`, kalau tidak 403 — baik untuk satu file maupun `split`. Batas baris `ReportMaxRows` sampai desa, `SplitReportMaxRows` per query di atasnya (satu kab/kota = satu query per kecamatan). Filter atribut dan `search` ikut mempersempit isi PDF kalau diisi, urutan barisnya ikut `sortBy`/`dir`. `split=desa`, `split=sls` atau `split=subsls` mengubah balasannya jadi **ZIP** (`application/zip`, `daftar-hasil-pendataan-<kode>-per-desa.zip` / `-per-sls.zip` / `-per-subsls.zip`) berisi satu PDF per desa/kelurahan, per SLS atau per SubSLS (kalau filternya sudah sesempit levelnya: ZIP berisi satu file); nilai `split` lain → 400. Batas barisnya `SplitReportMaxRows` per kecamatan, bukan `ReportMaxRows`
 - `GET /api/list/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&jenisPrelist=&keberadaanKeluarga=&status=&status=&penggunaanBangunan=&keberadaanBku=&prioritas=&flagBaru=&flagRegsosek=&nonRespon=&bansos=&search=&sortBy=&dir=&split=` — laporan "Daftar Hasil Pendataan" yang sama persis, sebagai workbook Excel (.xlsx) — parameter dan aturan cakupannya identik dengan `/api/list/pdf`, termasuk `split=subsls` → ZIP berisi satu .xlsx per SubSLS (lihat `prepareReport` di `internal/api/server.go` dan `handleSplitReport` di `internal/api/report_split.go`, dipakai bareng oleh kedua handler)
 - `GET /api/reg2022?kabkota=&kecamatan=&desa=&sls=&subsls=&matchStatus=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel untuk menu Daftar Reg2022 (tabel `se2026_match_regsosek`). Filter wilayah sama dengan endpoint lain; `matchStatus` divalidasi terhadap 7 nilai tetap di `internal/regsosek/regsosek.go` (pakai `__EMPTY__` untuk kolom kosong); `search` mencari substring di `nama_prelist` dan `nama_kk` saja, lewat parameter binding — nomor KK/NIK tidak dipakai sebagai kunci cari. `sortBy` salah satu dari `nama` (default), `nama_kk`, `subsls`, `match_status`, `alamat_regsosek`, `nama_matched`, `assignment_id`
 - `GET /api/reg2022/filter-options` — daftar nilai `match_status` untuk dropdown filter menu Daftar Reg2022

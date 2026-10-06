@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,10 +32,12 @@ import (
 // single document barely depends on how wide the filter is; what grows is
 // the number of files, and that is what the ZIP is for.
 //
-// Which level to pick is a real choice, not a detail: 1,586 of 15,303 SLS
-// are split into several SubSLS (one into 35), so per-SubSLS yields more,
-// smaller files and per-SLS keeps an SLS together in one document — at
-// the median 108 rows per SLS against 714 at the 99th percentile.
+// Which level to pick is a real choice, not a detail. Measured over the
+// live batch: a desa holds 766 rows at the median and 29,439 at the
+// largest, an SLS 108 and 2,604; 1,586 of 15,303 SLS are split into
+// several SubSLS (one into 35). So per-Desa gives few, fat files — a
+// kecamatan has 8 desa at the median, 26 at most — while per-SubSLS gives
+// many thin ones, and per-SLS sits between them.
 
 // splitParam is the query parameter that selects split mode. Anything
 // outside the values below is a 400 rather than silently ignored, so a
@@ -46,46 +49,70 @@ type splitLevel string
 
 const (
 	splitOff    splitLevel = ""
+	splitDesa   splitLevel = "desa"
 	splitSLS    splitLevel = "sls"
 	splitSubSLS splitLevel = "subsls"
 )
+
+// splitLevels lists the real levels, coarsest first — the order the
+// dialog offers them in, and the list the error message quotes.
+var splitLevels = []splitLevel{splitDesa, splitSLS, splitSubSLS}
 
 // on reports whether this is a split download at all.
 func (l splitLevel) on() bool { return l != splitOff }
 
 // codeLen is how many digits of level_6_full_code identify one file's
-// wilayah: 4+3+3+4 for an SLS, plus 2 more for a SubSLS.
+// wilayah. level_6_full_code is 4+3+3+4+2: kabkota, kecamatan, desa, SLS,
+// SubSLS.
 func (l splitLevel) codeLen() int {
-	if l == splitSLS {
+	switch l {
+	case splitDesa:
+		return 10
+	case splitSLS:
 		return 14
+	default:
+		return 16
 	}
-	return 16
 }
 
 // label is the level's name for messages, slug its filename form.
 func (l splitLevel) label() string {
-	if l == splitSLS {
+	switch l {
+	case splitDesa:
+		return "Desa/Kelurahan"
+	case splitSLS:
 		return "SLS"
+	default:
+		return "SubSLS"
 	}
-	return "SubSLS"
 }
 
 func (l splitLevel) slug() string {
-	if l == splitSLS {
+	switch l {
+	case splitDesa:
+		return "per-desa"
+	case splitSLS:
 		return "per-sls"
+	default:
+		return "per-subsls"
 	}
-	return "per-subsls"
 }
 
-// parseSplit reads the split parameter: off, per-SLS, per-SubSLS, or an
+// parseSplit reads the split parameter: off, one of splitLevels, or an
 // error.
 func parseSplit(q url.Values) (splitLevel, error) {
-	switch v := splitLevel(q.Get(splitParam)); v {
-	case splitOff, splitSLS, splitSubSLS:
-		return v, nil
-	default:
-		return splitOff, fmt.Errorf("unknown %s value %q (only %q and %q are supported)", splitParam, string(v), splitSLS, splitSubSLS)
+	v := splitLevel(q.Get(splitParam))
+	if v == splitOff {
+		return splitOff, nil
 	}
+	if slices.Contains(splitLevels, v) {
+		return v, nil
+	}
+	names := make([]string, len(splitLevels))
+	for i, l := range splitLevels {
+		names[i] = strconv.Quote(string(l))
+	}
+	return splitOff, fmt.Errorf("unknown %s value %q (only %s are supported)", splitParam, string(v), strings.Join(names, ", "))
 }
 
 // splitFormat is the per-format part of a split download: the two
@@ -132,21 +159,24 @@ func groupByCode(items []points.Point, codeLen int) []codeGroup {
 }
 
 // regionForCode narrows the request's region to one file's wilayah, so
-// each file carries its own "Keterangan Wilayah" header. A 16-digit code
-// pins a SubSLS, which also drops the per-row ID SUBSLS column (see
-// report.Region.PinnedToSubSLS); a 14-digit one stops at the SLS, which
-// keeps that column because an SLS can hold several SubSLS — 1,586 of them
-// do. The parts come from the code itself because the request may only
-// have named a kecamatan, or just the kabupaten/kota.
+// each file carries its own "Keterangan Wilayah" header. Only a 16-digit
+// code pins a SubSLS, which also drops the per-row ID SUBSLS column from
+// the PDF (see report.Region.PinnedToSubSLS); a shorter one leaves the
+// levels below it empty, so the file keeps that column — which it needs,
+// because a desa or an SLS file can hold many SubSLS. The parts come from
+// the code itself because the request may only have named a kecamatan, or
+// just the kabupaten/kota.
 func regionForCode(base report.Region, code string, names *wilayahNameIndex) report.Region {
 	r := base
-	if len(code) < 14 {
+	if len(code) < 10 {
 		return r
 	}
 	r.Kecamatan = code[4:7]
 	r.Desa = code[7:10]
-	r.SLS = code[10:14]
-	r.SubSLS = ""
+	r.SLS, r.SubSLS = "", ""
+	if len(code) >= 14 {
+		r.SLS = code[10:14]
+	}
 	if len(code) >= 16 {
 		r.SubSLS = code[14:16]
 	}

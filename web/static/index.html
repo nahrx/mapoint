@@ -334,6 +334,10 @@
           <fieldset class="split-choice" id="split-choice">
             <legend>Bentuk unduhan:</legend>
             <label><input type="radio" name="split-level" value="" checked> Satu file utuh</label>
+            <!-- Only offered when the filter is wider than one desa; below
+                 that it would always mean a one-file ZIP. daftar.js hides
+                 the whole label. -->
+            <label data-split-level="desa"><input type="radio" name="split-level" value="desa"> Pisahkan per Desa/Kelurahan</label>
             <label><input type="radio" name="split-level" value="sls"> Pisahkan per SLS</label>
             <label><input type="radio" name="split-level" value="subsls"> Pisahkan per SubSLS</label>
           </fieldset>
