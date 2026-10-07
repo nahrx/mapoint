@@ -22,6 +22,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"se2026-titik-maps/internal/bansos"
 	"se2026-titik-maps/internal/mapdb"
 	"se2026-titik-maps/internal/pdfreport"
 	"se2026-titik-maps/internal/points"
@@ -31,12 +32,13 @@ import (
 )
 
 type Server struct {
-	svc     *points.Service
-	regsvc  *regsosek.Service
-	conn    driver.Conn
-	bounds  atomic.Pointer[points.Bounds]
-	kabkota atomic.Pointer[[]points.KabKotaInfo]
-	log     *slog.Logger
+	svc       *points.Service
+	regsvc    *regsosek.Service
+	bansossvc *bansos.Service
+	conn      driver.Conn
+	bounds    atomic.Pointer[points.Bounds]
+	kabkota   atomic.Pointer[[]points.KabKotaInfo]
+	log       *slog.Logger
 
 	// mapPool is nil when config.Config.MapEnabled() is false — the SubSLS
 	// polygon feature is optional, and handleSubSLSPolygon degrades to a
@@ -67,8 +69,8 @@ type Server struct {
 	unlock *reportUnlock
 }
 
-func NewServer(svc *points.Service, regsvc *regsosek.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, mapPool *pgxpool.Pool, accounts []Account, dataUpdatedAt, kabkotaPassword string, log *slog.Logger) *Server {
-	s := &Server{svc: svc, regsvc: regsvc, conn: conn, mapPool: mapPool, auth: newAuth(accounts), unlock: newReportUnlock(kabkotaPassword), dataUpdatedAt: dataUpdatedAt, log: log}
+func NewServer(svc *points.Service, regsvc *regsosek.Service, bansossvc *bansos.Service, conn driver.Conn, bounds points.Bounds, kabkota []points.KabKotaInfo, mapPool *pgxpool.Pool, accounts []Account, dataUpdatedAt, kabkotaPassword string, log *slog.Logger) *Server {
+	s := &Server{svc: svc, regsvc: regsvc, bansossvc: bansossvc, conn: conn, mapPool: mapPool, auth: newAuth(accounts), unlock: newReportUnlock(kabkotaPassword), dataUpdatedAt: dataUpdatedAt, log: log}
 	s.bounds.Store(&bounds)
 	s.kabkota.Store(&kabkota)
 	return s
@@ -110,6 +112,9 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /api/match-points", s.handleMatchPoints)
 	mux.HandleFunc("GET /api/match-bounds", s.handleMatchBounds)
 	mux.HandleFunc("GET /api/subsls-polygon", s.handleSubSLSPolygon)
+	mux.HandleFunc("GET /api/bansos", s.handleBansos)
+	mux.HandleFunc("GET /api/bansos/pdf", s.handleBansosPDF)
+	mux.HandleFunc("GET /api/bansos/xlsx", s.handleBansosXLSX)
 	mux.HandleFunc("GET /api/tabulasi/days", s.handleTabulasiDays)
 	mux.HandleFunc("GET /api/tabulasi/variables", s.handleTabulasiVariables)
 	mux.HandleFunc("GET /api/tabulasi", s.handleTabulasi)
@@ -126,6 +131,7 @@ func (s *Server) Routes(staticFS http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /reg2022", s.serveIndex(staticFS))
 	mux.HandleFunc("GET /peta-match", s.serveIndex(staticFS))
 	mux.HandleFunc("GET /tabulasi", s.serveIndex(staticFS))
+	mux.HandleFunc("GET /bansos", s.serveIndex(staticFS))
 	mux.Handle("/", http.FileServer(staticFS))
 
 	// requireAuth sits outside the mux so it covers every route including

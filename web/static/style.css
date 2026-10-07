@@ -202,6 +202,7 @@ body {
 
 .filter-row select,
 .filter-row input[type="text"],
+.filter-row input[type="search"],
 .list-pagesize,
 .preset-select,
 .preset-name-input {
@@ -216,6 +217,22 @@ body {
   color: var(--text);
   transition: border-color var(--transition), box-shadow var(--transition);
 }
+
+/* type="search" is there to keep the password manager away from these
+   boxes (see index.html), not to change how they look — so WebKit's search
+   decorations are turned off and the box keeps the text-input geometry. */
+.filter-row input[type="search"] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.filter-row input[type="search"]::-webkit-search-decoration,
+.filter-row input[type="search"]::-webkit-search-cancel-button,
+.filter-row input[type="search"]::-webkit-search-results-button {
+  -webkit-appearance: none;
+  display: none;
+}
+
 
 /* Native select arrows differ wildly across platforms; this draws one
    consistent chevron and reserves room for it on the right. */
@@ -232,6 +249,7 @@ body {
 
 .filter-row select:hover:not(:disabled),
 .filter-row input[type="text"]:hover,
+.filter-row input[type="search"]:hover,
 .list-pagesize:hover,
 .preset-select:hover:not(:disabled),
 .preset-name-input:hover {
@@ -240,6 +258,7 @@ body {
 
 .filter-row select:focus,
 .filter-row input[type="text"]:focus,
+.filter-row input[type="search"]:focus,
 .list-pagesize:focus,
 .preset-select:focus,
 .preset-name-input:focus {
@@ -256,7 +275,8 @@ body {
   opacity: 1; /* Safari dims disabled selects on top of our own styling */
 }
 
-.filter-row input[type="text"]::placeholder {
+.filter-row input[type="text"]::placeholder,
+.filter-row input[type="search"]::placeholder {
   color: var(--text-faint);
 }
 
@@ -1389,6 +1409,7 @@ body {
      12.5px while the selects beside it grow. */
   .filter-row select,
   .filter-row input[type="text"],
+  .filter-row input[type="search"],
   .multiselect-toggle {
     min-height: var(--tap);
     font-size: 16px; /* iOS zooms the page in on focus below 16px */

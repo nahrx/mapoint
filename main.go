@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"se2026-titik-maps/internal/api"
+	"se2026-titik-maps/internal/bansos"
 	"se2026-titik-maps/internal/chdb"
 	"se2026-titik-maps/internal/config"
 	"se2026-titik-maps/internal/mapdb"
@@ -49,6 +50,7 @@ func run(log *slog.Logger) error {
 
 	svc := points.NewService(conn)
 	regsvc := regsosek.NewService(conn)
+	bansossvc := bansos.NewService(conn)
 
 	// Logged rather than fatal, on purpose: the rest of the app already
 	// tolerates ClickHouse being briefly unavailable at startup, and making
@@ -136,7 +138,7 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("dashboard accounts loaded", "count", len(accounts))
 
-	srv := api.NewServer(svc, regsvc, conn, bounds, kabkotaList, mapPool, accounts, cfg.DataUpdatedAt, cfg.ReportKabKotaPassword, log)
+	srv := api.NewServer(svc, regsvc, bansossvc, conn, bounds, kabkotaList, mapPool, accounts, cfg.DataUpdatedAt, cfg.ReportKabKotaPassword, log)
 	go refreshBoundsPeriodically(ctx, svc, srv, log)
 
 	httpServer := &http.Server{

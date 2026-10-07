@@ -392,6 +392,50 @@ dikirim ke ClickHouse lewat parameter binding (`?` placeholder di
 server yang diperlukan untuk pencariannya sendiri: `/api/points` dan
 `/api/list` sama-sama lewat `parseFilter` yang sama.
 
+### Kotak cari dan autofill password manager
+
+Keempat kotak cari (menu Peta, Daftar, Daftar Match Regsosek, Peta Match
+Reg2022) sering terisi sendiri dengan **username dashboard**. Penyebabnya
+bukan kode pencarian, melainkan password manager browser:
+`autocomplete="off"` saja tidak cukup — Chrome mengabaikannya dan mencari
+sendiri kolom teks untuk dipasangkan dengan kolom password yang ia lihat di
+dokumen. Di aplikasi satu-halaman ini kolom password itu selalu ada di DOM
+walau dialognya tertutup: "Password unduh kabupaten/kota" di dialog unduh
+menu Daftar. Kotak cari di menu Daftar adalah kolom teks terdekat, jadi
+itulah yang diisi.
+
+Perbaikannya dua lapis, keduanya struktural, bukan menebak-nebak CSS:
+
+1. **Kotak carinya bukan lagi `type="text"` tapi `type="search"`** — yang
+   memang jenisnya, dan yang membuatnya keluar dari daftar kandidat
+   "username" di heuristik password manager. Supaya tampilannya tidak
+   berubah sama sekali, semua aturan CSS yang dulu menyasar
+   `input[type="text"]` sekarang menyasar keduanya, plus
+   `-webkit-appearance: none` dan mematikan dekorasi bawaan WebKit untuk
+   search. Terukur sesudahnya: tinggi 30px, padding 6px 9px, border 1px,
+   radius 5px, font 12,5px — identik dengan sebelumnya di keempat menu.
+2. **Kolom password dialog unduh dipindah ke `<form>`-nya sendiri**, yang
+   sengaja tidak berisi satu pun kolom teks. Dengan begitu browser punya
+   lingkup form yang jelas untuk kolom password itu dan tidak ada kandidat
+   username di dalamnya. Konsekuensinya Enter di situ jadi submit sungguhan
+   — yang akan menavigasi halaman — jadi `daftar.js` menangkap event
+   `submit` dan menjalankan unduhan seperti tombol Unduh. Diuji: Enter
+   memunculkan "Password salah." tanpa pindah halaman, dan jalur benarnya
+   tetap menutup dialog lalu mengunduh dengan token.
+
+Ditambah atribut opt-out yang dibaca password manager pihak ketiga
+(`data-lpignore`, `data-1p-ignore`, `data-bwignore`, `data-form-type`), juga
+pada kotak nama preset — kolom teks bebas lain di halaman yang sama.
+
+Catatan jujur soal pengujiannya: perilaku autofill ini milik password
+manager browser dan tidak bisa direproduksi di browser uji yang tidak punya
+kredensial tersimpan. Yang bisa dibuktikan di sini adalah strukturnya —
+kotak cari tidak berada di form mana pun, dan satu-satunya form yang punya
+kolom password tidak punya kolom teks sama sekali — dan bahwa tampilan serta
+fungsinya tidak berubah. Kalau di Chrome Anda masih terisi juga, langkah
+berikutnya adalah menghapus kolom password itu dari DOM selama dialognya
+tertutup (sekarang ia selalu ada, cuma `hidden`).
+
 Yang perlu tambahan justru zoom-nya. Di menu Daftar hasil pencarian langsung
 kelihatan sebagai baris tabel, sedangkan di peta hasil pencarian nama cuma
 beberapa titik yang tersebar di area seluas provinsi — praktis tidak
@@ -1204,6 +1248,167 @@ Bedanya dari peta utama: extent untuk auto-zoom dihitung per request lewat
 saat startup. Itu karena di sini extent-nya ikut berubah oleh filter Match
 Status dan pencarian, bukan cuma oleh wilayah.
 
+### Menu Bansos
+
+Tabel `bansos` (16.086 baris) — penerima bantuan sosial yang dicocokkan
+dengan prelist SE2026 — ditampilkan apa adanya sebagai daftar berhalaman,
+dengan filter wilayah berjenjang seperti menu lain. Kolomnya: Nama
+(`bansos_nama`), ID SubSLS (`subsls`), Assignment ID, Kode Desa DTSEN
+(`dtsen_kode_desa`), Alamat DTSEN, lalu RT/RW/Alamat KTP.
+
+`nik`, `no_kk` dan `nik_kk` ada di tabelnya dan **sengaja tidak diambil
+sama sekali** — sama seperti di menu Daftar Match Regsosek: nomor identitas
+tidak ditampilkan di mana pun, jadi ia tidak ikut di SELECT, bukan diambil
+lalu disembunyikan. Dengan begitu ia tidak pernah sampai ke browser dan
+tidak ada kode tampilan di kemudian hari yang bisa membocorkannya.
+
+**Kolom KTP hanya terisi kalau desanya sama.** `rt_ktp`, `rw_ktp` dan
+`alamat_ktp` berasal dari alamat KTP, yang untuk seperempat baris berada di
+desa lain — alamat yang menyesatkan kalau ditaruh bersebelahan dengan
+alamat DTSEN. Jadi ketiganya dikosongkan kecuali `kode_desa_ktp =
+dtsen_kode_desa`. Terukur: 10.918 dari 16.086 baris memenuhi syarat itu.
+Syarat `dtsen_kode_desa != ''` ikut dicek supaya dua kolom yang sama-sama
+kosong tidak terhitung "desa yang sama" dan memunculkan alamat yang tidak
+berasal dari mana pun (1.006 baris punya `kode_desa_ktp` kosong).
+`rt_ktp`/`rw_ktp` bertipe `Int32` tapi dibaca sebagai string supaya "tidak
+ditampilkan" jadi sel kosong, bukan angka 0 yang terbaca seperti RT 0 yang
+sungguhan.
+
+**Filter wilayahnya memakai dua kolom**, dan itu bukan pilihan gaya
+melainkan bentuk datanya:
+
+| Kolom | Isi | Kosong di |
+|---|---|---|
+| `subsls` | kode wilayah 16 digit (sampai SubSLS) | 3.322 dari 16.086 baris |
+| `dtsen_kode_desa` | 10 digit — **hanya sampai desa** | 4.617 baris |
+
+Aturannya (`bansos.Filter.clause`):
+
+- Baris yang punya `subsls` difilter dengan kolom itu, di level mana pun
+  yang dipilih pengguna.
+- Baris tanpa `subsls` jatuh ke `dtsen_kode_desa`, yang cuma bisa menjawab
+  sampai desa. Begitu filternya turun ke SLS atau SubSLS, baris-baris itu
+  **hilang** — bukan ditebak: tidak ada apa pun di baris itu yang
+  menyebutkan SLS-nya, dan menampilkannya di semua SLS dalam desa itu lebih
+  buruk daripada tidak menampilkannya.
+- 1.584 baris tidak punya kedua kodenya. Baris itu hanya muncul kalau tidak
+  ada filter wilayah sama sekali — yang sekaligus satu-satunya cara
+  menemukannya.
+
+Dibuktikan pada desa 6404010003: tanpa filter SLS ada **82** baris (42 dari
+`subsls` + 40 dari fallback); begitu difilter sampai SLS, tinggal yang dari
+`subsls` saja. Angka tiap level dicocokkan dengan `count()` langsung di
+ClickHouse (kabupaten 6472: 3.800; kecamatan 6472040: 544; desa
+6472040002: 86; SLS: 4; SubSLS: 4).
+
+Isi dropdown wilayahnya memakai daftar wilayah SE2026 yang sama dengan menu
+lain (`/api/kecamatan` dkk.), tapi **angka jumlah barisnya tidak
+ditampilkan** di label: angka itu menghitung `se2026_titik2`, dan
+"201.291 data" di sebelah tabel 16 ribu baris akan terbaca sebagai jumlah
+menu ini sendiri.
+
+**Unduh PDF & Unduh Excel** — dua tombol di baris aksi, isinya mengikuti
+filter yang **sedang diterapkan**, bukan isi dropdown yang belum ditekan
+Terapkan Filter.
+
+Bedanya dengan menu lain: **tidak ada syarat cakupan minimal**, dan kedua
+tombolnya tidak pernah di-disable. Menu Daftar membatasi (minimal
+kabupaten/kota, plus password untuk kab/kota utuh) dan Daftar Match
+Regsosek membatasi (minimal kecamatan) karena tabel mereka jutaan dan
+ratusan ribu baris; tabel ini seluruhnya 16.086 baris — lebih kecil
+daripada satu desa `se2026_titik2` — jadi unduhan tanpa filter sekalipun
+tetap laporan yang wajar. Terukur: seluruh tabel jadi PDF 892 halaman /
+2,7 MB dalam 0,5 detik dan Excel 1,1 MB dalam 0,8 detik; satu desa (82
+baris) 14 KB / 12 KB, keduanya di bawah 0,2 detik. `ReportMaxRows` (40.000)
+ada sebagai jaring pengaman kalau tabelnya tumbuh, bukan batas yang
+tersentuh hari ini.
+
+Isi keduanya sama kecuali satu kolom: **Assignment ID ada di Excel, tidak
+di PDF** — alasan yang sama dengan laporan Daftar, UUID 36 karakter bukan
+sesuatu yang dibaca orang dari kertas, dan di PDF ia memakan lebih banyak
+lebar daripada seluruh kolom KTP digabung. Delapan kolom PDF-nya memakai
+265mm dari 277mm yang tersedia, jadi masih longgar. Blok "Keterangan
+Wilayah" di header memakai `report.Region` yang sama dengan laporan lain,
+jadi nama kecamatan/desa/SLS ikut muncul di situ (lihat "Nama wilayah di
+header laporan").
+
+Nama filenya `daftar-bansos-<kode wilayah>.pdf`/`.xlsx`, atau
+`daftar-bansos-semua.*` kalau tidak ada filter wilayah sama sekali.
+
+**Dialog opsi unduhan** — seperti di menu Daftar, kedua tombol membuka
+dialog dulu: judul, baris cakupan (termasuk kata kunci pencarian kalau ada),
+empat pilihan bentuk unduhan, lalu Batal/Unduh. Nilai `split=`-nya sama
+persis dengan menu Daftar (`desa`, `sls`, `subsls`, atau kosong), dan
+`parseSplit`/`splitLevel` di `report_split.go` dipakai ulang apa adanya.
+
+Yang **tidak** ikut disalin dari menu Daftar, dan alasannya: tidak ada
+syarat cakupan minimal dan tidak ada password kedua. Keduanya di sana
+karena ukuran (jutaan baris, ZIP ratusan MB); tabel ini 16 ribu baris, jadi
+menyalin gerbangnya cuma akan jadi ritual. Dialognya juga elemen sendiri
+(`#bansos-download-dialog`), bukan dialog menu Daftar yang dipakai bersama
+— berbagi akan berarti satu komponen yang isinya kebanyakan pengecualian;
+kelas CSS-nya tetap sama persis, jadi tampilannya identik.
+
+**Baris yang tidak bisa ditempatkan tidak dibuang.** Di sinilah tabel ini
+berbeda dari tabel titik: tidak setiap baris punya kode untuk setiap level
+(lihat tabel dua kolom di atas). Per desa, 1.584 baris tidak punya kode apa
+pun; per SLS dan per SubSLS, 3.322 baris tanpa `subsls` juga tidak bisa
+ditempatkan. Baris-baris itu dikumpulkan ke **satu file tambahan**
+`daftar-bansos-tanpa-kode-wilayah.pdf`/`.xlsx` di akhir ZIP, dan
+`CATATAN.txt` menyebut jumlah serta alasannya. Unduhan yang diam-diam
+kehilangan seperlima tabel jauh lebih buruk daripada unduhan dengan satu
+file bernama canggung — yang membukanya harus bisa melihat bahwa
+bagian-bagiannya berjumlah utuh. Diuji pada desa 6404010003 (82 baris):
+ZIP per SLS berisi 7 file SLS (8+4+5+6+13+3+3 = 42 baris) plus file
+tanpa-kode-wilayah berisi 40 — **totalnya 82**, sama dengan tabel di layar.
+
+Jumlah file untuk seluruh tabel: 996 per desa, 5.978 per SLS, 6.377 per
+SubSLS. Tidak perlu streaming per kecamatan seperti unduhan menu Daftar —
+16 ribu baris muat sekali ambil — **tapi tetap perlu perpanjangan
+`WriteTimeout`**: kasus terberat (seluruh tabel per SubSLS) terukur 6.377
+file / 47 MB dalam 17 detik untuk Excel dan 17 MB / 6 detik untuk PDF.
+Tujuh belas detik memang di dalam batas 30 detik, tapi tidak cukup longgar
+untuk dipercaya di server yang lebih lambat atau koneksi klien yang pelan,
+dan kegagalannya berupa ZIP terpotong tanpa pesan apa pun. Jadi batas
+tulisnya diangkat ke `reportWriteTimeout` yang sama dengan unduhan menu
+Daftar.
+
+**Cari Nama** — kotak teks di awal baris filter, mencari substring (tidak
+case-sensitive) di `bansos_nama` saja; kolom nama lain di tabel itu
+(`nama_kk`, `dtsen_nama_kepala`) tidak ikut dicari. Digabung `AND` dengan
+filter wilayah, diterapkan lewat tombol Terapkan Filter atau Enter di
+kotaknya. Seperti di menu lain, teksnya tidak pernah masuk ke teks SQL: ia
+dikirim sebagai bind parameter untuk `positionCaseInsensitive`. Diuji
+dengan `'; DROP TABLE bansos; --` sebagai kata kunci — hasilnya 0 baris dan
+tabelnya tetap 16.086 baris.
+
+**Sort per kolom** — klik header mana pun (kecuali No) untuk mengurutkan,
+klik lagi untuk membalik arah; panah kecil menandai kolom yang aktif.
+Nama kolom di query string divalidasi terhadap whitelist `listSortColumns`
+sebelum jadi SQL, dan nilai yang tidak dikenal jatuh ke default
+(`bansos_nama`), bukan error — tabel harus tetap tampil dalam urutan
+tertentu.
+
+Dua hal yang disengaja di sini:
+
+- **Kolom KTP diurutkan menurut yang ditampilkan, bukan nilai mentahnya.**
+  Ekspresi sortnya sama dengan ekspresi tampilannya (`if(desa sama, …)`),
+  jadi baris yang selnya kosong tidak ikut diurutkan memakai nilai yang
+  tidak terlihat pengguna.
+- **RT/RW diurutkan sebagai angka**, dengan yang kosong dipetakan ke `-1`
+  supaya mengumpul di satu ujung. Sebagai teks "10" akan berada sebelum
+  "2". Terbukti: sort RT menurun memberi 107, 100, 100.
+- Setiap ORDER BY ditutup dengan `subsls, assignment_id` sebagai pemecah
+  seri. Banyak baris berbagi nilai yang sama (termasuk nilai kosong), dan
+  ClickHouse tidak menjanjikan sort yang stabil — tanpa pemecah seri satu
+  baris bisa berpindah halaman padahal tidak ada yang berubah.
+
+Keduanya ikut ke **unduhan**: `search`, `sortBy` dan `dir` masuk ke URL
+unduhan, jadi file yang keluar berisi dan berurutan persis seperti yang di
+layar, dan kata kuncinya tercetak di blok "Filter Tambahan" di header
+laporan. Diuji: unduhan Excel untuk "siti" + sort RT menurun berisi 420
+baris, baris pertamanya RT 92.
+
 ### Menu Tabulasi
 
 Menu kelima (`/tabulasi`): tabulasi silang **SubSLS × kategori** untuk enam
@@ -1835,6 +2040,9 @@ bagian "Login" di atas.
 - `GET /` — peta (frontend)
 - `GET /api/points?minLat=&maxLat=&minLon=&maxLon=&zoom=&kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&prioritas=&flagBaru=&flagRegsosek=&nonRespon=&bansos=&search=` — data titik/cluster untuk satu viewport. Filter atributnya sama persis dengan `/api/list` (multi-nilai, ulangi parameternya per nilai) — keduanya lewat `parseFilter` yang sama. Titik individual ikut membawa kedua flag "Ditemukan di …", `non_respon`, `prioritas` dan `bansos` untuk tooltip (filter wilayah semuanya opsional, tapi berjenjang — lihat Validate di `internal/points/points.go`)
 - `GET /api/points-bounds?kabkota=&kecamatan=&desa=&sls=&subsls=&jenisPrelist=&keberadaanKeluarga=&status=&penggunaanBangunan=&keberadaanBku=&prioritas=&flagBaru=&flagRegsosek=&nonRespon=&bansos=&search=` — extent geografis baris yang cocok dengan filter (persentil 1%/99% dari `latitude_ppl`/`longitude_ppl`), untuk auto-zoom ke hasil pencarian nama di menu Peta. Parameternya sama persis dengan `/api/points` minus kotak viewport-nya. Balasannya `min_lat`/`max_lat`/`min_lon`/`max_lon` + `total`; kalau tidak ada baris yang cocok, `total` 0 dan keempat batasnya `null` (bukan NaN — `encoding/json` menolak NaN, lihat `points.FiniteOrNil`), jadi pemanggil tidak boleh nge-zoom ke situ. Dipanggil frontend hanya saat pencarian nama aktif — lihat "Cari nama di menu Peta" di atas
+- `GET /api/bansos?kabkota=&kecamatan=&desa=&sls=&subsls=&search=&page=&pageSize=&sortBy=&dir=` — satu halaman tabel menu Bansos dari tabel `bansos`. Kelima parameter wilayahnya divalidasi `parseWilayah` yang sama dengan menu lain (kode bukan-digit atau level tanpa induknya → 400); bagaimana prefiksnya dicocokkan ke dua kolom wilayah tabel ini ada di `bansos.Filter.clause` — lihat "Menu Bansos" di atas. `search` mencari substring di `bansos_nama` (tidak case-sensitive, lewat bind parameter). `sortBy` salah satu dari `bansos_nama` (default), `subsls`, `assignment_id`, `dtsen_kode_desa`, `dtsen_alamat`, `rt_ktp`, `rw_ktp`, `alamat_ktp` — nilai lain jatuh ke default, bukan error; `dir` `asc` (default) atau `desc`. `pageSize` maks 200
+- `GET /api/bansos/pdf?kabkota=&kecamatan=&desa=&sls=&subsls=&search=&sortBy=&dir=&split=` — PDF "Daftar Bansos" untuk filter wilayah yang diberikan. **Tidak ada cakupan minimal** (lihat "Menu Bansos"); tanpa parameter apa pun ia mengunduh seluruh tabel. Dibatasi `bansos.ReportMaxRows` (40.000), dan laporan yang kena batas itu menuliskannya di header. `split=desa|sls|subsls` mengubah balasannya jadi **ZIP** berisi satu file per wilayah di level itu, plus satu file `daftar-bansos-tanpa-kode-wilayah.*` untuk baris yang tidak punya kode selevel itu — lihat "Menu Bansos"
+- `GET /api/bansos/xlsx?kabkota=&kecamatan=&desa=&sls=&subsls=&search=&sortBy=&dir=&split=` — laporan yang sama sebagai workbook Excel; parameter dan aturannya identik dengan `/api/bansos/pdf`, cuma Excel-nya menambah kolom Assignment ID
 - `GET /api/tabulasi/days` — hari `created_at` yang ada di tabel (`day`, `total`), terbaru dulu, plus `latest` sebagai default pemilih hari menu Tabulasi. Satu scan kolom ber-GROUP BY (17ms), tidak di-cache: daftarnya berubah persis saat ada batch baru, dan terlambat satu refresh berarti menyembunyikan batch itu dari satu-satunya menu yang bisa memilihnya
 - `GET /api/tabulasi/variables` — enam variabel tabulasi (kunci, label, urutan kategori) dalam urutan tab; statis, sumber kebenaran untuk `?var=` di bawah
 - `GET /api/tabulasi?var=&kabkota=&kecamatan=&desa=&sls=&subsls=&day=&page=&pageSize=` — satu halaman tabulasi silang SubSLS × kategori untuk variabel `var` (salah satu kunci dari endpoint di atas; lainnya ditolak 400). Filter sama dengan `/api/list` lewat `parseFilter`. `page`/`pageSize` menghitung **SubSLS**, bukan baris data; `pageSize` maks 200. Balasannya `columns` (urutan kategori, `""` terakhir kalau ada yang kosong), `rows[].counts` (kategori → jumlah) + `rows[].total`, `total_rows` (jumlah SubSLS di seluruh filter), `grand` + `grand_total` (total per kategori dan keseluruhan untuk seluruh filter)

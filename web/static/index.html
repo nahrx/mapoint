@@ -15,6 +15,7 @@
     <button id="nav-reg2022" class="nav-btn">Daftar Match Regsosek</button>
     <button id="nav-petamatch" class="nav-btn">Peta Match Reg2022</button>
     <button id="nav-tabulasi" class="nav-btn">Tabulasi</button>
+    <button id="nav-bansos" class="nav-btn">Bansos</button>
     <!-- A real form post, not fetch: logging out should work even if the
          page's scripts failed to load. -->
     <form id="logout-form" method="post" action="/api/logout">
@@ -76,7 +77,9 @@
         <div class="filter-group" role="group" aria-label="Filter lainnya">
           <div class="filter-row">
             <label for="peta-search">Cari Nama:</label>
-            <input type="text" id="peta-search" placeholder="Cari nama responden…" autocomplete="off">
+            <input type="search" id="peta-search" placeholder="Cari nama responden…" autocomplete="off"
+                 spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore
+                 data-form-type="other">
           </div>
           <div class="filter-row">
             <span class="filter-label" id="jenisprelist-label-peta">Jenis Prelist:</span>
@@ -225,7 +228,9 @@
         <div class="filter-group" role="group" aria-label="Filter lainnya">
           <div class="filter-row">
             <label for="daftar-search">Cari Nama:</label>
-            <input type="text" id="daftar-search" placeholder="Cari nama responden…" autocomplete="off">
+            <input type="search" id="daftar-search" placeholder="Cari nama responden…" autocomplete="off"
+                 spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore
+                 data-form-type="other">
           </div>
           <div class="filter-row">
             <span class="filter-label" id="jenisprelist-label-list">Jenis Prelist:</span>
@@ -342,11 +347,13 @@
             <label><input type="radio" name="split-level" value="subsls"> Pisahkan per SubSLS</label>
           </fieldset>
           <p class="download-dialog-note" id="download-dialog-note"></p>
-          <div class="download-dialog-password" id="download-dialog-password" hidden>
+          <form class="download-dialog-password" id="download-dialog-password" hidden
+                autocomplete="off" data-form-type="other">
             <label for="download-password-input">Password unduh kabupaten/kota:</label>
-            <input type="password" id="download-password-input" autocomplete="off" spellcheck="false">
+            <input type="password" id="download-password-input" autocomplete="off"
+                   spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore>
             <p class="download-dialog-error" id="download-dialog-error" role="alert" hidden></p>
-          </div>
+          </form>
           <div class="download-dialog-actions">
             <button type="button" class="preset-btn" id="download-dialog-cancel">Batal</button>
             <button type="button" class="download-pdf" id="download-dialog-confirm">Unduh</button>
@@ -417,7 +424,9 @@
       <div id="reg2022-filters" class="list-filters">
         <div class="filter-row">
           <label for="reg2022-search">Cari:</label>
-          <input type="text" id="reg2022-search" placeholder="Cari nama / nama KK…" autocomplete="off">
+          <input type="search" id="reg2022-search" placeholder="Cari nama / nama KK…" autocomplete="off"
+                 spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore
+                 data-form-type="other">
         </div>
         <div class="filter-row">
           <label for="kabkota-select-reg">Kabupaten/Kota:</label>
@@ -522,7 +531,9 @@
         <p class="list-note">Titik koordinat Regsosek 2022 dari keluarga SE2026 berstatus tidak ditemukan.</p>
         <div class="filter-row">
           <label for="match-search">Cari:</label>
-          <input type="text" id="match-search" placeholder="Cari nama / nama KK…" autocomplete="off">
+          <input type="search" id="match-search" placeholder="Cari nama / nama KK…" autocomplete="off"
+                 spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore
+                 data-form-type="other">
         </div>
         <div class="filter-row">
           <label for="kabkota-select-match">Kabupaten/Kota:</label>
@@ -674,6 +685,137 @@
 
     <div id="tabulasi-loading" class="list-loading hidden">Memuat data…</div>
   </section>
+
+  <section id="view-bansos" class="view">
+    <div id="bansos-container" class="list-container">
+      <div id="bansos-head" class="list-head">
+        <h1>Bansos</h1>
+        <button id="bansos-filter-toggle" class="list-filter-toggle" type="button" aria-expanded="true" aria-controls="bansos-filters">
+          Filter <span aria-hidden="true">&#9650;</span>
+        </button>
+      </div>
+
+      <p class="list-note">Penerima bantuan sosial yang dicocokkan dengan prelist SE2026. Kolom RT/RW/Alamat KTP hanya terisi kalau desa KTP sama dengan desa DTSEN.</p>
+
+      <div id="bansos-filters" class="list-filters">
+        <div class="filter-group" role="group" aria-label="Filter wilayah">
+          <div class="filter-row">
+            <label for="bansos-search">Cari Nama:</label>
+            <input type="search" id="bansos-search" placeholder="Cari nama penerima…" autocomplete="off"
+                   spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore
+                   data-form-type="other">
+          </div>
+          <div class="filter-row">
+            <label for="kabkota-select-bansos">Kabupaten/Kota:</label>
+          <select id="kabkota-select-bansos">
+              <option value="">Semua Kabupaten/Kota</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="kecamatan-select-bansos">Kecamatan:</label>
+            <select id="kecamatan-select-bansos" disabled>
+              <option value="">Semua Kecamatan</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="desa-select-bansos">Desa/Kelurahan:</label>
+            <select id="desa-select-bansos" disabled>
+              <option value="">Semua Desa/Kelurahan</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="sls-select-bansos">Kode SLS:</label>
+            <select id="sls-select-bansos" disabled>
+              <option value="">Semua SLS</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label for="subsls-select-bansos">Kode SubSLS:</label>
+            <select id="subsls-select-bansos" disabled>
+              <option value="">Semua SubSLS</option>
+            </select>
+          </div>
+        </div>
+        <div id="bansos-actions" class="list-actions">
+          <button id="apply-filter-btn-bansos" class="apply-filter-btn" type="button">Terapkan Filter</button>
+          <!-- No minimum wilayah here, unlike the other menus: the whole
+               table is 16k rows, so even an unfiltered download is a sane
+               report. See bansosReport in internal/api. -->
+          <div class="download-btn-group">
+            <button id="download-pdf-btn-bansos" class="download-pdf" type="button" title="Unduh PDF untuk filter yang sedang diterapkan">
+              Unduh PDF
+            </button>
+            <button id="download-xlsx-btn-bansos" class="download-xlsx" type="button" title="Unduh Excel untuk filter yang sedang diterapkan">
+              Unduh Excel
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Download options, same shape as the Daftar menu's dialog and
+           reusing its CSS classes. Its own element rather than a shared
+           one because this menu has no second-password row and no minimum
+           wilayah, so sharing would mean a component that is mostly
+           exceptions. -->
+      <dialog id="bansos-download-dialog" class="download-dialog" aria-labelledby="bansos-download-title">
+        <div class="download-dialog-body">
+          <h3 id="bansos-download-title">Unduh PDF</h3>
+          <p class="download-dialog-scope" id="bansos-download-scope"></p>
+          <fieldset class="split-choice" id="bansos-split-choice">
+            <legend>Bentuk unduhan:</legend>
+            <label><input type="radio" name="bansos-split-level" value="" checked> Satu file utuh</label>
+            <label><input type="radio" name="bansos-split-level" value="desa"> Pisahkan per Desa/Kelurahan</label>
+            <label><input type="radio" name="bansos-split-level" value="sls"> Pisahkan per SLS</label>
+            <label><input type="radio" name="bansos-split-level" value="subsls"> Pisahkan per SubSLS</label>
+          </fieldset>
+          <p class="download-dialog-note" id="bansos-download-note"></p>
+          <div class="download-dialog-actions">
+            <button type="button" class="preset-btn" id="bansos-download-cancel">Batal</button>
+            <button type="button" class="download-pdf" id="bansos-download-confirm">Unduh</button>
+          </div>
+        </div>
+      </dialog>
+
+      <div id="bansos-toolbar" class="list-toolbar">
+        <span id="bansos-page-info" class="list-page-info">Memuat…</span>
+        <div id="bansos-pagination" class="list-pagination">
+          <button id="bansos-prev">&laquo; Sebelumnya</button>
+          <button id="bansos-next">Selanjutnya &raquo;</button>
+          <label for="bansos-pagesize">Baris/halaman:</label>
+          <select id="bansos-pagesize" class="list-pagesize">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="bansos-error" class="list-error hidden"></div>
+
+      <div id="bansos-table-wrap" class="list-table-wrap">
+        <table id="bansos-table" class="list-table">
+          <thead>
+            <tr>
+              <th class="num">No</th>
+              <th class="sortable" data-sort="bansos_nama">Nama<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="subsls">ID SubSLS<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="assignment_id">Assignment ID<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="dtsen_kode_desa">Kode Desa DTSEN<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="dtsen_alamat">Alamat DTSEN<span class="sort-arrow"></span></th>
+              <th class="sortable num" data-sort="rt_ktp">RT KTP<span class="sort-arrow"></span></th>
+              <th class="sortable num" data-sort="rw_ktp">RW KTP<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="alamat_ktp">Alamat KTP<span class="sort-arrow"></span></th>
+            </tr>
+          </thead>
+          <tbody id="bansos-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="bansos-loading" class="list-loading hidden">Memuat data…</div>
+  </section>
+
   <script src="/vendor/leaflet/leaflet.js"></script>
   <script src="/common.js"></script>
   <script src="/app.js"></script>
@@ -681,6 +823,7 @@
   <script src="/reg2022.js"></script>
   <script src="/match-map.js"></script>
   <script src="/tabulasi.js"></script>
+  <script src="/bansos.js"></script>
   <script src="/nav.js"></script>
 </body>
 </html>

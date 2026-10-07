@@ -775,11 +775,13 @@
   }
   downloadDialogCancel.addEventListener("click", () => downloadDialog.close());
   downloadDialogConfirm.addEventListener("click", confirmDownload);
-  downloadPasswordInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      confirmDownload();
-    }
+  // The password row is a <form> (so the browser's password manager has a
+  // form to scope itself to, and leaves the search boxes alone — see
+  // index.html). That makes Enter a real submit, which would navigate, so
+  // it is intercepted here and does what the Unduh button does.
+  downloadDialogPassword.addEventListener("submit", (e) => {
+    e.preventDefault();
+    confirmDownload();
   });
   downloadPasswordInput.addEventListener("input", () => setUnlockError(""));
   // A click on the backdrop (outside the body) closes, like Escape does.

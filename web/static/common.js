@@ -326,6 +326,15 @@ window.App = (() => {
     input.className = "preset-name-input";
     input.placeholder = "Nama preset…";
     input.setAttribute("aria-label", "Nama preset");
+    // Same reason as the search boxes: a bare text field in a page that
+    // also has a password field is what password managers offer the saved
+    // username for. See index.html.
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.setAttribute("data-lpignore", "true");
+    input.setAttribute("data-1p-ignore", "");
+    input.setAttribute("data-bwignore", "");
+    input.setAttribute("data-form-type", "other");
     const okBtn = document.createElement("button");
     okBtn.type = "button";
     okBtn.className = "preset-btn preset-btn-primary";
