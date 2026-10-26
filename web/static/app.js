@@ -30,6 +30,8 @@
     preferCanvas: true,
     worldCopyJump: true,
     zoomControl: false,
+    // Past the tiles' own maximum — see App.MAP_MAX_ZOOM in common.js.
+    maxZoom: App.MAP_MAX_ZOOM,
   }).setView([-2.5, 118], 5);
 
   L.control.zoom({ position: "bottomright" }).addTo(map);
@@ -63,7 +65,8 @@
   }
 
   const osmLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
+    maxZoom: App.MAP_MAX_ZOOM,
+    maxNativeZoom: App.TILE_MAX_NATIVE_ZOOM,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   });
   // Esri World Imagery: free satellite tiles, no API key/signup needed —
@@ -73,7 +76,8 @@
   const satelliteLayer = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     {
-      maxZoom: 19,
+      maxZoom: App.MAP_MAX_ZOOM,
+      maxNativeZoom: App.TILE_MAX_NATIVE_ZOOM,
       attribution: "Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
     }
   );
@@ -81,7 +85,7 @@
   // and roads stay legible ("hybrid" view), toggled together with it below.
   const satelliteLabels = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-    { maxZoom: 19 }
+    { maxZoom: App.MAP_MAX_ZOOM, maxNativeZoom: App.TILE_MAX_NATIVE_ZOOM }
   );
 
   osmLayer.addTo(map);
@@ -535,7 +539,7 @@
         });
         const marker = L.marker([c.lat, c.lon], { icon });
         marker.on("click", () => {
-          map.setView([c.lat, c.lon], Math.min(map.getZoom() + 3, 19));
+          map.setView([c.lat, c.lon], Math.min(map.getZoom() + 3, App.MAP_MAX_ZOOM));
         });
         marker.bindTooltip(`${formatCount(c.count)} titik di area ini — klik untuk perbesar`, { direction: "top" });
         marker.addTo(layer);
@@ -871,7 +875,7 @@
           iconSize: [size, size],
         });
         const marker = L.marker([c.lat, c.lon], { icon });
-        marker.on("click", () => map.setView([c.lat, c.lon], Math.min(map.getZoom() + 3, 19)));
+        marker.on("click", () => map.setView([c.lat, c.lon], Math.min(map.getZoom() + 3, App.MAP_MAX_ZOOM)));
         marker.bindTooltip(`${formatCount(c.count)} titik Regsosek di area ini — klik untuk perbesar`, { direction: "top" });
         marker.addTo(regsosekLayer);
       }

@@ -561,6 +561,43 @@ Kalau nanti perlu sumber lain:
 - **Mapbox Satellite** — kualitas tinggi, tapi butuh signup + API key
   (gratis sampai ~50.000 pemuatan peta/bulan, berbayar di atas itu).
 
+### Batas zoom: 22 di peta, 19 di tile
+
+Kedua peta (menu Peta dan Peta Match Reg2022) bisa di-zoom sampai level
+**22**, tiga tingkat lebih dalam daripada batas lama 19. Konstantanya ada
+di satu tempat, `MAP_MAX_ZOOM` dan `TILE_MAX_NATIVE_ZOOM` di
+`web/static/common.js`, dipakai kedua peta berikut ketiga tile layer-nya.
+
+**Tidak ada basemap yang punya citra di atas level 19**, dan itu diperiksa
+langsung ke layanannya di atas Samarinda, bukan diasumsikan:
+OpenStreetMap berhenti di 19, dan Esri World Imagery **menjawab 200 di
+z20-22 tapi isinya tile placeholder 2.521 byte** ("map data not yet
+available") — ukuran byte yang sama persis di ketiga level, jadi jelas
+bukan detail sungguhan. Kalau layer-nya dibiarkan meminta tile setinggi
+itu, hasilnya bukan gambar lebih tajam melainkan placeholder atau kotak
+abu-abu.
+
+Karena itu layer-nya memakai pasangan `maxZoom: 22` + `maxNativeZoom: 19`:
+Leaflet berhenti meminta tile baru di 19 dan **memperbesar tile z19** untuk
+level di atasnya. Latarnya jadi buram, tapi tetap ada gambarnya, dan yang
+sebenarnya dicari di zoom sedalam itu memang bukan ketajaman peta dasar
+melainkan **jarak antar titik** — di SLS padat, titik-titik yang bertumpuk
+di z19 baru benar-benar terpisah di z21-22.
+
+Diverifikasi di browser pada kedua peta: menekan zoom-in berturut-turut
+menghasilkan 18 → 19 → 20 → 21 → 22 lalu tombolnya nonaktif, dengan URL
+tile tetap di z19 dan skala kontainer tile 1 → 2 → 4 → 8 — persis perilaku
+upscaling yang dimaksud. Di z22 kedua basemap tetap menggambar, nol tile
+gagal dimuat.
+
+Di sisi server, `points.CellSizeForZoom` dulu membatasi perhitungannya di
+zoom 20; sekarang ikut `points.MaxZoom` (22) supaya ukuran sel klaster
+tetap mengecil mengikuti viewport kalau klaster memang sempat muncul di
+level itu. Dalam praktiknya viewport sesempit itu hampir selalu di bawah
+`IndividualLimit`, jadi yang dikirim titik individual — tapi batas yang
+tertinggal di 20 akan membuat selnya empat kali terlalu besar justru saat
+paling tidak diinginkan.
+
 ### GPS "lokasi saya" (menu Peta)
 
 Tombol bidik di pojok kanan bawah peta — sebaris dengan tombol zoom, bukan

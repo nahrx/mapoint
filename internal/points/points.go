@@ -1144,12 +1144,18 @@ func (s *Service) queryPoints(ctx context.Context, b BBox, filter Filter) ([]Poi
 // so each cluster covers roughly 60 screen pixels at that Leaflet zoom
 // level (256px tiles, doubling every zoom level). Exported so the match
 // map in internal/regsosek clusters at exactly the same scale as this one.
+// MaxZoom is the deepest zoom the maps allow, matching MAP_MAX_ZOOM in
+// web/static/common.js. The basemaps have no imagery past 19 and Leaflet
+// upscales beyond that, but the viewport still keeps shrinking, so the
+// cluster grid has to keep shrinking with it.
+const MaxZoom = 22
+
 func CellSizeForZoom(zoom int) float64 {
 	if zoom < 0 {
 		zoom = 0
 	}
-	if zoom > 20 {
-		zoom = 20
+	if zoom > MaxZoom {
+		zoom = MaxZoom
 	}
 	const targetPixels = 60.0
 	return targetPixels * 360.0 / (256.0 * math.Pow(2, float64(zoom)))

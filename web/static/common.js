@@ -482,8 +482,23 @@ window.App = (() => {
   // "match rows where this column is blank", as opposed to not filtering.
   const EMPTY_VALUE = "__EMPTY__";
 
+  // How far both maps let you zoom in, and how far the tile providers can
+  // actually follow.
+  //
+  // Neither basemap has imagery past level 19. Checked against the live
+  // services over Samarinda: OpenStreetMap stops serving there, and Esri
+  // World Imagery answers 200 at z20-22 but with a 2,521-byte "map data
+  // not yet available" placeholder — the same canned tile at every level,
+  // not real detail. So the layers declare maxNativeZoom 19 and Leaflet
+  // upscales the z19 tiles beyond it: the background goes soft, but it
+  // keeps showing something instead of turning grey, and the points keep
+  // spreading apart — which is the reason to zoom in this far on a map
+  // whose whole job is placing dots on houses.
+  const MAP_MAX_ZOOM = 22;
+  const TILE_MAX_NATIVE_ZOOM = 19;
+
   return {
     fetchWithRetry, makeCascadingLevel, makeMultiSelect, makePresetBar,
-    filterPresets, esc, EMPTY_VALUE,
+    filterPresets, esc, EMPTY_VALUE, MAP_MAX_ZOOM, TILE_MAX_NATIVE_ZOOM,
   };
 })();
